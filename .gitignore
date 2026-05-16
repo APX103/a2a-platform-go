@@ -1,0 +1,26 @@
+# Binaries
+a2a-platform
+*.exe
+
+# Dependencies (managed by go mod)
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local config overrides
+etc/config.local.yaml
+
+# Logs
+*.log
+
+# Bridge config (contains API keys — use .example instead)
+bridges/*-bridge.yaml
+!bridges/*.example.yaml

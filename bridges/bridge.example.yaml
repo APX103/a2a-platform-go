@@ -1,0 +1,39 @@
+# Example bridge config — copy to hermes-bridge.yaml and fill in your values.
+# DO NOT commit real API keys to git.
+
+name: "my-agent"
+description: "My Agent — short description"
+version: "1.0.0"
+
+server:
+  port: 10004
+  host: "0.0.0.0"
+
+target:
+  http:
+    baseUrl: "http://YOUR_LLM_HOST:8642"
+    headers:
+      Authorization: "Bearer YOUR_API_KEY"
+
+skills:
+  - id: "chat"
+    name: "Chat"
+    description: "Send a message and get a response"
+    tags: ["chat", "general"]
+    examples: ["Hello", "What can you do?"]
+    invoke:
+      type: "http"
+      method: "POST"
+      path: "/v1/chat/completions"
+      headers:
+        Content-Type: "application/json"
+      body:
+        model: "YOUR_MODEL_NAME"
+        messages:
+          - role: "user"
+            content: "{{inputText}}"
+        stream: false
+      response:
+        text: "{{output.choices.0.message.content}}"
+
+hotReload: true

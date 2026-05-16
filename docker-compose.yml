@@ -1,0 +1,62 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: a2a-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root_secret_2024
+      MYSQL_DATABASE: a2a_platform
+      MYSQL_USER: a2a
+      MYSQL_PASSWORD: a2a_secret_2024
+    ports:
+      - "13306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --default-authentication-plugin=mysql_native_password
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot_secret_2024"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - a2a-net
+
+  platform:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: a2a-platform
+    restart: unless-stopped
+    ports:
+      - "18090:18090"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      - TZ=Asia/Shanghai
+    # Allow platform to access host machine (for bridges running on host)
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command: >
+      /app/a2a-platform
+      -f /app/etc/config.yaml
+    volumes:
+      - ./etc/config.yaml:/app/etc/config.yaml
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:18090/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks:
+      - a2a-net
+
+volumes:
+  mysql_data:
+
+networks:
+  a2a-net:
+    driver: bridge
