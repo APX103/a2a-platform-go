@@ -2,7 +2,8 @@ package svc
 
 import (
 	"database/sql"
-	"fmt"
+	"log/slog"
+	"time"
 
 	"a2a-platform/internal/config"
 
@@ -10,26 +11,44 @@ import (
 )
 
 type ServiceContext struct {
-	Config  *config.Config
-	DB      *sql.DB
-	Agents  *AgentStore
-	Tasks   *TaskStore
+	Config   *config.Config
+	DB       *sql.DB
+	Agents   *AgentStore
+	Tasks    *TaskStore
 	Messages *MessageStore
-	Traces  *TraceStore
+	Traces   *TraceStore
 	Registry *AgentRegistry
 }
 
 func NewServiceContext(c *config.Config) *ServiceContext {
-	db, err := sql.Open("mysql", c.MySQL.DSN())
-	if err != nil {
-		panic(err)
-	}
-	db.SetMaxIdleConns(c.MySQL.MaxIdle)
-	db.SetMaxOpenConns(c.MySQL.MaxOpen)
+	var db *sql.DB
+	var err error
 
-	if err := db.Ping(); err != nil {
-		panic(fmt.Sprintf("Failed to connect to MySQL: %v", err))
+	retryIntervals := []time.Duration{2 * time.Second, 4 * time.Second, 8 * time.Second}
+	for attempt := 0; attempt <= len(retryIntervals); attempt++ {
+		db, err = sql.Open("mysql", c.MySQL.DSN())
+		if err != nil {
+			panic(err)
+		}
+		db.SetMaxIdleConns(c.MySQL.MaxIdle)
+		db.SetMaxOpenConns(c.MySQL.MaxOpen)
+		db.SetConnMaxLifetime(5 * time.Minute)
+		db.SetConnMaxIdleTime(2 * time.Minute)
+
+		if err = db.Ping(); err == nil {
+			break
+		}
+		if attempt < len(retryIntervals) {
+			slog.Warn("DB connection failed, retrying", "attempt", attempt+1, "error", err, "wait", retryIntervals[attempt])
+			time.Sleep(retryIntervals[attempt])
+			db.Close()
+		}
 	}
+	if err != nil {
+		panic("Failed to connect to MySQL after retries: " + err.Error())
+	}
+
+	slog.Info("Connected to MySQL successfully")
 
 	// Auto-migrate tables
 	migrate(db)
@@ -114,7 +133,7 @@ func migrate(db *sql.DB) {
 		}
 		if _, err := db.Exec(stmt); err != nil {
 			// Table/index already exists is fine
-			fmt.Printf("Migration note: %v\n", err)
+			slog.Warn("Migration note", "error", err)
 		}
 	}
 }

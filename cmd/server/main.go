@@ -6,19 +6,27 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"a2a-platform/internal/config"
 	"a2a-platform/internal/handler"
 	"a2a-platform/internal/svc"
+
+	"golang.org/x/time/rate"
 )
 
 func main() {
+	// Initialize structured logging
+	log.SetFlags(0)
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
+
 	configFile := flag.String("f", "etc/config.yaml", "config file path")
 	flag.Parse()
 
@@ -28,15 +36,15 @@ func main() {
 	// Restore agent connections from DB on startup
 	svcCtx.Registry.RestoreConnections()
 
+	// Start agent health check
+	svcCtx.Registry.StartHealthCheck(30 * time.Second)
+
 	mux := http.NewServeMux()
 
 	// ===== Register routes =====
 
-	// Health check
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	})
+	// Health check (enhanced with DB ping + agent stats)
+	mux.HandleFunc("/health", makeHealthHandler(svcCtx))
 
 	// Agent CRUD (list + register)
 	mux.HandleFunc("/api/agents", makeAgentListHandler(svcCtx))
@@ -56,16 +64,29 @@ func main() {
 	mux.HandleFunc("/api/traces/context/", makeTraceContextHandler(svcCtx))
 
 	// MCP SSE server
-	hostURL := fmt.Sprintf("http://%s:%d", cfg.Host, cfg.Port)
+	hostURL := ""
+	if cfg.Host == "0.0.0.0" || cfg.Host == "" {
+		hostURL = fmt.Sprintf("http://localhost:%d", cfg.Port)
+	} else {
+		hostURL = fmt.Sprintf("http://%s:%d", cfg.Host, cfg.Port)
+	}
 	mcpHandler := handler.NewMCPSSEHandler(svcCtx, hostURL)
 	mux.HandleFunc("/mcp/sse", mcpHandler.ServeSSE)
 	mux.HandleFunc("/mcp/messages", mcpHandler.ServeMessages)
 
 	// ===== Start server =====
 	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
+
+	// Build middleware chain: cors -> rateLimit -> auth -> logging -> mux
+	var h http.Handler = mux
+	h = loggingMiddleware(h)
+	h = authMiddleware(h, svcCtx)
+	h = rateLimitMiddleware(h, cfg)
+	h = corsMiddleware(h, cfg)
+
 	server := &http.Server{
 		Addr:         addr,
-		Handler:      corsMiddleware(loggingMiddleware(mux)),
+		Handler:      h,
 		ReadTimeout:  120 * time.Second,
 		WriteTimeout: 180 * time.Second,
 		IdleTimeout:  180 * time.Second,
@@ -76,21 +97,21 @@ func main() {
 		sigCh := make(chan os.Signal, 1)
 		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 		<-sigCh
-		fmt.Println("\nShutting down...")
+		slog.Info("Shutting down...")
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		server.Shutdown(ctx)
 	}()
 
-	fmt.Printf("A2A Platform (Go) starting on %s\n", addr)
-	fmt.Printf("  API:      http://%s/api/agents\n", addr)
-	fmt.Printf("  MCP SSE:  http://%s/mcp/sse\n", addr)
-	fmt.Printf("  Proxy:    http://%s/agent/{{name}}\n", addr)
+	slog.Info("A2A Platform (Go) starting", "addr", addr)
+	slog.Info("  API:      http://" + addr + "/api/agents")
+	slog.Info("  MCP SSE:  http://" + addr + "/mcp/sse")
+	slog.Info("  Proxy:    http://" + addr + "/agent/{{name}}")
 
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("Server error: %v", err)
 	}
-	fmt.Println("Server stopped.")
+	slog.Info("Server stopped.")
 }
 
 // ===== Route helper functions =====
@@ -107,6 +128,27 @@ func pathTail(path, prefix string) string {
 	return tail
 }
 
+func makeHealthHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		dbStatus := "ok"
+		if err := svcCtx.DB.Ping(); err != nil {
+			dbStatus = "error"
+		}
+
+		agentsConnected := svcCtx.Registry.CountConnected()
+		agentsTotal, _ := svcCtx.Registry.CountTotal()
+
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":           "ok",
+			"db":               dbStatus,
+			"agents_connected": agentsConnected,
+			"agents_total":     agentsTotal,
+		})
+	}
+}
+
 func makeAgentListHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
@@ -115,7 +157,7 @@ func makeAgentListHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 		case http.MethodPost:
 			handler.NewRegisterAgentHandler(svcCtx).ServeHTTP(w, r)
 		default:
-			http.Error(w, "method not allowed", 405)
+			jsonError(w, "method not allowed", 405)
 		}
 	}
 }
@@ -124,7 +166,9 @@ func makeAgentDetailHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := pathTail(r.URL.Path, "/api/agents/")
 		if name == "" {
-			http.Error(w, `{"error":"missing agent name"}`, 400)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(400)
+			json.NewEncoder(w).Encode(map[string]string{"error": "missing agent name"})
 			return
 		}
 		// Store path param in a header for handler to read
@@ -136,7 +180,7 @@ func makeAgentDetailHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			svcCtx.Registry.DisconnectAgent(name)
 			w.WriteHeader(204)
 		default:
-			http.Error(w, "method not allowed", 405)
+			jsonError(w, "method not allowed", 405)
 		}
 	}
 }
@@ -145,7 +189,9 @@ func makeAgentProxyRoute(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := pathTail(r.URL.Path, "/agent/")
 		if name == "" {
-			http.Error(w, `{"error":"missing agent name"}`, 400)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(400)
+			json.NewEncoder(w).Encode(map[string]string{"error": "missing agent name"})
 			return
 		}
 		r.Header.Set("X-Path-Param-Name", name)
@@ -179,11 +225,29 @@ func makeTraceContextHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 
 // ===== Middleware =====
 
-func corsMiddleware(next http.Handler) http.Handler {
+func corsMiddleware(next http.Handler, cfg *config.Config) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		origins := cfg.CorsOrigins
+		allowAll := false
+		for _, o := range origins {
+			if o == "*" {
+				allowAll = true
+				break
+			}
+		}
+		if allowAll {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+		} else {
+			origin := r.Header.Get("Origin")
+			for _, o := range origins {
+				if origin == o {
+					w.Header().Set("Access-Control-Allow-Origin", origin)
+					break
+				}
+			}
+		}
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, A2A-Version, Authorization")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, A2A-Version, Authorization, X-Admin-Token")
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(204)
 			return
@@ -192,10 +256,93 @@ func corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+func authMiddleware(next http.Handler, svcCtx *svc.ServiceContext) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		method := r.Method
+
+		// Only protect POST /api/agents and DELETE /api/agents/*
+		needsAuth := false
+		if method == http.MethodPost && path == "/api/agents" {
+			needsAuth = true
+		}
+		if method == http.MethodDelete && strings.HasPrefix(path, "/api/agents/") {
+			needsAuth = true
+		}
+
+		if needsAuth {
+			token := ""
+			if t := r.Header.Get("X-Admin-Token"); t != "" {
+				token = t
+			} else if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+				token = strings.TrimPrefix(auth, "Bearer ")
+			}
+
+			if token == "" || token != svcCtx.Config.AdminToken {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(401)
+				json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
+				return
+			}
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+func rateLimitMiddleware(next http.Handler, cfg *config.Config) http.Handler {
+	// Global limiter
+	globalRPS := cfg.RateLimitRPS
+	if globalRPS <= 0 {
+		globalRPS = 100
+	}
+	globalLimiter := rate.NewLimiter(rate.Limit(globalRPS), globalRPS)
+
+	// Per-IP limiters (20 req/s per IP)
+	var ipLimiters sync.Map
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Check global limit
+		if !globalLimiter.Allow() {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(429)
+			json.NewEncoder(w).Encode(map[string]string{"error": "rate limit exceeded"})
+			return
+		}
+
+		// Check per-IP limit
+		ip := r.RemoteAddr
+		if idx := strings.LastIndex(ip, ":"); idx != -1 {
+			ip = ip[:idx]
+		}
+		limiter, _ := ipLimiters.LoadOrStore(ip, rate.NewLimiter(20, 20))
+		if !limiter.(*rate.Limiter).Allow() {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(429)
+			json.NewEncoder(w).Encode(map[string]string{"error": "rate limit exceeded"})
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
 func loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		next.ServeHTTP(w, r)
-		fmt.Printf("[%s] %s %s %v\n", r.Method, r.URL.Path, r.RemoteAddr, time.Since(start))
+		slog.Info("request",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"remote", r.RemoteAddr,
+			"duration", time.Since(start),
+		)
 	})
+}
+
+// jsonError writes a structured JSON error response.
+func jsonError(w http.ResponseWriter, message string, code int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	json.NewEncoder(w).Encode(map[string]string{"error": message})
 }

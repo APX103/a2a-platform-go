@@ -8,11 +8,13 @@ import (
 )
 
 type Config struct {
-	Name       string `yaml:"name"`
-	Host       string `yaml:"host"`
-	Port       int    `yaml:"port"`
-	MySQL      MySQL  `yaml:"mysql"`
-	AdminToken string `yaml:"admin_token"`
+	Name         string   `yaml:"name"`
+	Host         string   `yaml:"host"`
+	Port         int      `yaml:"port"`
+	MySQL        MySQL    `yaml:"mysql"`
+	AdminToken   string   `yaml:"admin_token"`
+	CorsOrigins  []string `yaml:"cors_origins"`
+	RateLimitRPS int      `yaml:"rate_limit_rps"`
 }
 
 type MySQL struct {
@@ -42,6 +44,12 @@ func MustLoad(path string) *Config {
 	}
 	if c.MySQL.MaxOpen == 0 {
 		c.MySQL.MaxOpen = 100
+	}
+	if len(c.CorsOrigins) == 0 {
+		c.CorsOrigins = []string{"*"}
+	}
+	if c.RateLimitRPS == 0 {
+		c.RateLimitRPS = 100
 	}
 	return &c
 }

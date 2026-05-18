@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"a2a-platform/internal/model"
 	"a2a-platform/internal/svc"
@@ -57,7 +59,7 @@ func (h *GetAgentHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if agent == nil {
-		http.Error(w, `{"error":"not found"}`, 404)
+		jsonError(w, "not found", 404)
 		return
 	}
 	conn := h.svcCtx.Registry.GetClient(name)
@@ -90,24 +92,24 @@ func NewRegisterAgentHandler(svcCtx *svc.ServiceContext) *RegisterAgentHandler {
 func (h *RegisterAgentHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var req model.RegisterAgentReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, `{"error":"invalid JSON"}`, 400)
+		jsonError(w, "invalid JSON", 400)
 		return
 	}
 	if req.Name == "" {
-		http.Error(w, `{"error":"missing name"}`, 400)
+		jsonError(w, "missing name", 400)
 		return
 	}
 	conn, err := h.svcCtx.Registry.RegisterAgent(
 		req.Name, req.Type, req.Url, req.Port, req.Skills, req.Secret,
 	)
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), 400)
+		jsonError(w, err.Error(), 400)
 		return
 	}
 	okJSON(w, model.RegisterAgentResp{
-		Ok:    true,
-		Name:  req.Name,
-		Url:   conn.Url,
+		Ok:     true,
+		Name:   req.Name,
+		Url:    conn.Url,
 		Status: "connected",
 	})
 }
@@ -125,12 +127,12 @@ func NewDiscoveryHandler(svcCtx *svc.ServiceContext) *DiscoveryHandler {
 func (h *DiscoveryHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	name := getPathParam(r, "name")
 	if name == "" {
-		http.Error(w, `{"error":"missing agent name"}`, 400)
+		jsonError(w, "missing agent name", 400)
 		return
 	}
 	agent, err := h.svcCtx.Agents.Get(name)
 	if err != nil || agent == nil {
-		http.Error(w, `{"error":"not found"}`, 404)
+		jsonError(w, "not found", 404)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -149,21 +151,21 @@ func NewAgentProxyHandler(svcCtx *svc.ServiceContext) *AgentProxyHandler {
 
 func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, `{"error":"method not allowed"}`, 405)
+		jsonError(w, "method not allowed", 405)
 		return
 	}
 
 	name := getPathParam(r, "name")
 	conn := h.svcCtx.Registry.GetClient(name)
 	if conn == nil {
-		http.Error(w, fmt.Sprintf(`{"error":"agent '%s' not found"}`, name), 404)
+		jsonError(w, fmt.Sprintf("agent '%s' not found", name), 404)
 		return
 	}
 
 	// Read the incoming request body
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		http.Error(w, `{"error":"read body failed"}`, 500)
+		jsonError(w, "read body failed", 500)
 		return
 	}
 
@@ -192,19 +194,21 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Record trace
 	h.svcCtx.Traces.Append(&model.TraceEvent{
-		TaskId:    taskId,
-		EventType: "send",
-		AgentName: "host",
+		TaskId:      taskId,
+		EventType:   "send",
+		AgentName:   "host",
 		TargetAgent: &name,
-		DataJson:  string(body),
+		DataJson:    string(body),
 	})
 
-	// Forward to the bridge agent
+	// Forward to the bridge agent with timeout
 	targetURL := conn.Url + "/"
-	client := &http.Client{}
-	proxyReq, err := http.NewRequestWithContext(r.Context(), "POST", targetURL, strings.NewReader(string(body)))
+	client := &http.Client{Timeout: 180 * time.Second}
+	ctx, cancel := context.WithTimeout(r.Context(), 180*time.Second)
+	defer cancel()
+	proxyReq, err := http.NewRequestWithContext(ctx, "POST", targetURL, strings.NewReader(string(body)))
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"proxy create failed: %s"}`, err), 500)
+		jsonError(w, fmt.Sprintf("proxy create failed: %s", err), 500)
 		return
 	}
 	proxyReq.Header.Set("Content-Type", "application/json")
@@ -214,7 +218,7 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	proxyResp, err := client.Do(proxyReq)
 	if err != nil {
 		h.svcCtx.Tasks.Update(taskId, map[string]interface{}{"state": "ERROR"})
-		http.Error(w, fmt.Sprintf(`{"error":"proxy failed: %s"}`, err), 502)
+		jsonError(w, fmt.Sprintf("proxy failed: %s", err), 502)
 		return
 	}
 	defer proxyResp.Body.Close()
@@ -229,7 +233,7 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Connection", "keep-alive")
 		flusher, ok := w.(http.Flusher)
 		if !ok {
-			http.Error(w, `{"error":"streaming not supported"}`, 500)
+			jsonError(w, "streaming not supported", 500)
 			return
 		}
 
@@ -356,7 +360,7 @@ func (h *GetTaskHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	taskId := getPathParam(r, "taskId")
 	task, err := h.svcCtx.Tasks.Get(taskId)
 	if err != nil || task == nil {
-		http.Error(w, `{"error":"not found"}`, 404)
+		jsonError(w, "not found", 404)
 		return
 	}
 	messages, _ := h.svcCtx.Messages.GetByTask(taskId)
@@ -399,7 +403,7 @@ func (h *TraceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		okJSON(w, traces)
 		return
 	}
-	http.Error(w, `{"error":"missing context_id or task_id"}`, 400)
+	jsonError(w, "missing context_id or task_id", 400)
 }
 
 // ===== Helper functions =====
@@ -530,6 +534,13 @@ func errHTTP(w http.ResponseWriter, err error) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(500)
 	json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+}
+
+// jsonError writes a structured JSON error response.
+func jsonError(w http.ResponseWriter, message string, code int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	json.NewEncoder(w).Encode(map[string]string{"error": message})
 }
 
 // Ensure sql.DB is imported (needed by some handlers indirectly)

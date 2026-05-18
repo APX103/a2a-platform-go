@@ -3,6 +3,7 @@ package svc
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
@@ -12,11 +13,11 @@ import (
 
 // AgentCard represents the A2A AgentCard fetched from /.well-known/agent.json
 type AgentCard struct {
-	Name        string        `json:"name"`
-	Description string        `json:"description"`
-	Version     string        `json:"version"`
-	Url         string        `json:"url"`
-	Skills      []CardSkill   `json:"skills"`
+	Name        string      `json:"name"`
+	Description string      `json:"description"`
+	Version     string      `json:"version"`
+	Url         string      `json:"url"`
+	Skills      []CardSkill `json:"skills"`
 }
 
 type CardSkill struct {
@@ -61,12 +62,15 @@ type AgentRegistry struct {
 	store       *AgentStore
 	connections map[string]*AgentConnection
 	mu          sync.RWMutex
+	failCounts  map[string]int
+	failMu      sync.Mutex
 }
 
 func NewAgentRegistry(store *AgentStore) *AgentRegistry {
 	return &AgentRegistry{
 		store:       store,
 		connections: make(map[string]*AgentConnection),
+		failCounts:  make(map[string]int),
 	}
 }
 
@@ -163,7 +167,7 @@ func (r *AgentRegistry) RegisterAgent(name, agentType, url string, port int, ski
 	if existing != nil {
 		action = "Re-registered"
 	}
-	fmt.Printf("%s agent %s at %s\n", action, name, url)
+	slog.Info("Agent registered", "action", action, "name", name, "url", url)
 	return conn, nil
 }
 
@@ -172,6 +176,9 @@ func (r *AgentRegistry) DisconnectAgent(name string) error {
 	r.mu.Lock()
 	delete(r.connections, name)
 	r.mu.Unlock()
+	r.failMu.Lock()
+	delete(r.failCounts, name)
+	r.failMu.Unlock()
 	return r.store.UpdateStatus(name, "disconnected", nil)
 }
 
@@ -179,21 +186,102 @@ func (r *AgentRegistry) DisconnectAgent(name string) error {
 func (r *AgentRegistry) RestoreConnections() {
 	records, err := r.store.List("connected")
 	if err != nil {
-		fmt.Printf("RestoreConnections: %v\n", err)
+		slog.Error("RestoreConnections failed", "error", err)
 		return
 	}
 	for _, rec := range records {
 		card, err := fetchAgentCard(rec.Url)
 		if err != nil {
-			fmt.Printf("  Failed to restore %s: %v\n", rec.Name, err)
+			slog.Warn("Failed to restore agent", "name", rec.Name, "error", err)
 			r.store.UpdateStatus(rec.Name, "disconnected", nil)
 			continue
 		}
 		r.mu.Lock()
 		r.connections[rec.Name] = &AgentConnection{Card: *card, Url: rec.Url}
 		r.mu.Unlock()
-		fmt.Printf("Restored connection to %s at %s\n", rec.Name, rec.Url)
+		slog.Info("Restored connection to agent", "name", rec.Name, "url", rec.Url)
 	}
+}
+
+// StartHealthCheck launches a background goroutine that periodically checks
+// the health of all connected agents.
+func (r *AgentRegistry) StartHealthCheck(interval time.Duration) {
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for range ticker.C {
+			r.runHealthCheck()
+		}
+	}()
+	slog.Info("Agent health check started", "interval", interval)
+}
+
+func (r *AgentRegistry) runHealthCheck() {
+	r.mu.RLock()
+	// Snapshot current connections
+	type agentEntry struct {
+		name string
+		url  string
+	}
+	var agents []agentEntry
+	for name, conn := range r.connections {
+		agents = append(agents, agentEntry{name: name, url: conn.Url})
+	}
+	r.mu.RUnlock()
+
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	for _, a := range agents {
+		cardURL := a.url + "/.well-known/agent.json"
+		resp, err := client.Get(cardURL)
+		if err != nil {
+			r.recordFailure(a.name)
+			continue
+		}
+		resp.Body.Close()
+		if resp.StatusCode != 200 {
+			r.recordFailure(a.name)
+			continue
+		}
+		// Success — reset failure count and ensure connected
+		r.failMu.Lock()
+		if r.failCounts[a.name] > 0 {
+			slog.Info("Agent health check recovered", "name", a.name)
+		}
+		delete(r.failCounts, a.name)
+		r.failMu.Unlock()
+	}
+}
+
+func (r *AgentRegistry) recordFailure(name string) {
+	r.failMu.Lock()
+	r.failCounts[name]++
+	count := r.failCounts[name]
+	r.failMu.Unlock()
+
+	if count >= 3 {
+		slog.Warn("Agent marked disconnected after consecutive failures", "name", name, "failures", count)
+		r.mu.Lock()
+		delete(r.connections, name)
+		r.mu.Unlock()
+		r.store.UpdateStatus(name, "disconnected", nil)
+	}
+}
+
+// CountConnected returns the number of currently connected agents.
+func (r *AgentRegistry) CountConnected() int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return len(r.connections)
+}
+
+// CountTotal returns the total number of agents in DB.
+func (r *AgentRegistry) CountTotal() (int, error) {
+	records, err := r.store.List("")
+	if err != nil {
+		return 0, err
+	}
+	return len(records), nil
 }
 
 // ===== HTTP helpers =====

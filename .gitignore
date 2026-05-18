@@ -24,3 +24,5 @@ etc/config.local.yaml
 # Bridge config (contains API keys — use .example instead)
 bridges/*-bridge.yaml
 !bridges/*.example.yaml
+
+server
