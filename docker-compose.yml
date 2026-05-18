@@ -31,28 +31,17 @@ services:
       dockerfile: Dockerfile
     container_name: a2a-platform
     restart: unless-stopped
-    ports:
-      - "18090:18090"
+    network_mode: host
     depends_on:
       mysql:
         condition: service_healthy
     environment:
       - TZ=Asia/Shanghai
-    # Allow platform to access host machine (for bridges running on host)
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     command: >
       /app/a2a-platform
       -f /app/etc/config.yaml
     volumes:
       - ./etc/config.yaml:/app/etc/config.yaml
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:18090/health"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-    networks:
-      - a2a-net
 
 volumes:
   mysql_data:
