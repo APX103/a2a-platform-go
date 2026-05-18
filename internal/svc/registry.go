@@ -226,27 +226,26 @@ func (r *AgentRegistry) StartHealthCheck(interval time.Duration) {
 }
 
 func (r *AgentRegistry) runHealthCheck() {
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	// === Phase A: check currently connected agents ===
 	r.mu.RLock()
-	// Snapshot current connections
 	type agentEntry struct {
 		name string
 		url  string
 		card AgentCard
 	}
-	var agents []agentEntry
+	var connectedAgents []agentEntry
 	for name, conn := range r.connections {
-		agents = append(agents, agentEntry{name: name, url: conn.Url, card: conn.Card})
+		connectedAgents = append(connectedAgents, agentEntry{name: name, url: conn.Url, card: conn.Card})
 	}
 	r.mu.RUnlock()
 
-	client := &http.Client{Timeout: 5 * time.Second}
-
-	for _, a := range agents {
+	for _, a := range connectedAgents {
 		// Phase 1: check if bridge HTTP is reachable (agent card endpoint)
 		cardURL := a.url + "/.well-known/agent.json"
 		resp, err := client.Get(cardURL)
 		if err != nil {
-			// Bridge is completely unreachable → offline
 			r.recordFailure(a.name, "offline", fmt.Sprintf("bridge unreachable: %v", err))
 			continue
 		}
@@ -270,13 +269,41 @@ func (r *AgentRegistry) runHealthCheck() {
 			}
 		}
 
-		// Success — reset failure count and ensure connected/online
+		// Success — reset failure count
 		r.failMu.Lock()
 		if r.failCounts[a.name] > 0 {
 			slog.Info("Agent health check recovered", "name", a.name)
 		}
 		delete(r.failCounts, a.name)
 		r.failMu.Unlock()
+	}
+
+	// === Phase B: try to reconnect offline/disconnected agents ===
+	records, err := r.store.List("")
+	if err != nil {
+		slog.Error("Health check reconnect: failed to list agents", "error", err)
+		return
+	}
+	for _, rec := range records {
+		if rec.Status == "connected" || rec.Status == "online" {
+			continue // already handled above
+		}
+		card, err := fetchAgentCard(rec.Url)
+		if err != nil {
+			continue // still unreachable
+		}
+		// Reconnected — add back to in-memory map and update DB
+		r.mu.Lock()
+		r.connections[rec.Name] = &AgentConnection{Card: *card, Url: rec.Url}
+		r.mu.Unlock()
+		r.failMu.Lock()
+		delete(r.failCounts, rec.Name)
+		r.failMu.Unlock()
+		r.store.UpdateStatus(rec.Name, "connected", nil)
+		if r.EventBus != nil {
+			r.EventBus.AgentStatus(rec.Name, "connected", rec.Type)
+		}
+		slog.Info("Agent reconnected after recovery", "name", rec.Name, "url", rec.Url)
 	}
 }
 
