@@ -360,7 +360,13 @@ func (s *TraceStore) GetByAgent(agentName string, limit int) ([]*model.TraceEven
 }
 
 func (s *TraceStore) GetByContext(contextId string) ([]*model.TraceEvent, error) {
-	rows, err := s.db.Query("SELECT id, task_id, context_id, timestamp, event_type, agent_name, target_agent, data_json, duration_ms FROM traces WHERE context_id=? ORDER BY timestamp", contextId)
+	var rows *sql.Rows
+	var err error
+	if contextId == "" {
+		rows, err = s.db.Query("SELECT id, task_id, context_id, timestamp, event_type, agent_name, target_agent, data_json, duration_ms FROM traces WHERE context_id IS NULL ORDER BY timestamp")
+	} else {
+		rows, err = s.db.Query("SELECT id, task_id, context_id, timestamp, event_type, agent_name, target_agent, data_json, duration_ms FROM traces WHERE context_id=? ORDER BY timestamp", contextId)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -383,12 +389,12 @@ func (s *TraceStore) ListRecent(limit int) ([]*model.TraceEvent, error) {
 func (s *TraceStore) ListContexts(limit int) ([]*model.TraceContextSummary, error) {
 	rows, err := s.db.Query(
 		`SELECT 
-			COALESCE(context_id, 'default') as context_id,
+			COALESCE(context_id, '') as context_id,
 			COUNT(*) as trace_count,
 			MAX(timestamp) as last_active,
 			GROUP_CONCAT(DISTINCT agent_name) as agents
 		FROM traces
-		GROUP BY COALESCE(context_id, 'default')
+		GROUP BY COALESCE(context_id, '')
 		ORDER BY last_active DESC
 		LIMIT ?`,
 		limit,

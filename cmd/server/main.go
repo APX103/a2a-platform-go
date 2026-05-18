@@ -226,8 +226,15 @@ func makeTraceTaskHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 func makeTraceContextHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		contextId := pathTail(r.URL.Path, "/api/traces/context/")
-		r.Header.Set("X-Path-Param-ContextId", contextId)
-		handler.NewTraceHandler(svcCtx).ServeHTTP(w, r)
+		traces, err := svcCtx.Traces.GetByContext(contextId)
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(500)
+			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(traces)
 	}
 }
 

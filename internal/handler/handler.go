@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -173,12 +174,27 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var rpcReq map[string]interface{}
 	json.Unmarshal(body, &rpcReq)
 
+	// Extract or auto-generate contextId
 	var contextId *string
 	if params, ok := rpcReq["params"].(map[string]interface{}); ok {
 		if cid, ok := params["contextId"].(string); ok && cid != "" {
 			contextId = &cid
 		}
 	}
+	if contextId == nil {
+		cid := svc.NewTaskId() // use UUID
+		contextId = &cid
+		// Inject contextId into request so bridge/agent can see it
+		if params, ok := rpcReq["params"].(map[string]interface{}); ok {
+			params["contextId"] = *contextId
+		} else {
+			rpcReq["params"] = map[string]interface{}{"contextId": *contextId}
+		}
+	}
+
+	// Re-marshal body with injected contextId for forwarding
+	newBody, _ := json.Marshal(rpcReq)
+	body = newBody
 
 	// Create a task for tracking
 	taskId := svc.NewTaskId()
@@ -222,7 +238,7 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	client := &http.Client{Timeout: 180 * time.Second}
 	ctx, cancel := context.WithTimeout(r.Context(), 180*time.Second)
 	defer cancel()
-	proxyReq, err := http.NewRequestWithContext(ctx, "POST", targetURL, strings.NewReader(string(body)))
+	proxyReq, err := http.NewRequestWithContext(ctx, "POST", targetURL, bytes.NewReader(body))
 	if err != nil {
 		jsonError(w, fmt.Sprintf("proxy create failed: %s", err), 500)
 		return
@@ -438,7 +454,9 @@ func (h *TraceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	contextId := getPathParam(r, "contextId")
-	if contextId != "" {
+	// Check if contextId header was explicitly set (even if empty)
+	if r.Header.Get("X-Path-Param-ContextId") != "" || contextId != "" {
+		// Empty contextId means NULL in DB (default group)
 		traces, err := h.svcCtx.Traces.GetByContext(contextId)
 		if err != nil {
 			errHTTP(w, err)
