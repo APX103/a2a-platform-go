@@ -367,6 +367,18 @@ func (s *TraceStore) GetByContext(contextId string) ([]*model.TraceEvent, error)
 	return scanTraces(rows)
 }
 
+func (s *TraceStore) ListRecent(limit int) ([]*model.TraceEvent, error) {
+	rows, err := s.db.Query(
+		"SELECT id, task_id, context_id, timestamp, event_type, agent_name, target_agent, data_json, duration_ms FROM traces ORDER BY timestamp DESC LIMIT ?",
+		limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanTraces(rows)
+}
+
 func scanTraces(rows *sql.Rows) ([]*model.TraceEvent, error) {
 	var result []*model.TraceEvent
 	for rows.Next() {

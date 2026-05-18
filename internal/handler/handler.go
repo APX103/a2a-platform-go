@@ -169,9 +169,16 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse JSON-RPC to extract message for tracing
+	// Parse JSON-RPC to extract message and contextId for tracing
 	var rpcReq map[string]interface{}
 	json.Unmarshal(body, &rpcReq)
+
+	var contextId *string
+	if params, ok := rpcReq["params"].(map[string]interface{}); ok {
+		if cid, ok := params["contextId"].(string); ok && cid != "" {
+			contextId = &cid
+		}
+	}
 
 	// Create a task for tracking
 	taskId := svc.NewTaskId()
@@ -179,6 +186,7 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		LocalTaskId: taskId,
 		AgentName:   name,
 		State:       "PENDING",
+		ContextId:   contextId,
 	}
 	h.svcCtx.Tasks.Create(task)
 	if h.svcCtx.EventBus != nil {
@@ -196,15 +204,17 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Record trace
-	h.svcCtx.Traces.Append(&model.TraceEvent{
+	sendTrace := &model.TraceEvent{
 		TaskId:      taskId,
+		ContextId:   contextId,
 		EventType:   "send",
 		AgentName:   "host",
 		TargetAgent: &name,
 		DataJson:    string(body),
-	})
+	}
+	h.svcCtx.Traces.Append(sendTrace)
 	if h.svcCtx.EventBus != nil {
-		h.svcCtx.EventBus.Trace(taskId, "send", "host")
+		h.svcCtx.EventBus.TraceEvent(sendTrace)
 	}
 
 	// Forward to the bridge agent with timeout
@@ -275,14 +285,16 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				h.svcCtx.EventBus.Task("update", taskId, name, "RESPONDED")
 			}
 		}
-		h.svcCtx.Traces.Append(&model.TraceEvent{
+		respTrace := &model.TraceEvent{
 			TaskId:    taskId,
+			ContextId: contextId,
 			EventType: "response",
 			AgentName: name,
 			DataJson:  fmt.Sprintf(`{"text_length":%d}`, len(finalText)),
-		})
+		}
+		h.svcCtx.Traces.Append(respTrace)
 		if h.svcCtx.EventBus != nil {
-			h.svcCtx.EventBus.Trace(taskId, "response", name)
+			h.svcCtx.EventBus.TraceEvent(respTrace)
 		}
 	} else {
 		// Non-streaming: relay the full response
@@ -395,6 +407,17 @@ func NewTraceHandler(svcCtx *svc.ServiceContext) *TraceHandler {
 }
 
 func (h *TraceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// List recent traces when accessed without specific filter
+	if r.URL.Path == "/api/traces" || r.URL.Path == "/api/traces/" {
+		traces, err := h.svcCtx.Traces.ListRecent(200)
+		if err != nil {
+			errHTTP(w, err)
+			return
+		}
+		okJSON(w, traces)
+		return
+	}
+
 	contextId := getPathParam(r, "contextId")
 	if contextId != "" {
 		traces, err := h.svcCtx.Traces.GetByContext(contextId)

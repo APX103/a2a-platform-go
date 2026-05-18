@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	"a2a-platform/internal/model"
 )
 
 // Broadcaster manages SSE clients and broadcasts platform events.
@@ -100,4 +102,9 @@ func (b *Broadcaster) Trace(taskId, eventType, agentName string) {
 		"event_type": eventType,
 		"agent_name": agentName,
 	})
+}
+
+// TraceEvent broadcasts a full trace event with all fields.
+func (b *Broadcaster) TraceEvent(e *model.TraceEvent) {
+	b.Broadcast("trace.append", e)
 }
