@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"a2a-platform/internal/config"
+	"a2a-platform/internal/events"
 
 	_ "github.com/go-sql-driver/mysql"
 )
@@ -18,6 +19,7 @@ type ServiceContext struct {
 	Messages *MessageStore
 	Traces   *TraceStore
 	Registry *AgentRegistry
+	EventBus *events.Broadcaster
 }
 
 func NewServiceContext(c *config.Config) *ServiceContext {
@@ -58,6 +60,7 @@ func NewServiceContext(c *config.Config) *ServiceContext {
 	messages := NewMessageStore(db)
 	traces := NewTraceStore(db)
 	registry := NewAgentRegistry(agents)
+	eventBus := events.NewBroadcaster()
 
 	return &ServiceContext{
 		Config:   c,
@@ -67,6 +70,7 @@ func NewServiceContext(c *config.Config) *ServiceContext {
 		Messages: messages,
 		Traces:   traces,
 		Registry: registry,
+		EventBus: eventBus,
 	}
 }
 

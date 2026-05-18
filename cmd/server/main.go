@@ -63,6 +63,12 @@ func main() {
 	mux.HandleFunc("/api/traces/task/", makeTraceTaskHandler(svcCtx))
 	mux.HandleFunc("/api/traces/context/", makeTraceContextHandler(svcCtx))
 
+	// Events SSE stream (for TUI real-time monitoring)
+	mux.HandleFunc("/api/events", handler.NewEventsHandler(svcCtx.EventBus).ServeHTTP)
+
+	// Stats endpoint
+	mux.HandleFunc("/api/stats", handler.NewStatsHandler(svcCtx).ServeHTTP)
+
 	// MCP SSE server
 	hostURL := ""
 	if cfg.Host == "0.0.0.0" || cfg.Host == "" {

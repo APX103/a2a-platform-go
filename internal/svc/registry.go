@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"a2a-platform/internal/events"
 	"a2a-platform/internal/model"
 )
 
@@ -64,6 +65,7 @@ type AgentRegistry struct {
 	mu          sync.RWMutex
 	failCounts  map[string]int
 	failMu      sync.Mutex
+	EventBus    *events.Broadcaster
 }
 
 func NewAgentRegistry(store *AgentStore) *AgentRegistry {
@@ -168,6 +170,9 @@ func (r *AgentRegistry) RegisterAgent(name, agentType, url string, port int, ski
 		action = "Re-registered"
 	}
 	slog.Info("Agent registered", "action", action, "name", name, "url", url)
+	if r.EventBus != nil {
+		r.EventBus.AgentRegistered(name, "connected", agentType)
+	}
 	return conn, nil
 }
 
@@ -179,6 +184,9 @@ func (r *AgentRegistry) DisconnectAgent(name string) error {
 	r.failMu.Lock()
 	delete(r.failCounts, name)
 	r.failMu.Unlock()
+	if r.EventBus != nil {
+		r.EventBus.AgentStatus(name, "disconnected", "")
+	}
 	return r.store.UpdateStatus(name, "disconnected", nil)
 }
 
@@ -265,6 +273,9 @@ func (r *AgentRegistry) recordFailure(name string) {
 		delete(r.connections, name)
 		r.mu.Unlock()
 		r.store.UpdateStatus(name, "disconnected", nil)
+		if r.EventBus != nil {
+			r.EventBus.AgentStatus(name, "disconnected", "")
+		}
 	}
 }
 

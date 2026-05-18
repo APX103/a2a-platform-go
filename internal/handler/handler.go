@@ -181,6 +181,9 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		State:       "PENDING",
 	}
 	h.svcCtx.Tasks.Create(task)
+	if h.svcCtx.EventBus != nil {
+		h.svcCtx.EventBus.Task("create", taskId, name, "PENDING")
+	}
 
 	// Extract user text for message recording
 	userText := extractUserText(rpcReq)
@@ -200,6 +203,9 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		TargetAgent: &name,
 		DataJson:    string(body),
 	})
+	if h.svcCtx.EventBus != nil {
+		h.svcCtx.EventBus.Trace(taskId, "send", "host")
+	}
 
 	// Forward to the bridge agent with timeout
 	targetURL := conn.Url + "/"
@@ -265,6 +271,9 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				Content: finalText,
 			})
 			h.svcCtx.Tasks.Update(taskId, map[string]interface{}{"state": "RESPONDED"})
+			if h.svcCtx.EventBus != nil {
+				h.svcCtx.EventBus.Task("update", taskId, name, "RESPONDED")
+			}
 		}
 		h.svcCtx.Traces.Append(&model.TraceEvent{
 			TaskId:    taskId,
@@ -272,6 +281,9 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			AgentName: name,
 			DataJson:  fmt.Sprintf(`{"text_length":%d}`, len(finalText)),
 		})
+		if h.svcCtx.EventBus != nil {
+			h.svcCtx.EventBus.Trace(taskId, "response", name)
+		}
 	} else {
 		// Non-streaming: relay the full response
 		respBody, _ := io.ReadAll(proxyResp.Body)
