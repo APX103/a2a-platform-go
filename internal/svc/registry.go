@@ -19,6 +19,7 @@ type AgentCard struct {
 	Version     string      `json:"version"`
 	Url         string      `json:"url"`
 	Skills      []CardSkill `json:"skills"`
+	HealthUrl   string      `json:"health_url,omitempty"`
 }
 
 type CardSkill struct {
@@ -230,28 +231,46 @@ func (r *AgentRegistry) runHealthCheck() {
 	type agentEntry struct {
 		name string
 		url  string
+		card AgentCard
 	}
 	var agents []agentEntry
 	for name, conn := range r.connections {
-		agents = append(agents, agentEntry{name: name, url: conn.Url})
+		agents = append(agents, agentEntry{name: name, url: conn.Url, card: conn.Card})
 	}
 	r.mu.RUnlock()
 
 	client := &http.Client{Timeout: 5 * time.Second}
 
 	for _, a := range agents {
+		// Phase 1: check if bridge HTTP is reachable (agent card endpoint)
 		cardURL := a.url + "/.well-known/agent.json"
 		resp, err := client.Get(cardURL)
 		if err != nil {
-			r.recordFailure(a.name)
+			// Bridge is completely unreachable → offline
+			r.recordFailure(a.name, "offline", fmt.Sprintf("bridge unreachable: %v", err))
 			continue
 		}
 		resp.Body.Close()
 		if resp.StatusCode != 200 {
-			r.recordFailure(a.name)
+			r.recordFailure(a.name, "offline", fmt.Sprintf("agent card returned %d", resp.StatusCode))
 			continue
 		}
-		// Success — reset failure count and ensure connected
+
+		// Phase 2: if bridge exposes a health_url, check downstream LLM health
+		if a.card.HealthUrl != "" {
+			healthResp, healthErr := client.Get(a.card.HealthUrl)
+			if healthErr != nil {
+				r.recordFailure(a.name, "unreachable", fmt.Sprintf("health check unreachable: %v", healthErr))
+				continue
+			}
+			healthResp.Body.Close()
+			if healthResp.StatusCode != 200 {
+				r.recordFailure(a.name, "unreachable", fmt.Sprintf("health check returned %d", healthResp.StatusCode))
+				continue
+			}
+		}
+
+		// Success — reset failure count and ensure connected/online
 		r.failMu.Lock()
 		if r.failCounts[a.name] > 0 {
 			slog.Info("Agent health check recovered", "name", a.name)
@@ -261,20 +280,21 @@ func (r *AgentRegistry) runHealthCheck() {
 	}
 }
 
-func (r *AgentRegistry) recordFailure(name string) {
+func (r *AgentRegistry) recordFailure(name string, status string, reason string) {
 	r.failMu.Lock()
 	r.failCounts[name]++
 	count := r.failCounts[name]
 	r.failMu.Unlock()
 
 	if count >= 3 {
-		slog.Warn("Agent marked disconnected after consecutive failures", "name", name, "failures", count)
+		slog.Warn("Agent marked status after consecutive failures",
+			"name", name, "status", status, "failures", count, "reason", reason)
 		r.mu.Lock()
 		delete(r.connections, name)
 		r.mu.Unlock()
-		r.store.UpdateStatus(name, "disconnected", nil)
+		r.store.UpdateStatus(name, status, &reason)
 		if r.EventBus != nil {
-			r.EventBus.AgentStatus(name, "disconnected", "")
+			r.EventBus.AgentStatus(name, status, "")
 		}
 	}
 }
