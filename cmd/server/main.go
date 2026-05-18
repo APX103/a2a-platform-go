@@ -61,6 +61,7 @@ func main() {
 
 	// Traces
 	mux.HandleFunc("/api/traces", handler.NewTraceHandler(svcCtx).ServeHTTP)
+	mux.HandleFunc("/api/traces/contexts", handler.NewTraceContextHandler(svcCtx).ServeHTTP)
 	mux.HandleFunc("/api/traces/task/", makeTraceTaskHandler(svcCtx))
 	mux.HandleFunc("/api/traces/context/", makeTraceContextHandler(svcCtx))
 

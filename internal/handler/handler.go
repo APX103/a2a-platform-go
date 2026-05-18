@@ -396,6 +396,25 @@ func (h *GetTaskHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ===== Trace Contexts =====
+
+type TraceContextHandler struct {
+	svcCtx *svc.ServiceContext
+}
+
+func NewTraceContextHandler(svcCtx *svc.ServiceContext) *TraceContextHandler {
+	return &TraceContextHandler{svcCtx: svcCtx}
+}
+
+func (h *TraceContextHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	contexts, err := h.svcCtx.Traces.ListContexts(200)
+	if err != nil {
+		errHTTP(w, err)
+		return
+	}
+	okJSON(w, contexts)
+}
+
 // ===== Trace =====
 
 type TraceHandler struct {

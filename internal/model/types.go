@@ -109,6 +109,13 @@ type TaskItem struct {
 	UpdatedAt   string  `json:"updated_at"`
 }
 
+type TraceContextSummary struct {
+	ContextId  string    `json:"context_id"`
+	TraceCount int       `json:"trace_count"`
+	LastActive time.Time `json:"last_active"`
+	Agents     []string  `json:"agents"`
+}
+
 type TraceResp struct {
 	TaskId string `json:"task_id"`
 	Trace  string `json:"trace"`

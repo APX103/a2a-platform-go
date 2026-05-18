@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 
 	"a2a-platform/internal/model"
@@ -377,6 +378,39 @@ func (s *TraceStore) ListRecent(limit int) ([]*model.TraceEvent, error) {
 	}
 	defer rows.Close()
 	return scanTraces(rows)
+}
+
+func (s *TraceStore) ListContexts(limit int) ([]*model.TraceContextSummary, error) {
+	rows, err := s.db.Query(
+		`SELECT 
+			COALESCE(context_id, 'default') as context_id,
+			COUNT(*) as trace_count,
+			MAX(timestamp) as last_active,
+			GROUP_CONCAT(DISTINCT agent_name) as agents
+		FROM traces
+		GROUP BY COALESCE(context_id, 'default')
+		ORDER BY last_active DESC
+		LIMIT ?`,
+		limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []*model.TraceContextSummary
+	for rows.Next() {
+		var cs model.TraceContextSummary
+		var agentsStr sql.NullString
+		if err := rows.Scan(&cs.ContextId, &cs.TraceCount, &cs.LastActive, &agentsStr); err != nil {
+			return nil, err
+		}
+		if agentsStr.Valid && agentsStr.String != "" {
+			cs.Agents = strings.Split(agentsStr.String, ",")
+		}
+		result = append(result, &cs)
+	}
+	return result, nil
 }
 
 func scanTraces(rows *sql.Rows) ([]*model.TraceEvent, error) {
