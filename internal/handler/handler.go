@@ -277,11 +277,39 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				chunk := buf[:n]
 				w.Write(chunk)
 
-				// Extract text from SSE data for recording
-				text := extractSSEText(chunk)
-				if text != "" {
-					finalText = text
+				// Parse each SSE data line in the chunk and record stream traces
+				lines := strings.Split(string(chunk), "\n")
+				for _, line := range lines {
+					line = strings.TrimSpace(line)
+					if !strings.HasPrefix(line, "data:") {
+						continue
+					}
+					data := strings.TrimPrefix(line, "data:")
+					data = strings.TrimSpace(data)
+					if data == "" {
+						continue
+					}
+
+					// Record every SSE data frame as a stream trace
+					streamTrace := &model.TraceEvent{
+						TaskId:    taskId,
+						ContextId: contextId,
+						EventType: "stream",
+						AgentName: name,
+						DataJson:  truncateString(data, 500),
+					}
+					h.svcCtx.Traces.Append(streamTrace)
+					if h.svcCtx.EventBus != nil {
+						h.svcCtx.EventBus.TraceEvent(streamTrace)
+					}
+
+					// Try to extract meaningful text for final response
+					text := extractTextFromSSEData(data)
+					if text != "" {
+						finalText = text
+					}
 				}
+
 				flusher.Flush()
 			}
 			if err != nil {
@@ -306,7 +334,10 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			ContextId: contextId,
 			EventType: "response",
 			AgentName: name,
-			DataJson:  fmt.Sprintf(`{"text_length":%d}`, len(finalText)),
+			DataJson:  finalText,
+		}
+		if finalText == "" {
+			respTrace.DataJson = `{"text_length":0}`
 		}
 		h.svcCtx.Traces.Append(respTrace)
 		if h.svcCtx.EventBus != nil {
@@ -525,6 +556,42 @@ func extractUserText(rpcReq map[string]interface{}) string {
 	return ""
 }
 
+func extractTextFromSSEData(data string) string {
+	var evt map[string]interface{}
+	if json.Unmarshal([]byte(data), &evt) != nil {
+		return ""
+	}
+	// Check for direct message
+	if msg, ok := evt["message"].(map[string]interface{}); ok {
+		return extractPartsText(msg)
+	}
+	// Check for result wrappers
+	if result, ok := evt["result"].(map[string]interface{}); ok {
+		// result.message.parts
+		if msg, ok := result["message"].(map[string]interface{}); ok {
+			return extractPartsText(msg)
+		}
+		// result.artifactUpdate.artifact.parts
+		if artifactUpdate, ok := result["artifactUpdate"].(map[string]interface{}); ok {
+			if artifact, ok := artifactUpdate["artifact"].(map[string]interface{}); ok {
+				return extractPartsText(artifact)
+			}
+		}
+		// result.statusUpdate.status.message.parts
+		if statusUpdate, ok := result["statusUpdate"].(map[string]interface{}); ok {
+			if status, ok := statusUpdate["status"].(map[string]interface{}); ok {
+				if msg, ok := status["message"].(map[string]interface{}); ok {
+					text := extractPartsText(msg)
+					if text != "" {
+						return text
+					}
+				}
+			}
+		}
+	}
+	return ""
+}
+
 func extractSSEText(chunk []byte) string {
 	// Parse SSE data lines to find text content
 	lines := strings.Split(string(chunk), "\n")
@@ -535,19 +602,9 @@ func extractSSEText(chunk []byte) string {
 		}
 		data := strings.TrimPrefix(line, "data:")
 		data = strings.TrimSpace(data)
-		var evt map[string]interface{}
-		if json.Unmarshal([]byte(data), &evt) != nil {
-			continue
-		}
-		// Check for message response
-		if msg, ok := evt["message"].(map[string]interface{}); ok {
-			return extractPartsText(msg)
-		}
-		// Check for result.message
-		if result, ok := evt["result"].(map[string]interface{}); ok {
-			if msg, ok := result["message"].(map[string]interface{}); ok {
-				return extractPartsText(msg)
-			}
+		text := extractTextFromSSEData(data)
+		if text != "" {
+			return text
 		}
 	}
 	return ""
@@ -562,6 +619,11 @@ func extractResponseText(body []byte) string {
 	if result, ok := resp["result"].(map[string]interface{}); ok {
 		if msg, ok := result["message"].(map[string]interface{}); ok {
 			return extractPartsText(msg)
+		}
+		if artifactUpdate, ok := result["artifactUpdate"].(map[string]interface{}); ok {
+			if artifact, ok := artifactUpdate["artifact"].(map[string]interface{}); ok {
+				return extractPartsText(artifact)
+			}
 		}
 	}
 	return string(body)
@@ -581,6 +643,16 @@ func extractPartsText(msg map[string]interface{}) string {
 		}
 	}
 	return strings.Join(texts, "\n")
+}
+
+func truncateString(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	if max <= 3 {
+		return s[:max]
+	}
+	return s[:max-3] + "..."
 }
 
 // ===== Health check =====
