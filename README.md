@@ -51,6 +51,7 @@ Go 实现的 [Agent-to-Agent (A2A)](https://github.com/google/A2A) 协议平台�
 | **Admin Web UI** | 内嵌 React 管理界面，单二进制部署 |
 | **双数据库** | 默认 SQLite（零配置），可选 MySQL 8.0 |
 | **自动恢复** | 重启后从 DB 恢复已注册的 Agent 连接 |
+| **聊天界面** | 内置对话界面，支持流式响应、思维可视化、工具调用展示 |
 
 ## 快速开始
 
@@ -117,6 +118,33 @@ curl -X POST http://localhost:18090/agent/assistant \
 
 返回 SSE 流式事件（text.delta、tool.call、task.status）。
 
+## 聊天界面
+
+平台包含内置聊天界面，可直接与 Agent 对话：
+
+- **时间轴布局**: 消息以垂直时间轴展示，区分用户和 AI 消息
+- **流式响应**: 实时打字机效果的 AI 回复
+- **思维可视化**: 可折叠的思维块展示 Agent 推理过程
+- **工具调用展示**: 查看工具调用详情（参数、结果、状态）
+- **会话管理**: 每个 Agent 支持多个会话，可查看历史、继续对话
+- **Markdown 渲染**: 支持格式化文本、代码高亮、表格、引用块
+- **内置工具**: 文件操作、HTTP 请求等工具
+
+**访问**: 导航至 `/chat/<agent_name>` 或从 Agents 页面点击 Agent。
+
+**聊天 API**: 使用 Server-Sent Events (SSE) 实时流式：
+- `POST /agent/<name>` - 发送消息并接收流式响应
+- SSE 事件: `text.delta`、`tool.call_start`、`tool.result`、`task.status` 等
+
+**内置工具**:
+| 工具 | 说明 |
+|------|------|
+| `fetch_url` | 发起 HTTP 请求（GET/POST/PUT/DELETE） |
+| `read_file` | 读取文件内容（支持分页） |
+| `write_file` | 写入文件（支持追加模式） |
+| `list_directory` | 列出目录内容 |
+| `tool_search` | 搜索可用工具 |
+
 ### 配置 Bridge Agent（API 桥接）
 
 在 config 中直接桥接任意 OpenAI 兼容 API：
@@ -171,6 +199,13 @@ curl -X POST http://localhost:18090/api/agents \
 | `GET` | `/api/builtin-agents` | - | 列出内建 Agent |
 | `POST` | `/api/builtin-agents` | token | 创建内建 Agent |
 | `DELETE` | `/api/builtin-agents/{name}` | token | 删除内建 Agent |
+| `GET` | `/api/contexts/{agent_name}` | - | 列出 Agent 的会话 |
+| `POST` | `/api/contexts` | - | 创建新会话 |
+| `GET` | `/api/contexts/{id}` | - | 获取会话详情 |
+| `PATCH` | `/api/contexts/{id}` | - | 更新会话标题 |
+| `DELETE` | `/api/contexts/{id}` | - | 删除会话 |
+| `GET` | `/api/subagents/{context_id}` | - | 列出子代理 |
+| `GET` | `/api/subagents/{id}` | - | 获取子代理详情 |
 | `POST` | `/agent/{name}` | - | A2A 消息代理（JSON-RPC） |
 | `GET` | `/api/tasks` | - | 任务列表 |
 | `GET` | `/api/tasks/{id}` | - | 任务详情 |

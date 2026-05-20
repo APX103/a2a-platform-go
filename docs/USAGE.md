@@ -325,6 +325,30 @@ response:
 
 如果设置 `raw: true`，则返回完整响应体（不做提取）。
 
+### 内置工具
+
+Builtin Agent 自动包含以下内置工具，可在对话中直接调用：
+
+| 工具 | 参数 | 说明 |
+|------|------|------|
+| `fetch_url` | `url` (必需), `method`, `headers`, `body`, `timeout` | 发起 HTTP 请求 |
+| `read_file` | `path` (必需), `offset`, `limit` | 读取文件内容 |
+| `write_file` | `path` (必需), `content` (必需), `append` | 写入文件 |
+| `list_directory` | `path` (必需), `recursive` | 列出目录内容 |
+| `tool_search` | `name` (必需) | 搜索可用工具 |
+
+工具使用示例：
+```
+User: 读取 src/main.go 的前 10 行
+Agent: [调用 read_file 工具]
+
+User: 获取 https://api.github.com/users
+Agent: [调用 fetch_url 工具]
+
+User: 列出当前目录下所有 Go 文件
+Agent: [调用 list_directory 工具]
+```
+
 ---
 
 ## 外部 Agent（独立进程）
@@ -655,6 +679,42 @@ GET /api/traces/task/{task_id}
 
 # 按 Context 查
 GET /api/traces/context/{context_id}
+```
+
+#### 会话管理
+
+```bash
+# 列出 Agent 的所有会话（支持分页）
+GET /api/contexts/{agent_name}?page=1&size=20
+# → {"items":[...],"total":5,"page":1,"size":20}
+
+# 获取会话详情（含消息列表）
+GET /api/contexts/{context_id}
+# → {"context":{...},"messages":[...]}
+
+# 创建新会话
+POST /api/contexts
+# Body: {"agent_name":"assistant","title":"Session Title"}
+
+# 更新会话标题
+PATCH /api/contexts/{context_id}
+# Body: {"title":"New Title"}
+
+# 删除会话（需要认证）
+DELETE /api/contexts/{context_id}
+# Header: X-Admin-Token: your-token
+```
+
+#### 子代理管理
+
+```bash
+# 列出会话的所有子代理
+GET /api/subagents/{context_id}
+# → {"context_id":"...","subagents":[{...}]}
+
+# 获取子代理详情
+GET /api/subagents/{subagent_id}
+# → {id, parent_context_id, parent_tool_call_id, task, context, status, ...}
 ```
 
 #### SSE 实时事件
