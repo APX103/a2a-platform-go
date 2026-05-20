@@ -1,0 +1,173 @@
+<h2>聊天界面最终设计</h2>
+<p class="subtitle">时间轴布局 + Thinking 可折叠 + 方案 A 风格</p>
+
+<div class="mockup">
+  <div class="mockup-header">完整聊天界面预览</div>
+  <div class="mockup-body">
+    <div style="border:1px solid #ddd;border-radius:8px;overflow:hidden;font-size:11px;">
+      <!-- Header -->
+      <div style="padding:10px 14px;border-bottom:1px solid #e5e7eb;background:#f9fafb;display:flex;align-items:center;justify-content:space-between;">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span style="font-size:12px;">&larr; Agents</span>
+          <span style="color:#ddd;">|</span>
+          <div style="width:8px;height:8px;background:#10b981;border-radius:50%;"></div>
+          <span style="font-weight:600;font-size:13px;">assistant</span>
+          <span style="font-size:10px;color:#666;">OpenAI / gpt-4o</span>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button style="padding:4px 10px;background:#fff;border:1px solid #ddd;border-radius:4px;font-size:10px;">清空对话</button>
+          <button style="padding:4px 10px;background:#3b82f6;color:#fff;border:none;border-radius:4px;font-size:10px;">新对话</button>
+        </div>
+      </div>
+
+      <!-- Messages Container -->
+      <div style="padding:16px;background:#fafafa;min-height:300px;">
+        <!-- Timeline -->
+        <div style="position:relative;padding-left:32px;">
+          <!-- Timeline Line -->
+          <div style="position:absolute;left:11px;top:0;bottom:0;width:2px;background:#e5e7eb;"></div>
+
+          <!-- User Message -->
+          <div style="position:relative;margin-bottom:20px;">
+            <div style="position:absolute;left:-24px;width:24px;height:24px;background:#3b82f6;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:10px;z-index:1;box-shadow:0 0 0 2px #fafafa;">U</div>
+            <div style="display:inline-block;padding:10px 14px;background:#3b82f6;color:#fff;border-radius:12px 12px 12px 0;max-width:80%;">
+              帮我查询北京今天的天气，然后给我一个穿衣建议
+            </div>
+          </div>
+
+          <!-- Thinking Collapsible (Expanded) -->
+          <div style="position:relative;margin-bottom:12px;">
+            <div style="position:absolute;left:-20px;width:16px;height:16px;background:#f59e0b;border-radius:50%;z-index:1;box-shadow:0 0 0 2px #fafafa;"></div>
+            <div style="background:#fff;border:1px solid #e0e0e0;border-radius:8px;overflow:hidden;">
+              <!-- Header -->
+              <div style="padding:6px 10px;background:#fef3c7;display:flex;align-items:center;gap:6px;cursor:pointer;">
+                <span style="transform:rotate(90deg);font-size:10px;">&rsaquo;</span>
+                <span style="font-size:10px;color:#92400e;font-weight:600;">Thinking (2 步)</span>
+                <span style="font-size:9px;color:#b45309;">· 共 0.8s</span>
+              </div>
+              <!-- Content -->
+              <div style="padding:8px 10px;background:#fff;border-top:1px solid #e0e0e0;">
+                <div style="font-size:9px;color:#666;font-family:monospace;padding:4px 8px;background:#f5f5f5;border-radius:4px;margin-bottom:4px;">
+                  <span style="color:#f59e0b;">[T1 +0.2s]</span> 用户需要天气和穿衣建议，先调用天气 API
+                </div>
+                <div style="font-size:9px;color:#666;font-family:monospace;padding:4px 8px;background:#f5f5f5;border-radius:4px;">
+                  <span style="color:#f59e0b;">[T2 +0.6s]</span> 收到天气数据，根据温度推荐穿着
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Tool Call -->
+          <div style="position:relative;margin-bottom:12px;">
+            <div style="position:absolute;left:-20px;width:16px;height:16px;background:#8b5cf6;border-radius:50%;z-index:1;box-shadow:0 0 0 2px #fafafa;"></div>
+            <div style="display:inline-block;padding:8px 12px;background:#f3e8ff;border-radius:8px;">
+              <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+                <span style="font-size:11px;">🔧</span>
+                <span style="font-size:10px;font-weight:600;">weather.get_current</span>
+                <span style="font-size:9px;color:#10b981;">✓ 成功</span>
+              </div>
+              <div style="font-size:9px;color:#555;font-family:monospace;white-space:pre-wrap;">{"city": "北京", "temp": 12, "condition": "多云", "humidity": 45}</div>
+            </div>
+          </div>
+
+          <!-- Thinking Collapsible (Collapsed) - Example -->
+          <div style="position:relative;margin-bottom:12px;">
+            <div style="position:absolute;left:-20px;width:16px;height:16px;background:#f59e0b;border-radius:50%;z-index:1;box-shadow:0 0 0 2px #fafafa;"></div>
+            <div style="background:#fff;border:1px solid #e0e0e0;border-radius:8px;">
+              <div style="padding:6px 10px;background:#fef3c7;display:flex;align-items:center;gap:6px;cursor:pointer;">
+                <span style="font-size:10px;">&rsaquo;</span>
+                <span style="font-size:10px;color:#92400e;font-weight:600;">Thinking (1 步)</span>
+                <span style="font-size:9px;color:#b45309;">· +0.3s</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Agent Response with Markdown -->
+          <div style="position:relative;margin-bottom:20px;">
+            <div style="position:absolute;left:-24px;width:24px;height:24px;background:#10b981;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:10px;z-index:1;box-shadow:0 0 0 2px #fafafa;">A</div>
+            <div style="display:inline-block;padding:12px 16px;background:#fff;border:1px solid #e5e7eb;border-radius:12px 12px 0 12px;max-width:85%;">
+              <div style="font-size:12px;margin-bottom:8px;">
+                <strong>北京天气</strong>
+              </div>
+              <div style="font-size:11px;color:#666;margin-bottom:8px;">
+                温度: 12°C · 多云 · 湿度 45%
+              </div>
+              <div style="font-size:11px;color:#666;margin-bottom:8px;">
+                <strong>穿衣建议:</strong><br/>
+                今天气温较低，建议穿厚外套或毛衣。
+              </div>
+              <div style="font-size:11px;color:#666;">
+                <code style="background:#f3f4f6;padding:2px 4px;border-radius:3px;">外套 + 长裤 + 围巾</code>
+              </div>
+            </div>
+          </div>
+
+          <!-- Second Tool Call (Chain example) -->
+          <div style="position:relative;margin-bottom:12px;">
+            <div style="position:absolute;left:-20px;width:16px;height:16px;background:#8b5cf6;border-radius:50%;z-index:1;box-shadow:0 0 0 2px #fafafa;"></div>
+            <div style="display:inline-block;padding:8px 12px;background:#f3e8ff;border-radius:8px;">
+              <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+                <span style="font-size:11px;">🔧</span>
+                <span style="font-size:10px;font-weight:600;">outfit.suggest</span>
+                <span style="font-size:9px;color:#10b981;">✓ 成功</span>
+              </div>
+              <div style="font-size:9px;color:#555;font-family:monospace;">建议: 羊毛外套 + 牛仔裤 + 围巾</div>
+            </div>
+          </div>
+
+          <!-- Final Agent Response -->
+          <div style="position:relative;">
+            <div style="position:absolute;left:-24px;width:24px;height:24px;background:#10b981;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:10px;z-index:1;box-shadow:0 0 0 2px #fafafa;">A</div>
+            <div style="display:inline-block;padding:12px 16px;background:#fff;border:1px solid #e5e7eb;border-radius:12px 12px 0 12px;max-width:85%;">
+              根据查询结果，为您推荐搭配：
+              <blockquote style="margin:8px 0;padding-left:12px;border-left:3px solid #8b5cf6;color:#666;font-size:11px;">
+                外套: 羊毛大衣<br/>
+                内搭: 毛衣<br/>
+                下装: 牛仔裤<br/>
+                配饰: 围巾（保暖必备）
+              </blockquote>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Input Area -->
+      <div style="padding:12px 14px;border-top:1px solid #e5e7eb;background:#fff;">
+        <div style="display:flex;gap:8px;">
+          <input style="flex:1;padding:10px 14px;border:1px solid #ddd;border-radius:20px;font-size:12px;outline:none;" placeholder="输入消息..." />
+          <button style="padding:0 20px;background:#3b82f6;color:#fff;border:none;border-radius:20px;font-size:12px;">发送</button>
+        </div>
+        <div style="margin-top:6px;display:flex;gap:12px;font-size:9px;color:#999;">
+          <span>Context: ctx_abc123</span>
+          <span>Messages: 6</span>
+          <span>Token: 1240</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h3 style="margin-top:20px;">设计要点</h3>
+
+<div class="pros-cons">
+  <div class="pros">
+    <h4>核心特性</h4>
+    <ul>
+      <li><strong>时间轴布局</strong> — 左侧连续时间线，清晰展示消息顺序</li>
+      <li><strong>Thinking 可折叠</strong> — 点击展开/收起，折叠时显示步骤数</li>
+      <li><strong>Thinking 分块</strong> — 每块标记时间戳 [T1 +0.2s]</li>
+      <li><strong>工具调用展示</strong> — 显示工具名、参数、结果，链式调用沿时间线排列</li>
+      <li><strong>Markdown 渲染</strong> — 支持标题、代码块、引用等</li>
+      <li><strong>Context ID 显示</strong> — 底部显示当前上下文 ID</li>
+    </ul>
+  </div>
+  <div class="cons">
+    <h4>需要确认</h4>
+    <ul>
+      <li>Thinking 默认展开还是折叠？</li>
+      <li>是否需要显示 "正在输入..." 状态？</li>
+      <li>工具调用参数是否需要可折叠？</li>
+      <li>是否支持复制消息/工具结果？</li>
+    </ul>
+  </div>
+</div>

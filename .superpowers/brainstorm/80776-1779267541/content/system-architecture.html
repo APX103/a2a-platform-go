@@ -1,0 +1,171 @@
+<h2>系统架构设计</h2>
+<p class="subtitle">完整的前后端架构</p>
+
+<div class="mockup">
+  <div class="mockup-header">系统架构图</div>
+  <div class="mockup-body" style="font-size:10px;">
+<pre style="background:#1f2937;color:#e5e7eb;padding:12px;border-radius:8px;overflow-x:auto;">
+┌─────────────────────────────────────────────────────────────────┐
+│                         Frontend (React)                         │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐           │
+│  │ ChatPage     │  │ ContextPanel │  │ SSEClient    │           │
+│  │ 时间轴布局   │  │ 会话列表     │  │ 流式事件处理 │           │
+│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘           │
+│         │                  │                  │                   │
+│         └──────────────────┴──────────────────┘                   │
+│                            │                                       │
+└────────────────────────────┼───────────────────────────────────────┘
+                             │
+                    ┌────────▼────────┐
+                    │  REST API + SSE │
+                    │  :18090         │
+                    └────────┬────────┘
+                             │
+        ┌────────────────────┼────────────────────┐
+        │                    │                    │
+┌───────▼────────┐  ┌────────▼────────┐  ┌──────▼──────────────┐
+│  BuiltinAgent  │  │  ContextStore   │  │  SubagentEngine     │
+│  Engine        │  │  (DB: contexts) │  │  (DB: subagent_     │
+│  - LLM 调用    │  │  - 会话列表     │  │   sessions)         │
+│  - 工具调用    │  │  - 会话详情     │  │  - spawn_agent      │
+│  - Thinking    │  │  - 会话删除     │  │  - 隔离 context     │
+└───────┬────────┘  └─────────────────┘  └──────┬───────────────┘
+        │                                         │
+        │                                        │
+┌───────▼────────┐  ┌────────────────────────────▼──────────┐
+│  MCP Client    │  │  BuiltinTools                         │
+│  - stdio       │  │  - fetch_url                           │
+│  - sse         │  │  - web_search (抽象接口)               │
+└────────────────┘  │  - read_file / write_file             │
+                    │  - list_directory                      │
+                    │  - tool_search                          │
+                    └──────────────────────────────────────────┘
+
+数据库表:
+┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐
+│ agents       │  │ contexts     │  │ messages      │  │ subagent_    │
+│ - name       │  │ - id         │  │ - id          │  │ sessions     │
+│ - type       │  │ - agent_name │  │ - context_id  │  │ - id         │
+│ - config     │  │ - title      │  │ - role        │  │ - parent_... │
+└──────────────┘  │ - created_at │  │ - content     │  │ - status     │
+                  └──────────────┘  │ - reasoning   │  │ - messages   │
+                                     │ - tool_calls  │  └──────────────┘
+                                     │ - thinking_   │
+                                     │   blocks      │
+                                     └──────────────┘
+</pre>
+  </div>
+</div>
+
+<div class="section" style="margin-top:20px;">
+  <h3>前端组件结构</h3>
+
+  <div style="border:1px solid #ddd;border-radius:8px;padding:12px;font-size:11px;">
+    <div style="display:flex;gap:20px;">
+      <div style="flex:1;">
+        <div style="color:#3b82f6;font-weight:600;margin-bottom:8px;">App.tsx</div>
+        <div style="padding-left:12px;border-left:2px solid #e5e7eb;margin-left:4px;">
+          <div>Routes: /, /agents, /builtin-agents, /chat/:name</div>
+          <div>Layout: 侧边栏 + 主内容区</div>
+        </div>
+      </div>
+      <div style="flex:1;">
+        <div style="color:#8b5cf6;font-weight:600;margin-bottom:8px;">ChatPage.tsx</div>
+        <div style="padding-left:12px;border-left:2px solid #e5e7eb;margin-left:4px;">
+          <div>Timeline: 时间轴消息列表</div>
+          <div>InputBox: 输入框 + 发送</div>
+          <div>Header: Agent 信息 + 操作按钮</div>
+        </div>
+      </div>
+      <div style="flex:1;">
+        <div style="color:#10b981;font-weight:600;margin-bottom:8px;">Components/</div>
+        <div style="padding-left:12px;border-left:2px solid #e5e7eb;margin-left:4px;">
+          <div>MessageTimeline.tsx</div>
+          <div>ThinkingBlock.tsx (可折叠)</div>
+          <div>ToolCallCard.tsx</div>
+          <div>MarkdownRenderer.tsx</div>
+          <div>SSEClient.tsx</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top:20px;">
+  <h3>后端 API 端点（新增）</h3>
+
+  <div style="overflow-x:auto;border:1px solid #ddd;border-radius:8px;">
+    <table style="width:100%;font-size:10px;border-collapse:collapse;">
+      <thead>
+        <tr style="background:#f9fafb;">
+          <th style="padding:8px;text-align:left;border-bottom:1px solid #ddd;">方法</th>
+          <th style="padding:8px;text-align:left;border-bottom:1px solid #ddd;">路径</th>
+          <th style="padding:8px;text-align:left;border-bottom:1px solid #ddd;">说明</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td style="padding:8px;">GET</td><td style="padding:8px;">/api/contexts/:agentName</td><td style="padding:8px;">列出 Agent 的所有 context 会话</td></tr>
+        <tr><td style="padding:8px;">GET</td><td style="padding:8px;">/api/contexts/:id</td><td style="padding:8px;">获取 context 详情（消息列表）</td></tr>
+        <tr><td style="padding:8px;">DELETE</td><td style="padding:8px;">/api/contexts/:id</td><td style="padding:8px;">删除 context 会话</td></tr>
+        <tr><td style="padding:8px;">GET</td><td style="padding:8px;">/api/messages/by-context/:contextId</td><td style="padding:8px;">按 contextId 获取消息</td></tr>
+        <tr><td style="padding:8px;">GET</td><td style="padding:8px;">/api/subagents/:contextId</td><td style="padding:8px;">列出 context 的所有 subagent</td></tr>
+        <tr><td style="padding:8px;">GET</td><td style="padding:8px;">/api/subagents/:id</td><td style="padding:8px;">获取 subagent 详情</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="section" style="margin-top:20px;">
+  <h3>实施阶段规划</h3>
+
+  <div class="options" data-multiselect>
+    <div class="option" data-choice="phase1">
+      <div class="letter">Phase 1</div>
+      <div class="content">
+        <h4>基础聊天界面 (1-2 天)</h4>
+        <ul style="margin:4px 0 4px 16px;font-size:10px;">
+          <li>ChatPage 组件 + 时间轴布局</li>
+          <li>SSE 事件处理（text.delta, tool.call, tool.result）</li>
+          <li>Markdown 渲染</li>
+          <li>输入框 + 发送功能</li>
+        </ul>
+      </div>
+    </div>
+    <div class="option" data-choice="phase2">
+      <div class="letter">Phase 2</div>
+      <div class="content">
+        <h4>Thinking + 工具展示 (1-2 天)</h4>
+        <ul style="margin:4px 0 4px 16px;font-size:10px;">
+          <li>Thinking 可折叠组件</li>
+          <li>Thinking 分时间块展示</li>
+          <li>ToolCallCard 完整展示</li>
+          <li>工具调用链式关系可视化</li>
+        </ul>
+      </div>
+    </div>
+    <div class="option" data-choice="phase3">
+      <div class="letter">Phase 3</div>
+      <div class="content">
+        <h4>Context 管理 (1-2 天)</h4>
+        <ul style="margin:4px 0 4px 16px;font-size:10px;">
+          <li>contexts 表 + CRUD API</li>
+          <li>会话列表侧边栏</li>
+          <li>会话切换 + 继续对话</li>
+          <li>会话删除功能</li>
+        </ul>
+      </div>
+    </div>
+    <div class="option" data-choice="phase4">
+      <div class="letter">Phase 4</div>
+      <div class="content">
+        <h4>内置工具 + Subagent (2-3 天)</h4>
+        <ul style="margin:4px 0 4px 16px;font-size:10px;">
+          <li>fetch_url, read_file, write_file 等工具</li>
+          <li>web_search 抽象接口</li>
+          <li>subagent_sessions 表</li>
+          <li>spawn_agent 工具 + 隔离 context</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>

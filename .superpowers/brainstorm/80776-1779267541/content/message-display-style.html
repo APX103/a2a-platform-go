@@ -1,0 +1,143 @@
+<h2>消息展示设计</h2>
+<p class="subtitle">如何展示普通消息、Thinking 过程和工具调用</p>
+
+<div class="cards">
+  <div class="card" data-choice="message-style-a" onclick="toggleSelect(this)">
+    <div class="mockup">
+      <div class="mockup-header">方案 A: 折叠式分组</div>
+      <div class="mockup-body">
+        <div style="border:1px solid #ddd;border-radius:8px;overflow:hidden;font-size:11px;">
+          <!-- User Message -->
+          <div style="display:flex;gap:8px;padding:12px;border-bottom:1px solid #eee;">
+            <div style="width:24px;height:24px;background:#3b82f6;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:10px;">U</div>
+            <div style="flex:1;padding:8px;background:#e3f2fd;border-radius:8px;">帮我查询北京的天气</div>
+          </div>
+
+          <!-- Thinking - Collapsible -->
+          <div style="padding:8px 12px;background:#fafafa;border-bottom:1px solid #eee;">
+            <div style="display:flex;align-items:center;gap:6px;color:#666;font-size:10px;cursor:pointer;">
+              <span style="transform:rotate(90deg);">&rsaquo;</span>
+              <span>Thinking (2 步)</span>
+              <span style="color:#999;">· 0.8s</span>
+            </div>
+            <div style="margin-top:8px;padding:8px;background:#fff;border:1px solid #e0e0e0;border-radius:6px;font-size:10px;color:#555;font-family:monospace;">
+              <div style="color:#f59e0b;margin-bottom:4px;">[T1 0.2s] 需要调用天气 API 获取北京天气</div>
+              <div style="color:#f59e0b;">[T2 0.6s] 解析返回结果并格式化</div>
+            </div>
+          </div>
+
+          <!-- Tool Call - Chain -->
+          <div style="padding:8px 12px;background:#fef3c7;border-bottom:1px solid #eee;">
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+              <span style="font-size:12px;">🔧</span>
+              <span style="font-size:10px;font-weight:600;">get_weather</span>
+              <span style="font-size:10px;color:#666;">→ 成功</span>
+            </div>
+            <div style="font-size:9px;color:#555;font-family:monospace;white-space:pre-wrap;">{"city": "北京", "temp": 18, "condition": "晴"}</div>
+          </div>
+
+          <!-- Agent Response with Markdown -->
+          <div style="display:flex;gap:8px;padding:12px;justify-content:flex-end;">
+            <div style="max-width:80%;padding:10px;background:#10b981;color:#fff;border-radius:8px;">
+              <div style="font-weight:600;margin-bottom:4px;">北京天气</div>
+              <div style="margin-bottom:4px;">当前气温: <strong>18°C</strong></div>
+              <div>天气状况: 晴 ☀️</div>
+            </div>
+            <div style="width:24px;height:24px;background:#10b981;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:10px;">A</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>折叠式分组</h3>
+      <p>Thinking 和工具调用作为独立区块，可折叠/展开。Thinking 按时间分块标记。工具调用显示链式结果。</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="message-style-b" onclick="toggleSelect(this)">
+    <div class="mockup">
+      <div class="mockup-header">方案 B: 时间轴模式</div>
+      <div class="mockup-body">
+        <div style="border:1px solid #ddd;border-radius:8px;overflow:hidden;font-size:11px;padding:12px;">
+          <!-- Timeline -->
+          <div style="position:relative;padding-left:32px;">
+            <!-- Timeline Line -->
+            <div style="position:absolute;left:11px;top:8px;bottom:8px;width:2px;background:#e5e7eb;"></div>
+
+            <!-- User -->
+            <div style="position:relative;margin-bottom:16px;">
+              <div style="position:absolute;left:-24px;width:24px;height:24px;background:#3b82f6;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:10px;z-index:1;">U</div>
+              <div style="padding:8px;background:#e3f2fd;border-radius:8px;">帮我查询北京的天气</div>
+            </div>
+
+            <!-- Thinking T1 -->
+            <div style="position:relative;margin-bottom:8px;">
+              <div style="position:absolute;left:-24px;width:12px;height:12px;background:#f59e0b;border-radius:50%;z-index:1;"></div>
+              <div style="font-size:9px;color:#f59e0b;">Thinking: 需要调用天气 API</div>
+            </div>
+
+            <!-- Tool Call -->
+            <div style="position:relative;margin-bottom:8px;">
+              <div style="position:absolute;left:-24px;width:12px;height:12px;background:#8b5cf6;border-radius:50%;z-index:1;"></div>
+              <div style="padding:6px;background:#f3e8ff;border-radius:6px;font-size:9px;">
+                <span style="font-weight:600;">get_weather</span> → {"city":"北京","temp":18}
+              </div>
+            </div>
+
+            <!-- Thinking T2 -->
+            <div style="position:relative;margin-bottom:8px;">
+              <div style="position:absolute;left:-24px;width:12px;height:12px;background:#f59e0b;border-radius:50%;z-index:1;"></div>
+              <div style="font-size:9px;color:#f59e0b;">Thinking: 格式化结果</div>
+            </div>
+
+            <!-- Agent Response -->
+            <div style="position:relative;">
+              <div style="position:absolute;left:-24px;width:24px;height:24px;background:#10b981;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:10px;z-index:1;">A</div>
+              <div style="padding:8px;background:#10b981;color:#fff;border-radius:8px;">
+                <strong>北京天气</strong><br/>18°C, 晴 ☀️
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>时间轴模式</h3>
+      <p>所有事件沿时间线排列，清晰展示执行顺序。不同事件类型用不同颜色/图标标记。</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="message-style-c" onclick="toggleSelect(this)">
+    <div class="mockup">
+      <div class="mockup-header">方案 C: 内联式消息</div>
+      <div class="mockup-body">
+        <div style="border:1px solid #ddd;border-radius:8px;overflow:hidden;font-size:11px;">
+          <!-- Agent Message with Inline Elements -->
+          <div style="display:flex;gap:8px;padding:12px;">
+            <div style="width:24px;height:24px;background:#10b981;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:10px;">A</div>
+            <div style="flex:1;">
+              <!-- Inline Thinking -->
+              <div style="margin-bottom:6px;font-size:9px;color:#666;font-style:italic;">
+                <span style="color:#f59e0b;">💭</span> 查询天气 API...
+              </div>
+              <!-- Inline Tool -->
+              <div style="margin-bottom:6px;padding:4px 8px;background:#f3e8ff;border-radius:4px;font-size:9px;">
+                <span style="color:#8b5cf6;">🔧</span> get_weather: {"city":"北京","temp":18}
+              </div>
+              <!-- Response -->
+              <div style="padding:8px;background:#e8f5e9;border-radius:8px;">
+                <strong>北京天气</strong><br/>
+                当前气温: 18°C<br/>
+                天气状况: 晴 ☀️
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>内联式消息</h3>
+      <p>Thinking 和工具调用直接嵌入在 Agent 回复消息内部。简洁但可能难以区分复杂调用链。</p>
+    </div>
+  </div>
+</div>

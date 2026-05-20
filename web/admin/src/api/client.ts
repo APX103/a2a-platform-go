@@ -12,6 +12,15 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json();
 }
 
+export type {
+  Context,
+  ContextListItem,
+  ContextDetail,
+  ListContextsResponse,
+  CreateContextRequest,
+  SubagentSession,
+} from '../types/chat';
+
 export interface Agent {
   name: string;
   url: string;
@@ -137,4 +146,35 @@ export const api = {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json', 'X-Admin-Token': token },
     }),
+
+  // Context API
+  listContexts: (agentName: string, params?: { page?: number; size?: number }) => {
+    const searchParams = new URLSearchParams();
+    if (params?.page) searchParams.set('page', String(params.page));
+    if (params?.size) searchParams.set('size', String(params.size));
+    const qs = searchParams.toString();
+    return request<ListContextsResponse>(`/api/contexts/${agentName}${qs ? '?' + qs : ''}`);
+  },
+
+  getContext: (id: string) => request<ContextDetail>(`/api/contexts/${id}`),
+
+  createContext: (req: CreateContextRequest) => request<Context>('/api/contexts', {
+    method: 'POST',
+    body: JSON.stringify(req),
+  }),
+
+  deleteContext: (id: string, token?: string) => request<void>(`/api/contexts/${id}`, {
+    method: 'DELETE',
+    ...(token && { headers: { 'X-Admin-Token': token } }),
+  }),
+
+  updateContextTitle: (id: string, title: string) => request<Context>(`/api/contexts/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ title }),
+  }),
+
+  // Subagent API
+  listSubagents: (contextId: string) => request<{ context_id: string; subagents: SubagentSession[] }>(`/api/subagents/${contextId}`),
+
+  getSubagent: (id: string) => request<SubagentSession>(`/api/subagents/${id}`),
 };

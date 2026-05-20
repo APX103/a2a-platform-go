@@ -1,0 +1,157 @@
+<h2>完整功能列表（更新）</h2>
+<p class="subtitle">基于 mcp-conversation-engine + Kimi CLI subagent</p>
+
+<div class="section">
+  <h3>核心功能模块</h3>
+
+  <div class="cards">
+    <div class="card" data-choice="module-chat" onclick="toggleSelect(this)">
+      <div class="card-body">
+        <h3>🗨️ 聊天模块</h3>
+        <ul style="margin:8px 0;padding-left:16px;font-size:11px;">
+          <li>/chat/:agentName 路由，时间轴布局</li>
+          <li>Thinking 可折叠展示（分时间块）</li>
+          <li>Markdown 渲染（代码高亮、表格、引用）</li>
+          <li>工具调用展示（参数 + 结果 + 链式调用）</li>
+          <li>SSE 流式响应处理</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="card" data-choice="module-context" onclick="toggleSelect(this)">
+      <div class="card-body">
+        <h3>📁 Context 管理</h3>
+        <ul style="margin:8px 0;padding-left:16px;font-size:11px;">
+          <li>每个 Agent 多个 context 会话</li>
+          <li>/api/contexts/:agentName 列出会话</li>
+          <li>/api/contexts/:id 获取会话详情</li>
+          <li>支持继续对话（基于 contextId）</li>
+          <li>会话删除 API</li>
+          <li>会话标题自动生成</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="card" data-choice="module-tools" onclick="toggleSelect(this)">
+      <div class="card-body">
+        <h3>🔧 内置工具</h3>
+        <ul style="margin:8px 0;padding-left:16px;font-size:11px;">
+          <li>fetch_url（HTTP 请求）</li>
+          <li>web_search（需接入搜索 API）</li>
+          <li>tool_search（MCP 工具 schema 查询）</li>
+          <li>read_file / write_file / edit_file（文件操作）</li>
+          <li>list_directory（目录遍历）</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="card" data-choice="module-subagent" onclick="toggleSelect(this)">
+      <div class="card-body">
+        <h3>🤖 Subagent 系统</h3>
+        <ul style="margin:8px 0;padding-left:16px;font-size:11px;">
+          <li>spawn_agent 工具</li>
+          <li>独立 context 隔离</li>
+          <li>Foreground/Background 两种模式</li>
+          <li>subagent_sessions 表</li>
+          <li>禁止嵌套调用（1层深度）</li>
+          <li>超时控制（5分钟）</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top:20px;">
+  <h3>数据库 Schema 变更</h3>
+
+  <div class="mockup">
+    <div class="mockup-header">messages 表扩展</div>
+    <div class="mockup-body" style="font-size:10px;font-family:monospace;">
+      <div style="color:#666;">-- 新增字段</div>
+      <div style="margin:4px 0;">ALTER TABLE messages ADD COLUMN reasoning_content TEXT;</div>
+      <div style="margin:4px 0;">ALTER TABLE messages ADD COLUMN tool_calls JSON;</div>
+      <div style="margin:4px 0;">ALTER TABLE messages ADD COLUMN tool_call_id VARCHAR(64);</div>
+      <div style="margin:4px 0;">ALTER TABLE messages ADD COLUMN thinking_blocks JSON;</div>
+      <div style="color:#666;margin-top:8px;">-- thinking_blocks 格式: [{"id":"t1","timestamp":123456,"content":"..."}]</div>
+    </div>
+  </div>
+
+  <div class="mockup" style="margin-top:12px;">
+    <div class="mockup-header">contexts 表（新增）</div>
+    <div class="mockup-body" style="font-size:10px;font-family:monospace;">
+      <div style="margin:4px 0;">CREATE TABLE contexts (</div>
+      <div style="margin:4px 0;">  id VARCHAR(36) PRIMARY KEY,</div>
+      <div style="margin:4px 0;">  agent_name VARCHAR(128) NOT NULL,</div>
+      <div style="margin:4px 0;">  title VARCHAR(256),</div>
+      <div style="margin:4px 0;">  message_count INT DEFAULT 0,</div>
+      <div style="margin:4px 0;">  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,</div>
+      <div style="margin:4px 0;">  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,</div>
+      <div style="margin:4px 0;">  INDEX idx_agent (agent_name)</div>
+      <div style="margin:4px 0;">);</div>
+    </div>
+  </div>
+
+  <div class="mockup" style="margin-top:12px;">
+    <div class="mockup-header">subagent_sessions 表（新增）</div>
+    <div class="mockup-body" style="font-size:10px;font-family:monospace;">
+      <div style="margin:4px 0;">CREATE TABLE subagent_sessions (</div>
+      <div style="margin:4px 0;">  id VARCHAR(36) PRIMARY KEY,</div>
+      <div style="margin:4px 0;">  parent_context_id VARCHAR(36),</div>
+      <div style="margin:4px 0;">  parent_tool_call_id VARCHAR(64),</div>
+      <div style="margin:4px 0;">  task TEXT,</div>
+      <div style="margin:4px 0;">  context TEXT,</div>
+      <div style="margin:4px 0;">  status VARCHAR(16),  -- running, completed, failed</div>
+      <div style="margin:4px 0;">  messages JSON,</div>
+      <div style="margin:4px 0;">  result TEXT,</div>
+      <div style="margin:4px 0;">  error TEXT,</div>
+      <div style="margin:4px 0;">  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,</div>
+      <div style="margin:4px 0;">  completed_at TIMESTAMP</div>
+      <div style="margin:4px 0;">);</div>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top:20px;">
+  <h3>技术选型</h3>
+
+  <div class="pros-cons">
+    <div class="pros">
+      <h4>前端库</h4>
+      <ul>
+        <li><strong>Markdown:</strong> <code>react-markdown</code> + <code>remark-gfm</code></li>
+        <li><strong>代码高亮:</strong> <code>react-syntax-highlighter</code> 或 <code>shiki</code></li>
+        <li><strong>SSE:</strong> <code>@microsoft/fetch-event-source</code> (自动重连)</li>
+        <li><strong>状态:</strong> Zustand (轻量，易替换)</li>
+      </ul>
+    </div>
+    <div class="cons">
+      <h4>后端库</h4>
+      <ul>
+        <li><strong>LLM:</strong> 保留现有 OpenAI/Anthropic provider</li>
+        <li><strong>HTTP:</strong> Go 标准库 net/http + <code>retryablehttp</code> 可选</li>
+        <li><strong>Web Search:</strong> 接口抽象，支持多种搜索 API</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top:20px;">
+  <h3>SSE 事件类型（扩展）</h3>
+
+  <div style="border:1px solid #ddd;border-radius:8px;overflow:hidden;font-size:11px;">
+    <div style="padding:8px;background:#e3f2fd;border-bottom:1px solid #ddd;">
+      <strong>新增事件:</strong>
+    </div>
+    <div style="padding:8px 12px;">
+      <div style="margin:4px 0;"><span style="color:#3b82f6;">thinking.delta</span> — Thinking 内容流式推送</div>
+      <div style="margin:4px 0;"><span style="color:#3b82f6;">thinking.block</span> — Thinking 分块（带时间戳）</div>
+      <div style="margin:4px 0;"><span style="color:#8b5cf6;">tool.call_start</span> — 工具调用开始（含参数）</div>
+      <div style="margin:4px 0;"><span style="color:#8b5cf6;">tool.call_delta</span> — 工具参数流式推送</div>
+      <div style="margin:4px 0;"><span style="color:#8b5cf6;">tool.call_end</span> — 工具调用结束</div>
+      <div style="margin:4px 0;"><span style="color:#10b981;">tool.result</span> — 工具执行结果</div>
+      <div style="margin:4px 0;"><span style="color:#f59e0b;">subagent.started</span> — Subagent 启动</div>
+      <div style="margin:4px 0;"><span style="color:#f59e0b;">subagent.completed</span> — Subagent 完成</div>
+      <div style="margin:4px 0;"><span style="color:#ef4444;">subagent.error</span> — Subagent 错误</div>
+    </div>
+  </div>
+</div>

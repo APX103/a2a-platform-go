@@ -19,7 +19,7 @@ func NewListContextsHandler(svcCtx *svc.ServiceContext) *ListContextsHandler {
 }
 
 func (h *ListContextsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	agentName := getPathParam(r, "agentName")
+	agentName := r.Header.Get("X-Path-Param-AgentName")
 	if agentName == "" {
 		jsonError(w, "missing agent name", 400)
 		return
@@ -74,7 +74,7 @@ func NewGetContextHandler(svcCtx *svc.ServiceContext) *GetContextHandler {
 }
 
 func (h *GetContextHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	id := getPathParam(r, "id")
+	id := r.Header.Get("X-Path-Param-Id")
 	if id == "" {
 		jsonError(w, "missing context id", 400)
 		return
@@ -153,7 +153,7 @@ func NewDeleteContextHandler(svcCtx *svc.ServiceContext) *DeleteContextHandler {
 }
 
 func (h *DeleteContextHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	id := getPathParam(r, "id")
+	id := r.Header.Get("X-Path-Param-Id")
 	if id == "" {
 		jsonError(w, "missing context id", 400)
 		return
@@ -178,7 +178,7 @@ func NewUpdateContextTitleHandler(svcCtx *svc.ServiceContext) *UpdateContextTitl
 }
 
 func (h *UpdateContextTitleHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	id := getPathParam(r, "id")
+	id := r.Header.Get("X-Path-Param-Id")
 	if id == "" {
 		jsonError(w, "missing context id", 400)
 		return
@@ -222,7 +222,7 @@ func NewListSubagentsHandler(svcCtx *svc.ServiceContext) *ListSubagentsHandler {
 }
 
 func (h *ListSubagentsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	contextId := getPathParam(r, "contextId")
+	contextId := r.Header.Get("X-Path-Param-ContextId")
 	if contextId == "" {
 		jsonError(w, "missing context_id", 400)
 		return
@@ -255,7 +255,7 @@ func NewGetSubagentHandler(svcCtx *svc.ServiceContext) *GetSubagentHandler {
 }
 
 func (h *GetSubagentHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	id := getPathParam(r, "id")
+	id := r.Header.Get("X-Path-Param-Id")
 	if id == "" {
 		jsonError(w, "missing subagent id", 400)
 		return

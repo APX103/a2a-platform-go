@@ -1,0 +1,126 @@
+<h2>需要实现的功能清单</h2>
+<p class="subtitle">对比 a2a-platform-go 与 mcp-conversation-engine</p>
+
+<div class="split">
+  <div class="mockup" style="flex:1;">
+    <div class="mockup-header">a2a-platform-go (当前)</div>
+    <div class="mockup-body" style="font-size:11px;">
+      <div style="color:#10b981;">✅ 已有:</div>
+      <ul style="margin:8px 0 8px 20px;padding:0;">
+        <li>SSE 流式响应 (text.delta)</li>
+        <li>ContextId 概念</li>
+        <li>工具调用 (tool.call, tool.result)</li>
+        <li>Traces 表记录事件</li>
+        <li>Messages 表记录消息</li>
+        <li>Builtin Agent 引擎</li>
+      </ul>
+      <div style="color:#f59e0b;">⚠️ 缺少:</div>
+      <ul style="margin:8px 0 8px 20px;padding:0;">
+        <li>Thinking 持久化和展示</li>
+        <li>Chat 前端界面</li>
+        <li>Markdown 渲染</li>
+        <li>Thinking 分时间块展示</li>
+        <li>会话历史管理</li>
+        <li>reasoning_content 字段</li>
+        <li>tool_call 的完整参数展示</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="mockup" style="flex:1;">
+    <div class="mockup-header">mcp-conversation-engine (参考)</div>
+    <div class="mockup-body" style="font-size:11px;">
+      <div style="color:#10b981;">参考特性:</div>
+      <ul style="margin:8px 0 8px 20px;padding:0;">
+        <li>reasoning_content 字段</li>
+        <li>SSE 事件: reasoning, text, tool_call_*</li>
+        <li>Session 持久化</li>
+        <li>ChatMessage 完整结构</li>
+        <li>多轮对话支持</li>
+        <li>工具调用完整参数</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top:20px;">
+  <h3>需要实现的功能列表</h3>
+
+  <div class="options" data-multiselect>
+    <div class="option" data-choice="f1">
+      <div class="letter">1</div>
+      <div class="content">
+        <h4>前端: ChatPage 组件</h4>
+        <p>时间轴布局 + Thinking 可折叠 + Markdown 渲染</p>
+      </div>
+    </div>
+    <div class="option" data-choice="f2">
+      <div class="letter">2</div>
+      <div class="content">
+        <h4>前端: SSE 事件处理增强</h4>
+        <p>处理 thinking 事件、工具调用完整参数、时间戳</p>
+      </div>
+    </div>
+    <div class="option" data-choice="f3">
+      <div class="letter">3</div>
+      <div class="content">
+        <h4>后端: Messages 表扩展</h4>
+        <p>添加 reasoning_content、tool_calls、tool_call_id 字段</p>
+      </div>
+    </div>
+    <div class="option" data-choice="f4">
+      <div class="letter">4</div>
+      <div class="content">
+        <h4>后端: Engine 增强支持 Thinking</h4>
+        <p>支持 LLM reasoning_content，分时间块记录</p>
+      </div>
+    </div>
+    <div class="option" data-choice="f5">
+      <div class="letter">5</div>
+      <div class="content">
+        <h4>后端: SSE 事件扩展</h4>
+        <p>添加 thinking.delta, tool.call_start 等事件</p>
+      </div>
+    </div>
+    <div class="option" data-choice="f6">
+      <div class="letter">6</div>
+      <div class="content">
+        <h4>后端: 会话历史 API</h4>
+        <p>按 contextId 获取历史消息</p>
+      </div>
+    </div>
+    <div class="option" data-choice="f7">
+      <div class="letter">7</div>
+      <div class="content">
+        <h4>后端: 会话列表 API</h4>
+        <p>列出所有对话会话（支持分页）</p>
+      </div>
+    </div>
+    <div class="option" data-choice="f8">
+      <div class="letter">8</div>
+      <div class="content">
+        <h4>前端: 会话列表和切换</h4>
+        <p>左侧侧边栏显示对话历史，点击切换</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="pros-cons" style="margin-top:20px;">
+  <div class="pros">
+    <h4>优先级建议</h4>
+    <ul>
+      <li><strong>P0 (核心):</strong> f1+f2+f3 — 基础聊天界面和数据结构</li>
+      <li><strong>P1 (重要):</strong> f4+f5 — Thinking 和 SSE 扩展</li>
+      <li><strong>P2 (增强):</strong> f6+f7+f8 — 会话管理</li>
+    </ul>
+  </div>
+  <div class="cons">
+    <h4>技术选型确认</h4>
+    <ul>
+      <li>Markdown 库: <code>react-markdown</code> + <code>remark-gfm</code></li>
+      <li>SSE 库: 原生 <code>EventSource</code> 或 <code>@microsoft/fetch-event-source</code></li>
+      <li>思考拆分: 后端 LLM 响应时自动分块或前端处理</li>
+    </ul>
+  </div>
+</div>

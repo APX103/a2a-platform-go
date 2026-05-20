@@ -309,19 +309,38 @@ func makeContextRouteHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tail := pathTail(r.URL.Path, "/api/contexts/")
 		if tail == "" {
-			// This would list all contexts (not implemented per spec)
-			jsonError(w, "not found", 404)
+			switch r.Method {
+			case http.MethodPost:
+				handler.NewCreateContextHandler(svcCtx).ServeHTTP(w, r)
+			default:
+				jsonError(w, "not found", 404)
+			}
 			return
 		}
 		// Check if it's an agent name or context ID
-		r.Header.Set("X-Path-Param-AgentName", tail)
-		switch r.Method {
-		case http.MethodGet:
-			handler.NewListContextsHandler(svcCtx).ServeHTTP(w, r)
-		case http.MethodPost:
-			handler.NewCreateContextHandler(svcCtx).ServeHTTP(w, r)
-		default:
-			jsonError(w, "method not allowed", 405)
+		// Agent names are typically shorter and don't contain UUID-like patterns
+		// Context IDs are UUIDs (36 chars with hyphens)
+		isUUID := len(tail) == 36 && tail[8] == '-' && tail[13] == '-' && tail[18] == '-' && tail[23] == '-'
+		if isUUID {
+			r.Header.Set("X-Path-Param-Id", tail)
+			switch r.Method {
+			case http.MethodGet:
+				handler.NewGetContextHandler(svcCtx).ServeHTTP(w, r)
+			case http.MethodDelete:
+				handler.NewDeleteContextHandler(svcCtx).ServeHTTP(w, r)
+			case http.MethodPatch:
+				handler.NewUpdateContextTitleHandler(svcCtx).ServeHTTP(w, r)
+			default:
+				jsonError(w, "method not allowed", 405)
+			}
+		} else {
+			r.Header.Set("X-Path-Param-AgentName", tail)
+			switch r.Method {
+			case http.MethodGet:
+				handler.NewListContextsHandler(svcCtx).ServeHTTP(w, r)
+			default:
+				jsonError(w, "method not allowed", 405)
+			}
 		}
 	}
 }
@@ -333,12 +352,24 @@ func makeSubagentRouteHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			jsonError(w, "not found", 404)
 			return
 		}
-		r.Header.Set("X-Path-Param-ContextId", tail)
-		switch r.Method {
-		case http.MethodGet:
-			handler.NewListSubagentsHandler(svcCtx).ServeHTTP(w, r)
-		default:
-			jsonError(w, "method not allowed", 405)
+		// Check if it's a context ID or subagent ID
+		isUUID := len(tail) == 36 && tail[8] == '-' && tail[13] == '-' && tail[18] == '-' && tail[23] == '-'
+		if isUUID {
+			r.Header.Set("X-Path-Param-Id", tail)
+			switch r.Method {
+			case http.MethodGet:
+				handler.NewGetSubagentHandler(svcCtx).ServeHTTP(w, r)
+			default:
+				jsonError(w, "method not allowed", 405)
+			}
+		} else {
+			r.Header.Set("X-Path-Param-ContextId", tail)
+			switch r.Method {
+			case http.MethodGet:
+				handler.NewListSubagentsHandler(svcCtx).ServeHTTP(w, r)
+			default:
+				jsonError(w, "method not allowed", 405)
+			}
 		}
 	}
 }
