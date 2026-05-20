@@ -29,6 +29,8 @@ export interface Agent {
   status?: string;
   type?: string;
   version?: string;
+  registered_at?: string;
+  last_seen?: string;
 }
 
 export interface Task {

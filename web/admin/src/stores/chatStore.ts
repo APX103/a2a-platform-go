@@ -95,7 +95,7 @@ export const useChatStore = create<ChatState>()(
           const toolCalls = m.tool_calls.map((tc) =>
             tc.id === toolId ? { ...tc, ...updates } : tc
           );
-          return { ...m, tool_calls };
+          return { ...m, tool_calls: toolCalls };
         }
         return m;
       });
