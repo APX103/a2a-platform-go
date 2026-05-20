@@ -296,23 +296,58 @@ func (s *MessageStore) GetByTask(taskId string) ([]*model.Message, error) {
 }
 
 func (s *MessageStore) GetByContext(contextId string) ([]*model.Message, error) {
-	rows, err := s.db.Query(
-		"SELECT m.id, m.task_id, m.role, m.content, m.timestamp FROM messages m JOIN tasks t ON m.task_id=t.local_task_id WHERE t.context_id=? ORDER BY m.timestamp",
-		contextId,
-	)
+	query := `SELECT id, task_id, context_id, role, content, reasoning_content, tool_calls,
+			  tool_call_id, thinking_blocks, timestamp
+			  FROM messages WHERE context_id = ? ORDER BY timestamp`
+
+	rows, err := s.db.Query(query, contextId)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
+
 	var result []*model.Message
 	for rows.Next() {
 		var m model.Message
-		if err := rows.Scan(&m.Id, &m.TaskId, &m.Role, &m.Content, &m.Timestamp); err != nil {
+		var reasoningContent, toolCalls, toolCallId, thinkingBlocks sql.NullString
+
+		if err := rows.Scan(&m.Id, &m.TaskId, &m.ContextId, &m.Role, &m.Content,
+			&reasoningContent, &toolCalls, &toolCallId, &thinkingBlocks, &m.Timestamp); err != nil {
 			return nil, err
 		}
+
+		if reasoningContent.Valid {
+			m.ReasoningContent = &reasoningContent.String
+		}
+		if toolCalls.Valid {
+			m.ToolCalls = toolCalls.String
+		}
+		if toolCallId.Valid {
+			m.ToolCallId = &toolCallId.String
+		}
+		if thinkingBlocks.Valid {
+			m.ThinkingBlocks = thinkingBlocks.String
+		}
+
 		result = append(result, &m)
 	}
+
 	return result, nil
+}
+
+// AppendWithContext appends a message with context tracking.
+func (s *MessageStore) AppendWithContext(m *model.Message) error {
+	query := `INSERT INTO messages (task_id, context_id, role, content, reasoning_content, tool_calls, tool_call_id, thinking_blocks, timestamp)
+			  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	_, err := s.db.Exec(query, m.TaskId, m.ContextId, m.Role, m.Content,
+		m.ReasoningContent, m.ToolCalls, m.ToolCallId, m.ThinkingBlocks, m.Timestamp)
+	return err
+}
+
+// DeleteByContext removes all messages for a context.
+func (s *MessageStore) DeleteByContext(contextId string) error {
+	_, err := s.db.Exec(`DELETE FROM messages WHERE context_id = ?`, contextId)
+	return err
 }
 
 // ===== TraceStore =====

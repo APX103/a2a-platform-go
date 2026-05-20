@@ -26,6 +26,8 @@ type ServiceContext struct {
 	Tasks          *TaskStore
 	Messages       *MessageStore
 	Traces         *TraceStore
+	Contexts       *ContextStore
+	Subagents      *SubagentStore
 	Registry       *AgentRegistry
 	EventBus       *events.Broadcaster
 	Engine         *engine.Engine
@@ -40,6 +42,8 @@ func NewServiceContext(c *config.Config) *ServiceContext {
 	tasks := NewTaskStore(db)
 	messages := NewMessageStore(db)
 	traces := NewTraceStore(db)
+	contexts := NewContextStore(db)
+	subagents := NewSubagentStore(db)
 	registry := NewAgentRegistry(agents)
 	eventBus := events.NewBroadcaster()
 	eng := engine.New()
@@ -52,6 +56,8 @@ func NewServiceContext(c *config.Config) *ServiceContext {
 		Tasks:          tasks,
 		Messages:       messages,
 		Traces:         traces,
+		Contexts:       contexts,
+		Subagents:      subagents,
 		Registry:       registry,
 		EventBus:       eventBus,
 		Engine:         eng,
