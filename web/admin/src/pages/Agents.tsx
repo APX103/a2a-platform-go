@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Plus, Trash2 } from 'lucide-react'
+import { Plus, Trash2, MessageSquare } from 'lucide-react'
 import { api, Agent } from '../api/client'
 
 export default function Agents() {
@@ -115,7 +115,7 @@ export default function Agents() {
           ) : (
             agents.map(agent => (
               <div key={agent.name} className="flex items-center justify-between p-4 hover:bg-[var(--bg-tertiary)]/30 transition-colors">
-                <Link to={`/agents/${agent.name}`} className="flex-1 no-underline">
+                <div className="flex-1">
                   <div className="flex items-center gap-3">
                     <div className={`w-2 h-2 rounded-full ${agent.status === 'connected' ? 'bg-[var(--success)]' : 'bg-[var(--text-tertiary)]'}`} />
                     <div>
@@ -123,11 +123,19 @@ export default function Agents() {
                       <div className="text-xs text-[var(--text-tertiary)]">{agent.description || agent.url}</div>
                     </div>
                   </div>
-                </Link>
-                <div className="flex items-center gap-3">
+                </div>
+                <div className="flex items-center gap-2">
                   <span className={`text-xs px-2 py-0.5 rounded-full ${agent.status === 'connected' ? 'bg-[var(--success)]/10 text-[var(--success)]' : 'bg-[var(--text-tertiary)]/10 text-[var(--text-tertiary)]'}`}>
                     {agent.status || 'unknown'}
                   </span>
+                  <Link
+                    to={`/chat/${agent.name}`}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-[var(--accent)] text-white rounded-md hover:bg-[var(--accent-hover)] transition-colors"
+                    title="Chat with agent"
+                  >
+                    <MessageSquare size={14} />
+                    Chat
+                  </Link>
                   <button
                     onClick={() => handleDelete(agent.name)}
                     className="p-1.5 text-[var(--text-tertiary)] hover:text-[var(--error)] transition-colors rounded"

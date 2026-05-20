@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
+import { Link } from 'react-router-dom'
 import { api, BuiltinAgent, CreateBuiltinAgentReq } from '../api/client'
-import { Plus, Trash2, X } from 'lucide-react'
+import { Plus, Trash2, X, MessageSquare } from 'lucide-react'
 
 export default function BuiltinAgents() {
   const [agents, setAgents] = useState<BuiltinAgent[]>([])
@@ -75,7 +76,7 @@ export default function BuiltinAgents() {
           {agents.map(agent => (
             <div key={agent.name} className="p-4 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)]">
               <div className="flex items-start justify-between">
-                <div>
+                <div className="flex-1">
                   <h3 className="font-medium text-[var(--text-primary)]">{agent.name}</h3>
                   <p className="text-xs text-[var(--text-tertiary)] mt-0.5">
                     {agent.provider} / {agent.model}
@@ -84,12 +85,22 @@ export default function BuiltinAgents() {
                     <p className="text-sm text-[var(--text-secondary)] mt-1">{agent.description}</p>
                   )}
                 </div>
-                <button
-                  onClick={() => handleDelete(agent.name)}
-                  className="p-1.5 rounded hover:bg-[var(--bg-tertiary)] text-[var(--text-tertiary)] hover:text-[var(--error)] transition-colors"
-                >
-                  <Trash2 size={14} />
-                </button>
+                <div className="flex items-center gap-2">
+                  <Link
+                    to={`/chat/${agent.name}`}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-[var(--accent)] text-white rounded-md hover:bg-[var(--accent-hover)] transition-colors"
+                    title="Chat with agent"
+                  >
+                    <MessageSquare size={14} />
+                    Chat
+                  </Link>
+                  <button
+                    onClick={() => handleDelete(agent.name)}
+                    className="p-1.5 rounded hover:bg-[var(--bg-tertiary)] text-[var(--text-tertiary)] hover:text-[var(--error)] transition-colors"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
               </div>
               <div className="mt-2 flex gap-3 text-xs text-[var(--text-tertiary)]">
                 <span>Max tokens: {agent.max_tokens}</span>
