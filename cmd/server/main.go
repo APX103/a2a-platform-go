@@ -93,6 +93,10 @@ func main() {
 	mux.HandleFunc("/api/builtin-agents", makeBuiltinAgentListHandler(svcCtx))
 	mux.HandleFunc("/api/builtin-agents/", makeBuiltinAgentDetailHandler(svcCtx))
 
+	// Context and Subagent API
+	mux.HandleFunc("/api/contexts/", makeContextRouteHandler(svcCtx))
+	mux.HandleFunc("/api/subagents/", makeSubagentRouteHandler(svcCtx))
+
 	// Events SSE stream (for TUI real-time monitoring)
 	mux.HandleFunc("/api/events", handler.NewEventsHandler(svcCtx.EventBus).ServeHTTP)
 
@@ -295,6 +299,44 @@ func makeBuiltinAgentDetailHandler(svcCtx *svc.ServiceContext) http.HandlerFunc 
 		switch r.Method {
 		case http.MethodDelete:
 			handler.NewDeleteBuiltinAgentHandler(svcCtx).ServeHTTP(w, r)
+		default:
+			jsonError(w, "method not allowed", 405)
+		}
+	}
+}
+
+func makeContextRouteHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		tail := pathTail(r.URL.Path, "/api/contexts/")
+		if tail == "" {
+			// This would list all contexts (not implemented per spec)
+			jsonError(w, "not found", 404)
+			return
+		}
+		// Check if it's an agent name or context ID
+		r.Header.Set("X-Path-Param-AgentName", tail)
+		switch r.Method {
+		case http.MethodGet:
+			handler.NewListContextsHandler(svcCtx).ServeHTTP(w, r)
+		case http.MethodPost:
+			handler.NewCreateContextHandler(svcCtx).ServeHTTP(w, r)
+		default:
+			jsonError(w, "method not allowed", 405)
+		}
+	}
+}
+
+func makeSubagentRouteHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		tail := pathTail(r.URL.Path, "/api/subagents/")
+		if tail == "" {
+			jsonError(w, "not found", 404)
+			return
+		}
+		r.Header.Set("X-Path-Param-ContextId", tail)
+		switch r.Method {
+		case http.MethodGet:
+			handler.NewListSubagentsHandler(svcCtx).ServeHTTP(w, r)
 		default:
 			jsonError(w, "method not allowed", 405)
 		}

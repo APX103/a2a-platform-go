@@ -139,9 +139,8 @@ func (h *CreateContextHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(ctx)
+	okJSON(w, ctx)
 }
 
 // DeleteContextHandler deletes a context.
@@ -211,6 +210,64 @@ func (h *UpdateContextTitleHandler) ServeHTTP(w http.ResponseWriter, r *http.Req
 	}
 
 	okJSON(w, ctx)
+}
+
+// ListSubagentsHandler lists subagents for a context.
+type ListSubagentsHandler struct {
+	svcCtx *svc.ServiceContext
+}
+
+func NewListSubagentsHandler(svcCtx *svc.ServiceContext) *ListSubagentsHandler {
+	return &ListSubagentsHandler{svcCtx: svcCtx}
+}
+
+func (h *ListSubagentsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	contextId := getPathParam(r, "contextId")
+	if contextId == "" {
+		jsonError(w, "missing context_id", 400)
+		return
+	}
+
+	subagents, err := h.svcCtx.Subagents.ListByParent(contextId)
+	if err != nil {
+		errHTTP(w, err)
+		return
+	}
+
+	// Ensure empty slice, not nil
+	if subagents == nil {
+		subagents = make([]*model.SubagentSession, 0)
+	}
+
+	okJSON(w, map[string]interface{}{
+		"context_id": contextId,
+		"subagents":  subagents,
+	})
+}
+
+// GetSubagentHandler retrieves a subagent by ID.
+type GetSubagentHandler struct {
+	svcCtx *svc.ServiceContext
+}
+
+func NewGetSubagentHandler(svcCtx *svc.ServiceContext) *GetSubagentHandler {
+	return &GetSubagentHandler{svcCtx: svcCtx}
+}
+
+func (h *GetSubagentHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	id := getPathParam(r, "id")
+	if id == "" {
+		jsonError(w, "missing subagent id", 400)
+		return
+	}
+
+	subagent, err := h.svcCtx.Subagents.Get(id)
+	if err != nil || subagent == nil {
+		jsonError(w, "subagent not found", 404)
+		return
+	}
+
+	okJSON(w, subagent)
 }
 
 // parseInt helper
