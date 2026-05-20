@@ -168,10 +168,16 @@ CREATE TABLE IF NOT EXISTS tasks (
 CREATE TABLE IF NOT EXISTS messages (
 	id BIGINT AUTO_INCREMENT PRIMARY KEY,
 	task_id VARCHAR(64) NOT NULL,
+	context_id VARCHAR(64),
 	role VARCHAR(16) NOT NULL,
 	content TEXT,
+	reasoning_content TEXT,
+	tool_calls JSON,
+	tool_call_id VARCHAR(64),
+	thinking_blocks JSON,
 	timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-	INDEX idx_task_id (task_id)
+	INDEX idx_task_id (task_id),
+	INDEX idx_context_id (context_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS traces (
@@ -186,6 +192,33 @@ CREATE TABLE IF NOT EXISTS traces (
 	duration_ms BIGINT,
 	INDEX idx_task_id (task_id),
 	INDEX idx_agent_name (agent_name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS contexts (
+	id VARCHAR(36) PRIMARY KEY,
+	agent_name VARCHAR(128) NOT NULL,
+	title VARCHAR(256),
+	message_count INT DEFAULT 0,
+	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+	updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+	INDEX idx_agent_name (agent_name),
+	INDEX idx_updated_at (updated_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS subagent_sessions (
+	id VARCHAR(36) PRIMARY KEY,
+	parent_context_id VARCHAR(36) NOT NULL,
+	parent_tool_call_id VARCHAR(64),
+	task TEXT,
+	context TEXT,
+	status VARCHAR(16) NOT NULL DEFAULT 'running',
+	messages JSON,
+	result TEXT,
+	error TEXT,
+	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+	completed_at TIMESTAMP,
+	INDEX idx_parent_context (parent_context_id),
+	INDEX idx_status (status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 `
 
@@ -224,12 +257,18 @@ CREATE INDEX IF NOT EXISTS idx_tasks_state ON tasks(state);
 CREATE TABLE IF NOT EXISTS messages (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	task_id TEXT NOT NULL,
+	context_id TEXT,
 	role TEXT NOT NULL,
 	content TEXT,
+	reasoning_content TEXT,
+	tool_calls TEXT,
+	tool_call_id TEXT,
+	thinking_blocks TEXT,
 	timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_messages_task_id ON messages(task_id);
+CREATE INDEX IF NOT EXISTS idx_messages_context_id ON messages(context_id);
 
 CREATE TABLE IF NOT EXISTS traces (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -245,6 +284,35 @@ CREATE TABLE IF NOT EXISTS traces (
 
 CREATE INDEX IF NOT EXISTS idx_traces_task_id ON traces(task_id);
 CREATE INDEX IF NOT EXISTS idx_traces_agent_name ON traces(agent_name);
+
+CREATE TABLE IF NOT EXISTS contexts (
+	id TEXT PRIMARY KEY,
+	agent_name TEXT NOT NULL,
+	title TEXT,
+	message_count INTEGER DEFAULT 0,
+	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+	updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_contexts_agent_name ON contexts(agent_name);
+CREATE INDEX IF NOT EXISTS idx_contexts_updated_at ON contexts(updated_at);
+
+CREATE TABLE IF NOT EXISTS subagent_sessions (
+	id TEXT PRIMARY KEY,
+	parent_context_id TEXT NOT NULL,
+	parent_tool_call_id TEXT,
+	task TEXT,
+	context TEXT,
+	status TEXT NOT NULL DEFAULT 'running',
+	messages TEXT,
+	result TEXT,
+	error TEXT,
+	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+	completed_at TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_subagent_parent ON subagent_sessions(parent_context_id);
+CREATE INDEX IF NOT EXISTS idx_subagent_status ON subagent_sessions(status);
 `
 
 func splitStatements(schema string) []string {
