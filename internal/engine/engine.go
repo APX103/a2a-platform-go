@@ -14,6 +14,7 @@ import (
 	"a2a-platform/internal/llm"
 	"a2a-platform/internal/mcpclient"
 	"a2a-platform/internal/model"
+	"a2a-platform/internal/tools"
 )
 
 const (
@@ -87,6 +88,46 @@ func (e *Engine) RegisterAgent(cfg config.BuiltinAgent) error {
 		agent.MCPClients = append(agent.MCPClients, client)
 		allTools = append(allTools, client.Tools...)
 	}
+
+	// Add builtin tools
+	for _, builtinTool := range tools.GetBuiltinTools() {
+		// Convert ToolParameter to InputSchema
+		properties := make(map[string]interface{})
+		required := make([]string, 0)
+		for _, param := range builtinTool.Parameters {
+			paramType := param.Type
+			if paramType == "number" {
+				properties[param.Name] = map[string]interface{}{
+					"type": "number",
+				}
+			} else if paramType == "boolean" {
+				properties[param.Name] = map[string]interface{}{
+					"type": "boolean",
+				}
+			} else {
+				properties[param.Name] = map[string]interface{}{
+					"type": "string",
+				}
+			}
+			if param.Required {
+				required = append(required, param.Name)
+			}
+		}
+		inputSchema := map[string]interface{}{
+			"type":       "object",
+			"properties": properties,
+		}
+		if len(required) > 0 {
+			inputSchema["required"] = required
+		}
+
+		allTools = append(allTools, llm.ToolDef{
+			Name:        builtinTool.Name,
+			Description: builtinTool.Description,
+			InputSchema: inputSchema,
+		})
+	}
+
 	agent.Tools = allTools
 
 	e.mu.Lock()
@@ -322,13 +363,36 @@ func (e *Engine) runLoop(
 }
 
 func (e *Engine) callTool(agent *BuiltinAgent, name string, arguments string) (string, error) {
+	// Check MCP tools first
 	for _, c := range agent.MCPClients {
 		for _, t := range c.Tools {
 			if t.Name == name {
-				return c.CallTool(name, arguments)
+				result, err := c.CallTool(name, arguments)
+				if err != nil {
+					return fmt.Sprintf("Error: %v", err), err
+				}
+				return result, nil
 			}
 		}
 	}
+
+	// Check builtin tools
+	for _, tool := range tools.GetAllTools() {
+		if tool.Name == name {
+			var args map[string]any
+			if arguments != "" {
+				if err := json.Unmarshal([]byte(arguments), &args); err != nil {
+					return "", fmt.Errorf("error parsing arguments: %w", err)
+				}
+			}
+			result, err := tool.Execute(args)
+			if err != nil {
+				return fmt.Sprintf("Error: %v", err), err
+			}
+			return result, nil
+		}
+	}
+
 	return "", fmt.Errorf("tool %q not found", name)
 }
 
