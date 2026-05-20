@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"a2a-platform/internal/model"
+	"a2a-platform/internal/engine"
 	"a2a-platform/internal/svc"
 )
 
@@ -157,11 +158,6 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	name := getPathParam(r, "name")
-	conn := h.svcCtx.Registry.GetClient(name)
-	if conn == nil {
-		jsonError(w, fmt.Sprintf("agent '%s' not found", name), 404)
-		return
-	}
 
 	// Read the incoming request body
 	body, err := io.ReadAll(r.Body)
@@ -231,6 +227,35 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.svcCtx.Traces.Append(sendTrace)
 	if h.svcCtx.EventBus != nil {
 		h.svcCtx.EventBus.TraceEvent(sendTrace)
+	}
+
+	// Check if this is a builtin agent
+	if builtinAgent := h.svcCtx.Engine.GetAgent(name); builtinAgent != nil {
+		h.svcCtx.Tasks.Update(taskId, map[string]interface{}{"state": "WORKING"})
+		deps := &engine.Deps{
+			LoadHistory: func(cid string) ([]*model.Message, error) {
+				return h.svcCtx.Messages.GetByContext(cid)
+			},
+			RecordTrace: func(e *model.TraceEvent) error {
+				return h.svcCtx.Traces.Append(e)
+			},
+		}
+		h.svcCtx.Engine.HandleRequest(r.Context(), w, name, userText, *contextId, taskId, deps)
+
+		// Record final agent response from the engine
+		// The engine already streamed SSE to the client; now record the final message
+		h.svcCtx.Tasks.Update(taskId, map[string]interface{}{"state": "RESPONDED"})
+		if h.svcCtx.EventBus != nil {
+			h.svcCtx.EventBus.Task("update", taskId, name, "RESPONDED")
+		}
+		return
+	}
+
+	// External agent: check connection exists
+	conn := h.svcCtx.Registry.GetClient(name)
+	if conn == nil {
+		jsonError(w, fmt.Sprintf("agent '%s' not found", name), 404)
+		return
 	}
 
 	// Forward to the bridge agent with timeout

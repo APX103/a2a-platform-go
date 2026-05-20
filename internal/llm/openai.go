@@ -1,0 +1,196 @@
+package llm
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+)
+
+type OpenAIProvider struct {
+	BaseURL string
+	APIKey  string
+	Client  *http.Client
+}
+
+func NewOpenAIProvider(baseURL, apiKey string) *OpenAIProvider {
+	return &OpenAIProvider{
+		BaseURL: strings.TrimRight(baseURL, "/"),
+		APIKey:  apiKey,
+		Client:  &http.Client{},
+	}
+}
+
+func (p *OpenAIProvider) ChatStream(ctx context.Context, req *ChatRequest) (<-chan StreamEvent, error) {
+	body := p.buildRequest(req)
+	jsonBody, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.BaseURL+"/chat/completions", bytes.NewReader(jsonBody))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	if p.APIKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+p.APIKey)
+	}
+
+	resp, err := p.Client.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != 200 {
+		defer resp.Body.Close()
+		errBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("OpenAI API error %d: %s", resp.StatusCode, string(errBody))
+	}
+
+	ch := make(chan StreamEvent, 32)
+	go p.readStream(resp.Body, ch)
+	return ch, nil
+}
+
+func (p *OpenAIProvider) buildRequest(req *ChatRequest) map[string]interface{} {
+	msgs := make([]map[string]interface{}, 0, len(req.Messages)+1)
+
+	if req.SystemPrompt != "" {
+		msgs = append(msgs, map[string]interface{}{
+			"role":    "system",
+			"content": req.SystemPrompt,
+		})
+	}
+
+	for _, m := range req.Messages {
+		msg := map[string]interface{}{"role": m.Role}
+		if m.Content != "" {
+			msg["content"] = m.Content
+		}
+		if len(m.ToolCalls) > 0 {
+			calls := make([]map[string]interface{}, len(m.ToolCalls))
+			for i, tc := range m.ToolCalls {
+				calls[i] = map[string]interface{}{
+					"id":   tc.ID,
+					"type": "function",
+					"function": map[string]interface{}{
+						"name":      tc.Name,
+						"arguments": tc.Arguments,
+					},
+				}
+			}
+			msg["tool_calls"] = calls
+		}
+		if m.ToolCallID != "" {
+			msg["tool_call_id"] = m.ToolCallID
+		}
+		msgs = append(msgs, msg)
+	}
+
+	body := map[string]interface{}{
+		"model":    req.Model,
+		"messages": msgs,
+		"stream":   true,
+	}
+	if req.MaxTokens > 0 {
+		body["max_tokens"] = req.MaxTokens
+	}
+
+	if len(req.Tools) > 0 {
+		tools := make([]map[string]interface{}, len(req.Tools))
+		for i, t := range req.Tools {
+			tools[i] = map[string]interface{}{
+				"type": "function",
+				"function": map[string]interface{}{
+					"name":        t.Name,
+					"description": t.Description,
+					"parameters":  t.InputSchema,
+				},
+			}
+		}
+		body["tools"] = tools
+	}
+
+	return body
+}
+
+func (p *OpenAIProvider) readStream(body io.ReadCloser, ch chan<- StreamEvent) {
+	defer close(ch)
+	defer body.Close()
+
+	scanner := bufio.NewScanner(body)
+	// Accumulate tool calls across chunks
+	toolCalls := map[int]*ToolCall{}
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		data := strings.TrimPrefix(line, "data: ")
+		if data == "[DONE]" {
+			break
+		}
+
+		var chunk struct {
+			Choices []struct {
+				Delta struct {
+					Content   string `json:"content"`
+					ToolCalls []struct {
+						Index    int    `json:"index"`
+						ID       string `json:"id"`
+						Function struct {
+							Name      string `json:"name"`
+							Arguments string `json:"arguments"`
+						} `json:"function"`
+					} `json:"tool_calls"`
+				} `json:"delta"`
+				FinishReason *string `json:"finish_reason"`
+			} `json:"choices"`
+		}
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			continue
+		}
+		if len(chunk.Choices) == 0 {
+			continue
+		}
+
+		delta := chunk.Choices[0].Delta
+
+		if delta.Content != "" {
+			ch <- StreamEvent{Type: "text", Text: delta.Content}
+		}
+
+		for _, tc := range delta.ToolCalls {
+			existing, ok := toolCalls[tc.Index]
+			if !ok {
+				existing = &ToolCall{ID: tc.ID, Name: tc.Function.Name}
+				toolCalls[tc.Index] = existing
+			}
+			if tc.ID != "" {
+				existing.ID = tc.ID
+			}
+			if tc.Function.Name != "" {
+				existing.Name = tc.Function.Name
+			}
+			existing.Arguments += tc.Function.Arguments
+		}
+
+		if chunk.Choices[0].FinishReason != nil && *chunk.Choices[0].FinishReason == "tool_calls" {
+			for _, tc := range toolCalls {
+				ch <- StreamEvent{Type: "tool_call", ToolCall: &ToolCall{
+					ID:        tc.ID,
+					Name:      tc.Name,
+					Arguments: tc.Arguments,
+				}}
+			}
+			toolCalls = map[int]*ToolCall{}
+		}
+	}
+
+	ch <- StreamEvent{Type: "done"}
+}

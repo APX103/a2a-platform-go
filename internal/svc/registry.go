@@ -177,6 +177,36 @@ func (r *AgentRegistry) RegisterAgent(name, agentType, url string, port int, ski
 	return conn, nil
 }
 
+// RegisterBuiltinAgent registers an in-process agent without HTTP discovery.
+func (r *AgentRegistry) RegisterBuiltinAgent(name, description string, skills []model.Skill) error {
+	now := time.Now().UTC().Format(time.RFC3339)
+	skillsJson, _ := json.Marshal(skills)
+	card := AgentCard{Name: name, Description: description}
+	cardJson, _ := json.Marshal(card)
+
+	dbRecord := &model.Agent{
+		Name:          name,
+		Type:          "builtin",
+		Status:        "connected",
+		ConnectedAt:   &now,
+		SkillsJson:    string(skillsJson),
+		AgentCardJson: string(cardJson),
+	}
+	if err := r.store.Upsert(dbRecord); err != nil {
+		return err
+	}
+
+	conn := &AgentConnection{Card: card, Url: ""}
+	r.mu.Lock()
+	r.connections[name] = conn
+	r.mu.Unlock()
+
+	if r.EventBus != nil {
+		r.EventBus.AgentRegistered(name, "connected", "builtin")
+	}
+	return nil
+}
+
 // DisconnectAgent removes agent from connections and marks DB.
 func (r *AgentRegistry) DisconnectAgent(name string) error {
 	r.mu.Lock()
@@ -242,6 +272,10 @@ func (r *AgentRegistry) runHealthCheck() {
 	r.mu.RUnlock()
 
 	for _, a := range connectedAgents {
+		// Skip builtin agents — they are in-process and always healthy
+		if a.url == "" {
+			continue
+		}
 		// Phase 1: check if bridge HTTP is reachable (agent card endpoint)
 		cardURL := a.url + "/.well-known/agent.json"
 		resp, err := client.Get(cardURL)
@@ -287,6 +321,9 @@ func (r *AgentRegistry) runHealthCheck() {
 	for _, rec := range records {
 		if rec.Status == "connected" || rec.Status == "online" {
 			continue // already handled above
+		}
+		if rec.Type == "builtin" {
+			continue
 		}
 		card, err := fetchAgentCard(rec.Url)
 		if err != nil {

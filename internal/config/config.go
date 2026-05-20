@@ -3,18 +3,24 @@ package config
 import (
 	"fmt"
 	"os"
+	"regexp"
 
 	"gopkg.in/yaml.v2"
 )
 
 type Config struct {
-	Name         string   `yaml:"name"`
-	Host         string   `yaml:"host"`
-	Port         int      `yaml:"port"`
-	MySQL        MySQL    `yaml:"mysql"`
-	AdminToken   string   `yaml:"admin_token"`
-	CorsOrigins  []string `yaml:"cors_origins"`
-	RateLimitRPS int      `yaml:"rate_limit_rps"`
+	Name          string         `yaml:"name"`
+	Host          string         `yaml:"host"`
+	Port          int            `yaml:"port"`
+	MySQL         *MySQL         `yaml:"mysql"`
+	AdminToken    string         `yaml:"admin_token"`
+	CorsOrigins   []string       `yaml:"cors_origins"`
+	RateLimitRPS  int            `yaml:"rate_limit_rps"`
+	BuiltinAgents []BuiltinAgent `yaml:"builtin_agents"`
+}
+
+func (c *Config) IsMySQL() bool {
+	return c.MySQL != nil && c.MySQL.Host != ""
 }
 
 type MySQL struct {
@@ -27,29 +33,75 @@ type MySQL struct {
 	MaxOpen  int    `yaml:"max_open"`
 }
 
+type BuiltinAgent struct {
+	Name           string      `yaml:"name" json:"name"`
+	Provider       string      `yaml:"provider" json:"provider"`
+	BaseURL        string      `yaml:"base_url" json:"base_url"`
+	APIKey         string      `yaml:"api_key" json:"-"`
+	Model          string      `yaml:"model" json:"model"`
+	Description    string      `yaml:"description" json:"description"`
+	SystemPrompt   string      `yaml:"system_prompt" json:"system_prompt"`
+	MaxTokens      int         `yaml:"max_tokens" json:"max_tokens"`
+	MaxToolRounds  int         `yaml:"max_tool_rounds" json:"max_tool_rounds"`
+	MCPServers     []MCPServer `yaml:"mcp_servers" json:"mcp_servers,omitempty"`
+}
+
+type MCPServer struct {
+	Name      string   `yaml:"name" json:"name"`
+	Transport string   `yaml:"transport" json:"transport"`
+	URL       string   `yaml:"url" json:"url,omitempty"`
+	Command   string   `yaml:"command" json:"command,omitempty"`
+	Args      []string `yaml:"args" json:"args,omitempty"`
+}
+
+var envVarRe = regexp.MustCompile(`\$\{([^}]+)\}`)
+
+func expandEnv(s string) string {
+	return envVarRe.ReplaceAllStringFunc(s, func(match string) string {
+		key := envVarRe.FindStringSubmatch(match)[1]
+		if v, ok := os.LookupEnv(key); ok {
+			return v
+		}
+		return match
+	})
+}
+
 func MustLoad(path string) *Config {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		panic(err)
 	}
+	// Expand environment variables before parsing
+	expanded := expandEnv(string(data))
+
 	var c Config
-	if err := yaml.Unmarshal(data, &c); err != nil {
+	if err := yaml.Unmarshal([]byte(expanded), &c); err != nil {
 		panic(err)
 	}
 	if c.Port == 0 {
 		c.Port = 18090
 	}
-	if c.MySQL.MaxIdle == 0 {
-		c.MySQL.MaxIdle = 10
-	}
-	if c.MySQL.MaxOpen == 0 {
-		c.MySQL.MaxOpen = 100
+	if c.MySQL != nil {
+		if c.MySQL.MaxIdle == 0 {
+			c.MySQL.MaxIdle = 10
+		}
+		if c.MySQL.MaxOpen == 0 {
+			c.MySQL.MaxOpen = 100
+		}
 	}
 	if len(c.CorsOrigins) == 0 {
 		c.CorsOrigins = []string{"*"}
 	}
 	if c.RateLimitRPS == 0 {
 		c.RateLimitRPS = 100
+	}
+	for i := range c.BuiltinAgents {
+		if c.BuiltinAgents[i].MaxTokens == 0 {
+			c.BuiltinAgents[i].MaxTokens = 4096
+		}
+		if c.BuiltinAgents[i].MaxToolRounds == 0 {
+			c.BuiltinAgents[i].MaxToolRounds = 10
+		}
 	}
 	return &c
 }

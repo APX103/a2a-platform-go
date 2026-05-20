@@ -25,4 +25,11 @@ etc/config.local.yaml
 bridges/*-bridge.yaml
 !bridges/*.example.yaml
 
-server
+/server
+
+# Frontend
+web/admin/node_modules/
+web/dist/
+
+# SQLite data
+data/

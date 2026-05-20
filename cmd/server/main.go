@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io/fs"
 	"log"
 	"log/slog"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 	"a2a-platform/internal/config"
 	"a2a-platform/internal/handler"
 	"a2a-platform/internal/svc"
+	"a2a-platform/web"
 
 	"golang.org/x/time/rate"
 )
@@ -35,6 +37,17 @@ func main() {
 
 	// Restore agent connections from DB on startup
 	svcCtx.Registry.RestoreConnections()
+
+	// Register builtin agents from config
+	for _, agentCfg := range cfg.BuiltinAgents {
+		if err := svcCtx.Engine.RegisterAgent(agentCfg); err != nil {
+			slog.Error("Failed to register builtin agent", "name", agentCfg.Name, "error", err)
+			continue
+		}
+		if err := svcCtx.Registry.RegisterBuiltinAgent(agentCfg.Name, agentCfg.Description, nil); err != nil {
+			slog.Error("Failed to persist builtin agent", "name", agentCfg.Name, "error", err)
+		}
+	}
 
 	// Start agent health check
 	svcCtx.Registry.StartHealthCheck(30 * time.Second)
@@ -65,6 +78,10 @@ func main() {
 	mux.HandleFunc("/api/traces/task/", makeTraceTaskHandler(svcCtx))
 	mux.HandleFunc("/api/traces/context/", makeTraceContextHandler(svcCtx))
 
+	// Builtin agents CRUD
+	mux.HandleFunc("/api/builtin-agents", makeBuiltinAgentListHandler(svcCtx))
+	mux.HandleFunc("/api/builtin-agents/", makeBuiltinAgentDetailHandler(svcCtx))
+
 	// Events SSE stream (for TUI real-time monitoring)
 	mux.HandleFunc("/api/events", handler.NewEventsHandler(svcCtx.EventBus).ServeHTTP)
 
@@ -81,6 +98,10 @@ func main() {
 	mcpHandler := handler.NewMCPSSEHandler(svcCtx, hostURL)
 	mux.HandleFunc("/mcp/sse", mcpHandler.ServeSSE)
 	mux.HandleFunc("/mcp/messages", mcpHandler.ServeMessages)
+
+	// Embedded admin frontend (SPA)
+	distFS, _ := fs.Sub(web.AdminFS, "dist")
+	mux.HandleFunc("/", spaHandler(distFS))
 
 	// ===== Start server =====
 	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
@@ -185,6 +206,7 @@ func makeAgentDetailHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 		case http.MethodGet:
 			handler.NewGetAgentHandler(svcCtx).ServeHTTP(w, r)
 		case http.MethodDelete:
+			svcCtx.Engine.RemoveAgent(name)
 			svcCtx.Registry.DisconnectAgent(name)
 			w.WriteHeader(204)
 		default:
@@ -238,6 +260,36 @@ func makeTraceContextHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	}
 }
 
+func makeBuiltinAgentListHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			handler.NewListBuiltinAgentsHandler(svcCtx).ServeHTTP(w, r)
+		case http.MethodPost:
+			handler.NewCreateBuiltinAgentHandler(svcCtx).ServeHTTP(w, r)
+		default:
+			jsonError(w, "method not allowed", 405)
+		}
+	}
+}
+
+func makeBuiltinAgentDetailHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		name := pathTail(r.URL.Path, "/api/builtin-agents/")
+		if name == "" {
+			jsonError(w, "missing agent name", 400)
+			return
+		}
+		r.Header.Set("X-Path-Param-Name", name)
+		switch r.Method {
+		case http.MethodDelete:
+			handler.NewDeleteBuiltinAgentHandler(svcCtx).ServeHTTP(w, r)
+		default:
+			jsonError(w, "method not allowed", 405)
+		}
+	}
+}
+
 // ===== Middleware =====
 
 func corsMiddleware(next http.Handler, cfg *config.Config) http.Handler {
@@ -277,11 +329,15 @@ func authMiddleware(next http.Handler, svcCtx *svc.ServiceContext) http.Handler 
 		method := r.Method
 
 		// Only protect POST /api/agents and DELETE /api/agents/*
+		// Also protect builtin-agents CRUD
 		needsAuth := false
 		if method == http.MethodPost && path == "/api/agents" {
 			needsAuth = true
 		}
 		if method == http.MethodDelete && strings.HasPrefix(path, "/api/agents/") {
+			needsAuth = true
+		}
+		if (method == http.MethodPost || method == http.MethodDelete) && strings.HasPrefix(path, "/api/builtin-agents") {
 			needsAuth = true
 		}
 
@@ -360,4 +416,26 @@ func jsonError(w http.ResponseWriter, message string, code int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(map[string]string{"error": message})
+}
+
+func spaHandler(fsys fs.FS) http.HandlerFunc {
+	fileServer := http.FileServer(http.FS(fsys))
+	return func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimPrefix(r.URL.Path, "/")
+		if path == "" {
+			path = "index.html"
+		}
+		if _, err := fs.Stat(fsys, path); err == nil {
+			fileServer.ServeHTTP(w, r)
+			return
+		}
+		// SPA fallback: serve index.html for client-side routing
+		index, err := fs.ReadFile(fsys, "index.html")
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write(index)
+	}
 }

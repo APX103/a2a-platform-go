@@ -12,3 +12,20 @@ mysql:
   max_open: 100
 
 admin_token: "a2a-admin-token"
+
+# Example builtin agents (uncomment and configure to use):
+# builtin_agents:
+#   - name: assistant
+#     provider: openai          # openai or anthropic
+#     base_url: https://api.openai.com
+#     api_key: ${OPENAI_API_KEY}
+#     model: gpt-4o
+#     description: "General assistant"
+#     system_prompt: "You are a helpful assistant."
+#     max_tokens: 4096
+#     max_tool_rounds: 10
+#     mcp_servers:
+#       - name: filesystem
+#         transport: stdio
+#         command: npx
+#         args: ["-y", "@anthropic/mcp-filesystem"]
