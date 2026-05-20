@@ -33,11 +33,61 @@ type Task struct {
 
 // Message represents a chat message in a task.
 type Message struct {
-	Id        int64     `db:"id" json:"id"`
-	TaskId    string    `db:"task_id" json:"task_id"`
-	Role      string    `db:"role" json:"role"`
-	Content   string    `db:"content" json:"content"`
-	Timestamp time.Time `db:"timestamp" json:"timestamp"`
+	Id               int64      `db:"id" json:"id"`
+	TaskId           string     `db:"task_id" json:"task_id"`
+	ContextId        *string    `db:"context_id" json:"context_id,omitempty"`
+	Role             string     `db:"role" json:"role"`
+	Content          string     `db:"content" json:"content"`
+	ReasoningContent *string    `db:"reasoning_content" json:"reasoning_content,omitempty"`
+	ToolCalls        string     `db:"tool_calls" json:"tool_calls,omitempty"`
+	ToolCallId       *string    `db:"tool_call_id" json:"tool_call_id,omitempty"`
+	ThinkingBlocks   string     `db:"thinking_blocks" json:"thinking_blocks,omitempty"`
+	Timestamp        time.Time  `db:"timestamp" json:"timestamp"`
+}
+
+// ToolCall represents a single tool invocation.
+type ToolCall struct {
+	ID        string                 `json:"id"`
+	Name      string                 `json:"name"`
+	Arguments string                 `json:"arguments"`
+	Result    string                 `json:"result,omitempty"`
+	Status    string                 `json:"status,omitempty"` // "started", "completed", "error"
+	StartTime *time.Time             `json:"start_time,omitempty"`
+	EndTime   *time.Time             `json:"end_time,omitempty"`
+	Metadata  map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// ThinkingBlock represents a time-bounded thinking segment.
+type ThinkingBlock struct {
+	ID        string    `json:"id"`
+	Timestamp time.Time `json:"timestamp"`
+	Content   string    `json:"content"`
+	Duration  int64     `json:"duration_ms,omitempty"` // milliseconds since previous block
+}
+
+// Context represents a chat session/conversation context.
+type Context struct {
+	ID           string    `db:"id" json:"id"`
+	AgentName    string    `db:"agent_name" json:"agent_name"`
+	Title        string    `db:"title" json:"title"`
+	MessageCount int       `db:"message_count" json:"message_count"`
+	CreatedAt    time.Time `db:"created_at" json:"created_at"`
+	UpdatedAt    time.Time `db:"updated_at" json:"updated_at"`
+}
+
+// SubagentSession represents a spawned subagent execution.
+type SubagentSession struct {
+	ID                string     `db:"id" json:"id"`
+	ParentContextId   string     `db:"parent_context_id" json:"parent_context_id"`
+	ParentToolCallId  string     `db:"parent_tool_call_id" json:"parent_tool_call_id"`
+	Task              string     `db:"task" json:"task"`
+	Context           string     `db:"context" json:"context"`
+	Status            string     `db:"status" json:"status"` // "running", "completed", "failed", "timeout"
+	Messages          string     `db:"messages" json:"messages"` // JSON array
+	Result            string     `db:"result" json:"result,omitempty"`
+	Error             string     `db:"error" json:"error,omitempty"`
+	CreatedAt         time.Time  `db:"created_at" json:"created_at"`
+	CompletedAt       *time.Time `db:"completed_at" json:"completed_at,omitempty"`
 }
 
 // TraceEvent represents a trace event for observability.
@@ -124,4 +174,46 @@ type TraceResp struct {
 type ContextTraceResp struct {
 	ContextId string `json:"context_id"`
 	Trace     string `json:"trace"`
+}
+
+// CreateContextReq creates a new context/session.
+type CreateContextReq struct {
+	AgentName string `json:"agent_name"`
+	Title     string `json:"title,omitempty"`
+}
+
+// ContextListItem represents an item in the context list.
+type ContextListItem struct {
+	ID           string `json:"id"`
+	AgentName    string `json:"agent_name"`
+	Title        string `json:"title"`
+	MessageCount int    `json:"message_count"`
+	CreatedAt    string `json:"created_at"`
+	UpdatedAt    string `json:"updated_at"`
+}
+
+// ContextDetailResp includes the context with its messages.
+type ContextDetailResp struct {
+	Context  *Context  `json:"context"`
+	Messages []Message `json:"messages"`
+}
+
+// ListContextsResp paginated context list.
+type ListContextsResp struct {
+	Items []ContextListItem `json:"items"`
+	Total int64             `json:"total"`
+	Page  int               `json:"page"`
+	Size  int               `json:"size"`
+}
+
+// ChatSSEEvent represents an SSE event for chat streaming.
+type ChatSSEEvent struct {
+	Type      string      `json:"type"` // text.delta, thinking.delta, tool.call_start, etc.
+	TaskId    string      `json:"taskId,omitempty"`
+	ContextId string      `json:"contextId,omitempty"`
+	Text      string      `json:"text,omitempty"`
+	Thinking  string      `json:"thinking,omitempty"`
+	Tool      ToolCall    `json:"tool,omitempty"`
+	Error     string      `json:"error,omitempty"`
+	Metadata  interface{} `json:"metadata,omitempty"`
 }
