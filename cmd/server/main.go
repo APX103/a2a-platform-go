@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"a2a-platform/internal/bridge"
 	"a2a-platform/internal/config"
 	"a2a-platform/internal/handler"
 	"a2a-platform/internal/svc"
@@ -47,6 +48,16 @@ func main() {
 		if err := svcCtx.Registry.RegisterBuiltinAgent(agentCfg.Name, agentCfg.Description, nil); err != nil {
 			slog.Error("Failed to persist builtin agent", "name", agentCfg.Name, "error", err)
 		}
+	}
+
+	// Register bridge agents from config
+	for _, bridgeCfg := range cfg.BridgeAgents {
+		agent := bridge.New(bridgeCfg)
+		svcCtx.BridgeRegistry.Register(bridgeCfg.Name, agent)
+		if err := svcCtx.Registry.RegisterBuiltinAgent(bridgeCfg.Name, bridgeCfg.Description, nil); err != nil {
+			slog.Error("Failed to persist bridge agent", "name", bridgeCfg.Name, "error", err)
+		}
+		slog.Info("Registered bridge agent", "name", bridgeCfg.Name, "skills", len(bridgeCfg.Skills))
 	}
 
 	// Start agent health check

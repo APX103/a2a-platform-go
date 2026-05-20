@@ -42,7 +42,8 @@ Go 实现的 [Agent-to-Agent (A2A)](https://github.com/google/A2A) 协议平台�
 | 功能 | 说明 |
 |------|------|
 | **内建 LLM Agent** | 直接配置 OpenAI/Anthropic API，无需外部 Bridge，支持多轮对话 + MCP 工具调用 |
-| **Agent 注册/发现** | 注册 Agent → 自动抓取 AgentCard → 心跳检测 → 持久化 |
+| **Bridge Agent** | 配置式 HTTP/CLI 桥接，将任意 API 包装为 A2A Agent，无需编写代码 |
+| **Agent 注册/发现** | 注册外部 Agent → 自动抓取 AgentCard → 心跳检测 → 持久化 |
 | **A2A 消息代理** | `POST /agent/{name}` 透明转发 JSON-RPC，支持 SSE 流式 |
 | **MCP 端点** | `POST /mcp/messages` 暴露 `list_agents` / `send_to_agent` / `get_agent_info` 工具 |
 | **任务追踪** | 每条消息自动创建 Task，记录状态流转 |
@@ -116,7 +117,37 @@ curl -X POST http://localhost:18090/agent/assistant \
 
 返回 SSE 流式事件（text.delta、tool.call、task.status）。
 
-### 注册外部 Agent（Bridge 模式）
+### 配置 Bridge Agent（API 桥接）
+
+在 config 中直接桥接任意 OpenAI 兼容 API：
+
+```yaml
+# etc/config.yaml
+bridge_agents:
+  - name: my-llm
+    description: "Local LLM"
+    target:
+      http:
+        baseUrl: "http://localhost:8642"
+        headers:
+          Authorization: "Bearer ${LLM_API_KEY}"
+    skills:
+      - id: chat
+        name: Chat
+        invoke:
+          type: http
+          method: POST
+          path: /v1/chat/completions
+          body:
+            model: "qwen-72b"
+            messages:
+              - role: user
+                content: "{{inputText}}"
+          response:
+            text: "{{output.choices.0.message.content}}"
+```
+
+### 注册外部 Agent（独立进程）
 
 ```bash
 curl -X POST http://localhost:18090/api/agents \
@@ -167,6 +198,11 @@ MCP SSE 端点：`http://localhost:18090/mcp/sse`
 .
 ├── cmd/server/main.go           # 入口：路由 + 中间件 + SPA 服务
 ├── internal/
+│   ├── bridge/                  # Bridge Agent 引擎（HTTP/CLI 桥接）
+│   │   ├── bridge.go            # 核心：BridgeAgent + Registry + SSE 流式
+│   │   ├── http.go              # HTTP Skill 调用
+│   │   ├── cli.go               # CLI Skill 调用
+│   │   └── template.go          # {{var}} 模板渲染 + 响应提取
 │   ├── config/config.go         # YAML 配置（双数据库自动检测）
 │   ├── engine/engine.go         # 内建 Agent 引擎（LLM + MCP 工具循环）
 │   ├── llm/                     # LLM Provider（OpenAI、Anthropic）
@@ -185,6 +221,7 @@ MCP SSE 端点：`http://localhost:18090/mcp/sse`
 │   ├── admin/                   # React 前端源码
 │   ├── dist/                    # Vite 构建输出（git-ignored）
 │   └── embed.go                 # //go:embed
+├── docs/USAGE.md                # 完整使用指南
 ├── tests/e2e/e2e_test.go        # E2E 测试（63 cases）
 ├── etc/
 │   ├── config.yaml              # MySQL 模式配置

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"a2a-platform/internal/bridge"
 	"a2a-platform/internal/config"
 	"a2a-platform/internal/engine"
 	"a2a-platform/internal/events"
@@ -19,15 +20,16 @@ import (
 var DBDriver string
 
 type ServiceContext struct {
-	Config   *config.Config
-	DB       *sql.DB
-	Agents   *AgentStore
-	Tasks    *TaskStore
-	Messages *MessageStore
-	Traces   *TraceStore
-	Registry *AgentRegistry
-	EventBus *events.Broadcaster
-	Engine   *engine.Engine
+	Config         *config.Config
+	DB             *sql.DB
+	Agents         *AgentStore
+	Tasks          *TaskStore
+	Messages       *MessageStore
+	Traces         *TraceStore
+	Registry       *AgentRegistry
+	EventBus       *events.Broadcaster
+	Engine         *engine.Engine
+	BridgeRegistry *bridge.BridgeRegistry
 }
 
 func NewServiceContext(c *config.Config) *ServiceContext {
@@ -41,17 +43,19 @@ func NewServiceContext(c *config.Config) *ServiceContext {
 	registry := NewAgentRegistry(agents)
 	eventBus := events.NewBroadcaster()
 	eng := engine.New()
+	bridgeReg := bridge.NewRegistry()
 
 	return &ServiceContext{
-		Config:   c,
-		DB:       db,
-		Agents:   agents,
-		Tasks:    tasks,
-		Messages: messages,
-		Traces:   traces,
-		Registry: registry,
-		EventBus: eventBus,
-		Engine:   eng,
+		Config:         c,
+		DB:             db,
+		Agents:         agents,
+		Tasks:          tasks,
+		Messages:       messages,
+		Traces:         traces,
+		Registry:       registry,
+		EventBus:       eventBus,
+		Engine:         eng,
+		BridgeRegistry: bridgeReg,
 	}
 }
 

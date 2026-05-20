@@ -17,6 +17,58 @@ type Config struct {
 	CorsOrigins   []string       `yaml:"cors_origins"`
 	RateLimitRPS  int            `yaml:"rate_limit_rps"`
 	BuiltinAgents []BuiltinAgent `yaml:"builtin_agents"`
+	BridgeAgents  []BridgeAgent  `yaml:"bridge_agents"`
+}
+
+type BridgeAgent struct {
+	Name        string        `yaml:"name" json:"name"`
+	Description string        `yaml:"description" json:"description,omitempty"`
+	Version     string        `yaml:"version" json:"version,omitempty"`
+	Target      BridgeTarget  `yaml:"target" json:"target"`
+	Skills      []BridgeSkill `yaml:"skills" json:"skills"`
+}
+
+type BridgeTarget struct {
+	HTTP *BridgeHTTPTarget `yaml:"http" json:"http,omitempty"`
+	CLI  *BridgeCLITarget  `yaml:"cli" json:"cli,omitempty"`
+}
+
+type BridgeHTTPTarget struct {
+	BaseURL string            `yaml:"baseUrl" json:"base_url"`
+	Headers map[string]string `yaml:"headers" json:"headers,omitempty"`
+}
+
+type BridgeCLITarget struct {
+	Shell      string `yaml:"shell" json:"shell,omitempty"`
+	WorkingDir string `yaml:"workingDir" json:"working_dir,omitempty"`
+	Timeout    int    `yaml:"timeout" json:"timeout,omitempty"`
+}
+
+type BridgeSkill struct {
+	ID          string      `yaml:"id" json:"id"`
+	Name        string      `yaml:"name" json:"name"`
+	Description string      `yaml:"description" json:"description,omitempty"`
+	Tags        []string    `yaml:"tags" json:"tags,omitempty"`
+	Examples    []string    `yaml:"examples" json:"examples,omitempty"`
+	Invoke      SkillInvoke `yaml:"invoke" json:"invoke"`
+}
+
+type SkillInvoke struct {
+	Type     string            `yaml:"type" json:"type"`
+	Method   string            `yaml:"method" json:"method,omitempty"`
+	Path     string            `yaml:"path" json:"path,omitempty"`
+	URL      string            `yaml:"url" json:"url,omitempty"`
+	Headers  map[string]string `yaml:"headers" json:"headers,omitempty"`
+	Body     interface{}       `yaml:"body" json:"body,omitempty"`
+	Response *ResponseExtract  `yaml:"response" json:"response,omitempty"`
+	Command  string            `yaml:"command" json:"command,omitempty"`
+	Args     []string          `yaml:"args" json:"args,omitempty"`
+	Timeout  int               `yaml:"timeout" json:"timeout,omitempty"`
+}
+
+type ResponseExtract struct {
+	Text string `yaml:"text" json:"text,omitempty"`
+	Raw  bool   `yaml:"raw" json:"raw,omitempty"`
 }
 
 func (c *Config) IsMySQL() bool {

@@ -251,6 +251,17 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check if this is a bridge agent
+	if bridgeAgent := h.svcCtx.BridgeRegistry.Get(name); bridgeAgent != nil {
+		h.svcCtx.Tasks.Update(taskId, map[string]interface{}{"state": "WORKING"})
+		bridgeAgent.HandleRequest(r.Context(), w, userText, taskId, *contextId)
+		h.svcCtx.Tasks.Update(taskId, map[string]interface{}{"state": "RESPONDED"})
+		if h.svcCtx.EventBus != nil {
+			h.svcCtx.EventBus.Task("update", taskId, name, "RESPONDED")
+		}
+		return
+	}
+
 	// External agent: check connection exists
 	conn := h.svcCtx.Registry.GetClient(name)
 	if conn == nil {

@@ -29,3 +29,31 @@ admin_token: "a2a-admin-token"
 #         transport: stdio
 #         command: npx
 #         args: ["-y", "@anthropic/mcp-filesystem"]
+
+# Example bridge agents (uncomment and configure to use):
+# bridge_agents:
+#   - name: my-llm
+#     description: "Bridge to OpenAI-compatible API"
+#     target:
+#       http:
+#         baseUrl: "http://localhost:8642"
+#         headers:
+#           Authorization: "Bearer ${LLM_API_KEY}"
+#     skills:
+#       - id: chat
+#         name: Chat
+#         description: "Send a message and get a response"
+#         invoke:
+#           type: http
+#           method: POST
+#           path: /v1/chat/completions
+#           headers:
+#             Content-Type: application/json
+#           body:
+#             model: "gpt-4o"
+#             messages:
+#               - role: user
+#                 content: "{{inputText}}"
+#             stream: false
+#           response:
+#             text: "{{output.choices.0.message.content}}"
