@@ -217,3 +217,14 @@ type ChatSSEEvent struct {
 	Error     string      `json:"error,omitempty"`
 	Metadata  interface{} `json:"metadata,omitempty"`
 }
+
+// SubagentStreamEvent represents a subagent execution event for SSE streaming.
+type SubagentStreamEvent struct {
+	Type       string `json:"type"` // subagent_started, subagent_tool_call, subagent_tool_result, subagent_completed, subagent_error
+	SubagentId string `json:"subagent_id"`
+	Task       string `json:"task,omitempty"`
+	ToolName   string `json:"tool_name,omitempty"`
+	Arguments  string `json:"arguments,omitempty"`
+	Result     string `json:"result,omitempty"`
+	Error      string `json:"error,omitempty"`
+}

@@ -71,13 +71,21 @@ func GetBuiltinTools() []model.BuiltinTool {
 // Tool registry for MCP tools (will be populated dynamically)
 var MCPTools []model.BuiltinTool
 
+// Tool registry for dynamic tools (spawn_agent, etc)
+var DynamicTools []model.BuiltinTool
+
 func RegisterMCPTools(tools []model.BuiltinTool) {
 	MCPTools = append(MCPTools, tools...)
+}
+
+func RegisterDynamicTools(tools []model.BuiltinTool) {
+	DynamicTools = append(DynamicTools, tools...)
 }
 
 func GetAllTools() []model.BuiltinTool {
 	all := append([]model.BuiltinTool{}, GetBuiltinTools()...)
 	all = append(all, MCPTools...)
+	all = append(all, DynamicTools...)
 	return all
 }
 
