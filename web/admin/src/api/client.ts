@@ -160,7 +160,7 @@ export const api = {
 
   getContext: (id: string) => request<ContextDetail>(`/api/contexts/${id}`),
 
-  createContext: (req: CreateContextRequest) => request<Context>('/api/contexts', {
+  createContext: (req: CreateContextRequest) => request<Context>('/api/contexts/', {
     method: 'POST',
     body: JSON.stringify(req),
   }),
