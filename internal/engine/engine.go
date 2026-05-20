@@ -8,11 +8,25 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"a2a-platform/internal/config"
 	"a2a-platform/internal/llm"
 	"a2a-platform/internal/mcpclient"
 	"a2a-platform/internal/model"
+)
+
+const (
+	sseEventTextDelta        = "text.delta"
+	sseEventThinkingDelta    = "thinking.delta"
+	sseEventThinkingBlock    = "thinking.block"
+	sseEventToolCallStart    = "tool.call_start"
+	sseEventToolCallDelta    = "tool.call_delta"
+	sseEventToolCallEnd      = "tool.call_end"
+	sseEventToolResult       = "tool.result"
+	sseEventSubagentStarted  = "subagent.started"
+	sseEventSubagentComplete = "subagent.completed"
+	sseEventSubagentError    = "subagent.error"
 )
 
 type Deps struct {
@@ -221,8 +235,7 @@ func (e *Engine) runLoop(
 			switch evt.Type {
 			case "text":
 				textBuf.WriteString(evt.Text)
-				// Stream text chunk to client
-				writeSSE(w, flusher, "text.delta", map[string]interface{}{
+				writeSSE(w, flusher, sseEventTextDelta, map[string]interface{}{
 					"taskId": taskId,
 					"text":   evt.Text,
 				})
@@ -250,7 +263,19 @@ func (e *Engine) runLoop(
 
 		// Execute tool calls
 		for _, tc := range toolCalls {
-			// Record tool call trace
+			toolStart := time.Now()
+
+			writeSSE(w, flusher, sseEventToolCallStart, map[string]interface{}{
+				"taskId": taskId,
+				"tool": map[string]interface{}{
+					"id":        tc.ID,
+					"name":      tc.Name,
+					"arguments": tc.Arguments,
+					"status":    "started",
+					"start_time": toolStart.Format(time.RFC3339),
+				},
+			})
+
 			traceData, _ := json.Marshal(map[string]string{"tool": tc.Name, "arguments": tc.Arguments})
 			deps.RecordTrace(&model.TraceEvent{
 				TaskId:    taskId,
@@ -260,22 +285,29 @@ func (e *Engine) runLoop(
 				DataJson:  string(traceData),
 			})
 
-			writeSSE(w, flusher, "tool.call", map[string]interface{}{
-				"taskId": taskId,
-				"tool":   tc.Name,
-				"id":     tc.ID,
-			})
-
 			result, err := e.callTool(agent, tc.Name, tc.Arguments)
 			if err != nil {
 				result = fmt.Sprintf("Error: %s", err)
 			}
 
-			writeSSE(w, flusher, "tool.result", map[string]interface{}{
+			writeSSE(w, flusher, sseEventToolCallEnd, map[string]interface{}{
 				"taskId": taskId,
-				"tool":   tc.Name,
-				"id":     tc.ID,
-				"result": truncate(result, 200),
+				"tool": map[string]interface{}{
+					"id":        tc.ID,
+					"name":      tc.Name,
+					"arguments": tc.Arguments,
+				},
+			})
+
+			writeSSE(w, flusher, sseEventToolResult, map[string]interface{}{
+				"taskId": taskId,
+				"tool": map[string]interface{}{
+					"id":       tc.ID,
+					"name":     tc.Name,
+					"result":   truncate(result, 2000),
+					"status":   "completed",
+					"end_time": time.Now().Format(time.RFC3339),
+				},
 			})
 
 			messages = append(messages, llm.ChatMessage{
