@@ -43,7 +43,7 @@ export default function ToolCallCard({ tool }: ToolCallCardProps) {
           {/* Arguments */}
           <div>
             <div className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Arguments</div>
-            <pre className="text-xs bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded p-2 overflow-x-auto">
+            <pre className="text-xs text-gray-900 dark:text-gray-100 bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded p-2 overflow-x-auto">
               {JSON.stringify(argsObj, null, 2)}
             </pre>
           </div>
@@ -52,7 +52,7 @@ export default function ToolCallCard({ tool }: ToolCallCardProps) {
           {tool.result && (
             <div>
               <div className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Result</div>
-              <pre className="text-xs bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded p-2 overflow-x-auto max-h-48 overflow-y-auto">
+              <pre className="text-xs text-gray-900 dark:text-gray-100 bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded p-2 overflow-x-auto max-h-48 overflow-y-auto">
                 {tool.result.length > 2000 ? tool.result.slice(0, 2000) + '\n... (truncated)' : tool.result}
               </pre>
             </div>

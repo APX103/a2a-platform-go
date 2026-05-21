@@ -201,7 +201,11 @@ func (e *Engine) HandleRequest(
 				if role == "agent" {
 					role = "assistant"
 				}
-				history = append(history, llm.ChatMessage{Role: role, Content: m.Content})
+				msg := llm.ChatMessage{Role: role, Content: m.Content}
+				if m.ReasoningContent != nil && *m.ReasoningContent != "" {
+					msg.ReasoningContent = *m.ReasoningContent
+				}
+				history = append(history, msg)
 			}
 		}
 	}

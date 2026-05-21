@@ -71,6 +71,9 @@ func (p *OpenAIProvider) buildRequest(req *ChatRequest) map[string]interface{} {
 		if m.Content != "" {
 			msg["content"] = m.Content
 		}
+		if m.ReasoningContent != "" {
+			msg["reasoning_content"] = m.ReasoningContent
+		}
 		if len(m.ToolCalls) > 0 {
 			calls := make([]map[string]interface{}, len(m.ToolCalls))
 			for i, tc := range m.ToolCalls {

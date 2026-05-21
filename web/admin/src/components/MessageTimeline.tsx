@@ -130,7 +130,7 @@ function MessageItem({ item }: MessageItemProps) {
 
         {/* Message content */}
         {message.content && (
-          <MarkdownRenderer content={message.content} className={isUser ? 'text-white' : ''} />
+          <MarkdownRenderer content={message.content} inverted={isUser} />
         )}
 
         {/* Timestamp */}

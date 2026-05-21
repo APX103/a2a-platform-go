@@ -6,9 +6,10 @@ import { createHighlighter, type BundledLanguage, type BundledTheme } from 'shik
 interface MarkdownRendererProps {
   content: string;
   className?: string;
+  inverted?: boolean;
 }
 
-export default function MarkdownRenderer({ content, className = '' }: MarkdownRendererProps) {
+export default function MarkdownRenderer({ content, className = '', inverted = false }: MarkdownRendererProps) {
   const [highlighter, setHighlighter] = useState<Awaited<ReturnType<typeof createHighlighter>> | null>(null);
 
   // Load Shiki highlighter on mount
@@ -65,29 +66,29 @@ export default function MarkdownRenderer({ content, className = '' }: MarkdownRe
 
     // Headings
     h1({ children }: any) {
-      return <h1 className="text-2xl font-bold mt-6 mb-4 text-gray-900 dark:text-gray-100">{children}</h1>;
+      return <h1 className={`text-2xl font-bold mt-6 mb-4 ${inverted ? 'text-white' : 'text-gray-900 dark:text-gray-100'}`}>{children}</h1>;
     },
     h2({ children }: any) {
-      return <h2 className="text-xl font-bold mt-5 mb-3 text-gray-900 dark:text-gray-100">{children}</h2>;
+      return <h2 className={`text-xl font-bold mt-5 mb-3 ${inverted ? 'text-white' : 'text-gray-900 dark:text-gray-100'}`}>{children}</h2>;
     },
     h3({ children }: any) {
-      return <h3 className="text-lg font-semibold mt-4 mb-2 text-gray-900 dark:text-gray-100">{children}</h3>;
+      return <h3 className={`text-lg font-semibold mt-4 mb-2 ${inverted ? 'text-white' : 'text-gray-900 dark:text-gray-100'}`}>{children}</h3>;
     },
     h4({ children }: any) {
-      return <h4 className="text-base font-semibold mt-3 mb-2 text-gray-900 dark:text-gray-100">{children}</h4>;
+      return <h4 className={`text-base font-semibold mt-3 mb-2 ${inverted ? 'text-white' : 'text-gray-900 dark:text-gray-100'}`}>{children}</h4>;
     },
 
     // Paragraphs
     p({ children }: any) {
-      return <p className="mb-4 text-gray-700 dark:text-gray-300 leading-relaxed">{children}</p>;
+      return <p className={`mb-4 leading-relaxed ${inverted ? 'text-gray-200' : 'text-gray-700 dark:text-gray-300'}`}>{children}</p>;
     },
 
     // Lists
     ul({ children }: any) {
-      return <ul className="mb-4 pl-6 space-y-1 text-gray-700 dark:text-gray-300 list-disc">{children}</ul>;
+      return <ul className={`mb-4 pl-6 space-y-1 list-disc ${inverted ? 'text-gray-200' : 'text-gray-700 dark:text-gray-300'}`}>{children}</ul>;
     },
     ol({ children }: any) {
-      return <ol className="mb-4 pl-6 space-y-1 text-gray-700 dark:text-gray-300 list-decimal">{children}</ol>;
+      return <ol className={`mb-4 pl-6 space-y-1 list-decimal ${inverted ? 'text-gray-200' : 'text-gray-700 dark:text-gray-300'}`}>{children}</ol>;
     },
     li({ children }: any) {
       return <li>{children}</li>;
@@ -96,7 +97,7 @@ export default function MarkdownRenderer({ content, className = '' }: MarkdownRe
     // Blockquotes
     blockquote({ children }: any) {
       return (
-        <blockquote className="pl-4 border-l-4 border-orange-500 my-4 text-gray-600 dark:text-gray-400 italic">
+        <blockquote className={`pl-4 border-l-4 border-orange-500 my-4 italic ${inverted ? 'text-gray-300' : 'text-gray-600 dark:text-gray-400'}`}>
           {children}
         </blockquote>
       );
@@ -109,7 +110,7 @@ export default function MarkdownRenderer({ content, className = '' }: MarkdownRe
           href={href}
           target="_blank"
           rel="noopener noreferrer"
-          className="text-orange-600 hover:underline dark:text-orange-400"
+          className={`hover:underline ${inverted ? 'text-orange-300' : 'text-orange-600 dark:text-orange-400'}`}
         >
           {children}
         </a>
@@ -120,43 +121,43 @@ export default function MarkdownRenderer({ content, className = '' }: MarkdownRe
     table({ children }: any) {
       return (
         <div className="my-4 overflow-x-auto">
-          <table className="min-w-full border border-gray-300 dark:border-gray-600 rounded-lg">{children}</table>
+          <table className={`min-w-full border rounded-lg ${inverted ? 'border-gray-600' : 'border-gray-300 dark:border-gray-600'}`}>{children}</table>
         </div>
       );
     },
     thead({ children }: any) {
-      return <thead className="bg-gray-200 dark:bg-gray-800">{children}</thead>;
+      return <thead className={`${inverted ? 'bg-gray-800' : 'bg-gray-200 dark:bg-gray-800'}`}>{children}</thead>;
     },
     tbody({ children }: any) {
       return <tbody>{children}</tbody>;
     },
     tr({ children }: any) {
-      return <tr className="border-b border-gray-300 dark:border-gray-600 last:border-0">{children}</tr>;
+      return <tr className={`border-b last:border-0 ${inverted ? 'border-gray-600' : 'border-gray-300 dark:border-gray-600'}`}>{children}</tr>;
     },
     th({ children }: any) {
       return (
-        <th className="px-4 py-2 text-left text-sm font-semibold text-gray-900 dark:text-gray-100">{children}</th>
+        <th className={`px-4 py-2 text-left text-sm font-semibold ${inverted ? 'text-white' : 'text-gray-900 dark:text-gray-100'}`}>{children}</th>
       );
     },
     td({ children }: any) {
-      return <td className="px-4 py-2 text-sm text-gray-700 dark:text-gray-300">{children}</td>;
+      return <td className={`px-4 py-2 text-sm ${inverted ? 'text-gray-200' : 'text-gray-700 dark:text-gray-300'}`}>{children}</td>;
     },
 
     // Horizontal rule
     hr() {
-      return <hr className="my-6 border-gray-300 dark:border-gray-600" />;
+      return <hr className={`my-6 ${inverted ? 'border-gray-600' : 'border-gray-300 dark:border-gray-600'}`} />;
     },
 
     // Strong/bold
     strong({ children }: any) {
-      return <strong className="font-semibold text-gray-900 dark:text-gray-100">{children}</strong>;
+      return <strong className={`font-semibold ${inverted ? 'text-white' : 'text-gray-900 dark:text-gray-100'}`}>{children}</strong>;
     },
 
     // Italic
     em({ children }: any) {
-      return <em className="italic text-gray-700 dark:text-gray-300">{children}</em>;
+      return <em className={`italic ${inverted ? 'text-gray-300' : 'text-gray-700 dark:text-gray-300'}`}>{children}</em>;
     },
-  }), [highlighter, CodeBlock]);
+  }), [highlighter, CodeBlock, inverted]);
 
   return (
     <div className={`prose prose-sm max-w-none ${className}`}>
