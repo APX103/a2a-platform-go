@@ -106,6 +106,65 @@ func (h *CreateBuiltinAgentHandler) ServeHTTP(w http.ResponseWriter, r *http.Req
 	})
 }
 
+type UpdateBuiltinAgentHandler struct {
+	svcCtx *svc.ServiceContext
+}
+
+func NewUpdateBuiltinAgentHandler(svcCtx *svc.ServiceContext) *UpdateBuiltinAgentHandler {
+	return &UpdateBuiltinAgentHandler{svcCtx: svcCtx}
+}
+
+func (h *UpdateBuiltinAgentHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	name := getPathParam(r, "name")
+	if name == "" {
+		jsonError(w, "missing agent name", 400)
+		return
+	}
+
+	var req builtinAgentReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON", 400)
+		return
+	}
+	if req.Provider == "" || req.Model == "" {
+		jsonError(w, "provider and model are required", 400)
+		return
+	}
+
+	// Use the path name (can't change name via update)
+	req.Name = name
+	cfg := req.toConfig()
+
+	// Preserve existing API key if not provided in the request
+	if cfg.APIKey == "" {
+		existing, err := h.svcCtx.BuiltinAgents.Get(name)
+		if err == nil && existing != nil {
+			cfg.APIKey = existing.APIKey
+		}
+	}
+
+	// Persist to database
+	if err := h.svcCtx.BuiltinAgents.Update(cfg); err != nil {
+		jsonError(w, fmt.Sprintf("failed to update builtin agent: %v", err), 500)
+		return
+	}
+
+	// Re-register in engine: remove old, register new
+	h.svcCtx.Engine.RemoveAgent(name)
+	if err := h.svcCtx.Engine.RegisterAgent(cfg); err != nil {
+		jsonError(w, err.Error(), 400)
+		return
+	}
+
+	h.svcCtx.Registry.RegisterBuiltinAgent(cfg.Name, cfg.Description, nil)
+
+	okJSON(w, map[string]interface{}{
+		"ok":     true,
+		"name":   cfg.Name,
+		"status": "updated",
+	})
+}
+
 type DeleteBuiltinAgentHandler struct {
 	svcCtx *svc.ServiceContext
 }

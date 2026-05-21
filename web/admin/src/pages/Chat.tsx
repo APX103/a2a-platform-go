@@ -28,10 +28,8 @@ export default function Chat() {
     if (contextIdParam) {
       setContextId(contextIdParam);
       loadContext(contextIdParam);
-    } else if (agentName) {
-      loadContextList();
     }
-  }, [contextIdParam, agentName]);
+  }, [contextIdParam]);
 
   // Load context list
   const loadContextList = async () => {
@@ -53,9 +51,12 @@ export default function Chat() {
   const handleSend = async (content: string) => {
     if (!agentName) return;
 
-    if (!contextId) {
+    let currentContextId = contextId;
+    // If no context, create one (fallback in case handleNewContext wasn't called)
+    if (!currentContextId) {
       try {
         const newCtx = await api.createContext({ agent_name: agentName, title: content.slice(0, 50) });
+        currentContextId = newCtx.id;
         setContextId(newCtx.id);
         loadContextList();
       } catch (err) {
@@ -64,13 +65,33 @@ export default function Chat() {
       }
     }
 
-    await sendMessage(content, contextId || undefined);
+    // Update title to first message if it's still "New Chat"
+    if (currentContextId) {
+      const contexts = useChatStore.getState().contexts;
+      const currentCtx = contexts.find(c => c.id === currentContextId);
+      if (currentCtx?.title === 'New Chat') {
+        api.updateContextTitle(currentContextId, content.slice(0, 50)).catch(console.error);
+        loadContextList();
+      }
+    }
+
+    await sendMessage(content, currentContextId || undefined);
     loadContextList();
   };
 
-  const handleNewContext = () => {
-    setContextId(null);
-    clearChat();
+  const handleNewContext = async () => {
+    if (!agentName) {
+      setError('No agent selected');
+      return;
+    }
+    try {
+      const newCtx = await api.createContext({ agent_name: agentName, title: 'New Chat' });
+      setContextId(newCtx.id);
+      clearChat();
+      loadContextList();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create conversation');
+    }
   };
 
   const handleDeleteContext = async () => {
@@ -137,10 +158,10 @@ export default function Chat() {
           )}
 
           {isStreaming && (
-            <div className="mx-6 mb-4 flex items-center gap-2 text-xs text-purple-500">
+            <div className="mx-6 mb-4 flex items-center gap-2 text-xs text-orange-500">
               <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-purple-500 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-purple-500"></span>
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-500 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-orange-500"></span>
               </span>
               AI is typing...
             </div>

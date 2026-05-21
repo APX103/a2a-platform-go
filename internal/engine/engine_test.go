@@ -1,0 +1,354 @@
+package engine
+
+import (
+	"context"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"a2a-platform/internal/config"
+	"a2a-platform/internal/llm"
+	"a2a-platform/internal/model"
+)
+
+// mockProvider is a test double for llm.Provider.
+type mockProvider struct {
+	events    []llm.StreamEvent
+	eventIdx  int
+	callCount int
+}
+
+func (m *mockProvider) ChatStream(ctx context.Context, req *llm.ChatRequest) (<-chan llm.StreamEvent, error) {
+	m.callCount++
+	ch := make(chan llm.StreamEvent, len(m.events))
+	for m.eventIdx < len(m.events) {
+		evt := m.events[m.eventIdx]
+		m.eventIdx++
+		if evt.Type == "done" {
+			break
+		}
+		ch <- evt
+	}
+	close(ch)
+	return ch, nil
+}
+
+// TestRunLoop_MaxRoundsExceeded_ToolExecuted is a regression test for the bug
+// where tools are executed even when maxRounds is exceeded.
+func TestRunLoop_MaxRoundsExceeded_ToolExecuted(t *testing.T) {
+	eng := New()
+
+	// Create a mock agent with maxToolRounds = 1
+	agent := &BuiltinAgent{
+		Config: config.BuiltinAgent{
+			Name:           "test-agent",
+			Provider:       "openai",
+			Model:          "gpt-4",
+			MaxToolRounds:  1,
+			SystemPrompt:   "You are a test agent.",
+		},
+		Provider: &mockProvider{
+			events: []llm.StreamEvent{
+				// First round: text + tool call
+				{Type: "text", Text: "Let me help you."},
+				{Type: "tool_call", ToolCall: &llm.ToolCall{ID: "tc-1", Name: "test_tool", Arguments: `{}`}},
+				{Type: "done"},
+				// Second round: also returns tool call (should trigger maxRounds error)
+				{Type: "text", Text: "Still need help."},
+				{Type: "tool_call", ToolCall: &llm.ToolCall{ID: "tc-2", Name: "test_tool", Arguments: `{}`}},
+				{Type: "done"},
+			},
+		},
+		Tools: []llm.ToolDef{
+			{Name: "test_tool", Description: "A test tool", InputSchema: map[string]interface{}{"type": "object"}},
+		},
+	}
+
+	var callCount int
+	var deps = &Deps{
+		LoadHistory: func(cid string) ([]*model.Message, error) { return nil, nil },
+		RecordTrace: func(e *model.TraceEvent) error { return nil },
+		SaveMessage: func(m *model.Message) error { return nil },
+	}
+
+	// Override callTool to count executions
+	originalCallTool := eng.callTool
+	eng.callTool = func(a *BuiltinAgent, name string, arguments string) (string, error) {
+		callCount++
+		return "tool result", nil
+	}
+	defer func() { eng.callTool = originalCallTool }()
+
+	rec := httptest.NewRecorder()
+	flusher := &mockFlusher{recorder: rec}
+
+	_, err := eng.runLoop(context.Background(), agent, []llm.ChatMessage{{Role: "user", Content: "hello"}}, rec, flusher, "task-1", "ctx-1", deps)
+
+	// With maxRounds=1:
+	// - round=0: LLM returns tool call -> tool IS executed (callCount becomes 1)
+	// - round=1: LLM returns tool call -> maxRounds exceeded, should error BEFORE executing
+	//
+	// The bug was that round=1's tool was ALSO executed (callCount would be 2).
+	if err == nil {
+		t.Errorf("Expected error when maxRounds exceeded, got nil")
+	}
+
+	if callCount != 1 {
+		t.Errorf("Expected 1 tool execution (round=0 only), got %d", callCount)
+	}
+}
+
+// TestRunLoop_NoToolCalls_ReturnsText verifies normal operation without tool calls.
+func TestRunLoop_NoToolCalls_ReturnsText(t *testing.T) {
+	eng := New()
+
+	agent := &BuiltinAgent{
+		Config: config.BuiltinAgent{
+			Name:          "test-agent",
+			Provider:      "openai",
+			Model:         "gpt-4",
+			MaxToolRounds: 5,
+		},
+		Provider: &mockProvider{
+			events: []llm.StreamEvent{
+				{Type: "text", Text: "Hello, user!"},
+				{Type: "done"},
+			},
+		},
+	}
+
+	deps := &Deps{
+		LoadHistory: func(cid string) ([]*model.Message, error) { return nil, nil },
+		RecordTrace: func(e *model.TraceEvent) error { return nil },
+		SaveMessage: func(m *model.Message) error { return nil },
+	}
+
+	rec := httptest.NewRecorder()
+	flusher := &mockFlusher{recorder: rec}
+
+	result, err := eng.runLoop(context.Background(), agent, []llm.ChatMessage{{Role: "user", Content: "hi"}}, rec, flusher, "task-1", "ctx-1", deps)
+	if err != nil {
+		t.Fatalf("runLoop failed: %v", err)
+	}
+	if result != "Hello, user!" {
+		t.Errorf("Expected 'Hello, user!', got %q", result)
+	}
+}
+
+// TestRunLoop_ToolCallsWithinLimit verifies tool calls work when within maxRounds.
+func TestRunLoop_ToolCallsWithinLimit(t *testing.T) {
+	eng := New()
+
+	agent := &BuiltinAgent{
+		Config: config.BuiltinAgent{
+			Name:          "test-agent",
+			Provider:      "openai",
+			Model:         "gpt-4",
+			MaxToolRounds: 5,
+		},
+		Provider: &mockProvider{
+			events: []llm.StreamEvent{
+				// Round 0: tool call
+				{Type: "text", Text: "Let me check."},
+				{Type: "tool_call", ToolCall: &llm.ToolCall{ID: "tc-1", Name: "test_tool", Arguments: `{}`}},
+				{Type: "done"},
+				// Round 1: final text
+				{Type: "text", Text: "Here is the answer."},
+				{Type: "done"},
+			},
+		},
+		Tools: []llm.ToolDef{
+			{Name: "test_tool", Description: "A test tool", InputSchema: map[string]interface{}{"type": "object"}},
+		},
+	}
+
+	var toolExecuted bool
+	eng.callTool = func(a *BuiltinAgent, name string, arguments string) (string, error) {
+		toolExecuted = true
+		return "tool result", nil
+	}
+
+	deps := &Deps{
+		LoadHistory: func(cid string) ([]*model.Message, error) { return nil, nil },
+		RecordTrace: func(e *model.TraceEvent) error { return nil },
+		SaveMessage: func(m *model.Message) error { return nil },
+	}
+
+	rec := httptest.NewRecorder()
+	flusher := &mockFlusher{recorder: rec}
+
+	result, err := eng.runLoop(context.Background(), agent, []llm.ChatMessage{{Role: "user", Content: "hi"}}, rec, flusher, "task-1", "ctx-1", deps)
+	if err != nil {
+		t.Fatalf("runLoop failed: %v", err)
+	}
+
+	if !toolExecuted {
+		t.Error("Tool should have been executed")
+	}
+	if result != "Here is the answer." {
+		t.Errorf("Expected 'Here is the answer.', got %q", result)
+	}
+}
+
+// TestHandleRequest_RecordsAgentResponse verifies that agent responses are persisted.
+func TestHandleRequest_RecordsAgentResponse(t *testing.T) {
+	eng := New()
+
+	agent := &BuiltinAgent{
+		Config: config.BuiltinAgent{
+			Name:          "test-agent",
+			Provider:      "openai",
+			Model:         "gpt-4",
+			MaxToolRounds: 5,
+		},
+		Provider: &mockProvider{
+			events: []llm.StreamEvent{
+				{Type: "text", Text: "This is the response."},
+				{Type: "done"},
+			},
+		},
+	}
+	eng.agents["test-agent"] = agent
+
+	var recordedMessages []*model.Message
+	deps := &Deps{
+		LoadHistory: func(cid string) ([]*model.Message, error) { return nil, nil },
+		RecordTrace: func(e *model.TraceEvent) error { return nil },
+		SaveMessage: func(m *model.Message) error {
+			recordedMessages = append(recordedMessages, m)
+			return nil
+		},
+	}
+
+	rec := httptest.NewRecorder()
+
+	eng.HandleRequest(context.Background(), rec, "test-agent", "hello", "ctx-1", "task-1", deps)
+
+	// Verify that the assistant message was persisted
+	if len(recordedMessages) != 1 {
+		t.Errorf("Expected 1 recorded message, got %d", len(recordedMessages))
+	} else {
+		m := recordedMessages[0]
+		if m.Role != "agent" {
+			t.Errorf("Expected role 'agent', got %q", m.Role)
+		}
+		if m.Content != "This is the response." {
+			t.Errorf("Expected content 'This is the response.', got %q", m.Content)
+		}
+		if m.TaskId != "task-1" {
+			t.Errorf("Expected taskId 'task-1', got %q", m.TaskId)
+		}
+		if m.ContextId == nil || *m.ContextId != "ctx-1" {
+			t.Errorf("Expected contextId 'ctx-1', got %v", m.ContextId)
+		}
+	}
+
+	// Check that response was written to SSE
+	body := rec.Body.String()
+	if !strings.Contains(body, "This is the response.") {
+		t.Errorf("Expected response text in SSE, got: %s", body)
+	}
+}
+
+// mockFlusher implements http.Flusher for testing.
+type mockFlusher struct {
+	recorder *httptest.ResponseRecorder
+}
+
+func (m *mockFlusher) Flush() {
+	// No-op for test; httptest.ResponseRecorder handles buffering.
+}
+
+// TestWriteSSE_JSONSerialization verifies SSE JSON serialization.
+func TestWriteSSE_JSONSerialization(t *testing.T) {
+	rec := httptest.NewRecorder()
+	flusher := &mockFlusher{recorder: rec}
+
+	writeSSE(rec, flusher, "test.event", map[string]string{"key": "value"})
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "event: test.event") {
+		t.Errorf("Expected event header, got: %s", body)
+	}
+	if !strings.Contains(body, `"key":"value"`) {
+		t.Errorf("Expected JSON data, got: %s", body)
+	}
+}
+
+// TestWriteSSE_InvalidData verifies behavior with unserializable data.
+func TestWriteSSE_InvalidData(t *testing.T) {
+	rec := httptest.NewRecorder()
+	flusher := &mockFlusher{recorder: rec}
+
+	// This should not panic even with invalid data
+	// Currently json.Marshal ignores errors, which is a bug
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("writeSSE panicked with invalid data: %v", r)
+		}
+	}()
+
+	// Channels cannot be JSON serialized
+	writeSSE(rec, flusher, "bad.event", map[string]interface{}{"ch": make(chan int)})
+}
+
+// TestRunLoop_ReasoningEvents_EmitsThinkingDelta verifies that reasoning events
+// from the LLM are forwarded as thinking.delta SSE events and persisted.
+func TestRunLoop_ReasoningEvents_EmitsThinkingDelta(t *testing.T) {
+	eng := New()
+
+	agent := &BuiltinAgent{
+		Config: config.BuiltinAgent{
+			Name:          "test-agent",
+			Provider:      "openai",
+			Model:         "gpt-4",
+			MaxToolRounds: 5,
+		},
+		Provider: &mockProvider{
+			events: []llm.StreamEvent{
+				{Type: "reasoning", Reasoning: "Let me think..."},
+				{Type: "text", Text: "The answer is 42."},
+				{Type: "done"},
+			},
+		},
+	}
+
+	var savedMsg *model.Message
+	deps := &Deps{
+		LoadHistory: func(cid string) ([]*model.Message, error) { return nil, nil },
+		RecordTrace: func(e *model.TraceEvent) error { return nil },
+		SaveMessage: func(m *model.Message) error {
+			savedMsg = m
+			return nil
+		},
+	}
+
+	rec := httptest.NewRecorder()
+	flusher := &mockFlusher{recorder: rec}
+
+	result, err := eng.runLoop(context.Background(), agent, []llm.ChatMessage{{Role: "user", Content: "hi"}}, rec, flusher, "task-1", "ctx-1", deps)
+	if err != nil {
+		t.Fatalf("runLoop failed: %v", err)
+	}
+
+	if result != "The answer is 42." {
+		t.Errorf("Expected 'The answer is 42.', got %q", result)
+	}
+
+	// Verify SSE contains thinking.delta event
+	body := rec.Body.String()
+	if !strings.Contains(body, "event: thinking.delta") {
+		t.Errorf("Expected thinking.delta event in SSE, got: %s", body)
+	}
+	if !strings.Contains(body, "Let me think...") {
+		t.Errorf("Expected reasoning content in SSE, got: %s", body)
+	}
+
+	// Verify saved message includes reasoning content
+	if savedMsg == nil {
+		t.Fatal("Expected message to be saved")
+	}
+	if savedMsg.ReasoningContent == nil || *savedMsg.ReasoningContent != "Let me think..." {
+		t.Errorf("Expected reasoning content 'Let me think...', got %v", savedMsg.ReasoningContent)
+	}
+}

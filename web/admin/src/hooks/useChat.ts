@@ -20,7 +20,7 @@ export function useChat(agentName: string) {
 
   const controllerRef = useRef<AbortController | null>(null);
   const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
-  const [toolCallBuffer, setToolCallBuffer] = useState<Record<string, ToolCall>>({});
+  const toolCallBufferRef = useRef<Record<string, ToolCall>>({});
   const [thinkingBuffer, setThinkingBuffer] = useState<{ [taskId: string]: string }>({});
 
   // Clean up SSE connection
@@ -102,6 +102,8 @@ export function useChat(agentName: string) {
                     ...prev,
                     [tid]: (prev[tid] || '') + data.thinking,
                   }));
+                  // Also append to the last assistant message's reasoning_content for display
+                  appendToLastMessage(data.thinking, 'reasoning_content');
                 }
                 break;
 
@@ -126,27 +128,21 @@ export function useChat(agentName: string) {
                     start_time: new Date().toISOString(),
                   };
                   addToolCall(taskId, tc);
-                  setToolCallBuffer((prev) => ({
-                    ...prev,
-                    [tc.id]: tc,
-                  }));
+                  toolCallBufferRef.current[tc.id] = tc;
                 }
                 break;
 
               case 'tool.call_delta':
                 if (data.tool && data.tool.id) {
                   const toolId = data.tool.id;
-                  const existing = toolCallBuffer[toolId];
+                  const existing = toolCallBufferRef.current[toolId];
                   if (existing) {
                     const updated: ToolCall = {
                       ...existing,
                       arguments: existing.arguments + (data.tool.arguments || ''),
                     };
                     updateToolCall(taskId, toolId, { arguments: updated.arguments });
-                    setToolCallBuffer((prev) => ({
-                      ...prev,
-                      [toolId]: updated,
-                    }));
+                    toolCallBufferRef.current[toolId] = updated;
                   }
                 }
                 break;
@@ -225,7 +221,6 @@ export function useChat(agentName: string) {
       updateToolCall,
       addThinkingBlock,
       appendToLastMessage,
-      toolCallBuffer,
     ]
   );
 

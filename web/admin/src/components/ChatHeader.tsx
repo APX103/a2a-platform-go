@@ -28,7 +28,7 @@ export default function ChatHeader({ agentName, contextId, onNewContext, onDelet
       <div className="flex items-center gap-2">
         <button
           onClick={onNewContext}
-          className="flex items-center gap-1.5 px-3 py-2 text-sm bg-purple-500 text-white rounded-lg hover:bg-purple-600 transition-colors"
+          className="flex items-center gap-1.5 px-3 py-2 text-sm bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-colors"
         >
           <Plus size={14} />
           New Chat

@@ -34,8 +34,9 @@ type ToolCall struct {
 }
 
 type StreamEvent struct {
-	Type     string // "text", "tool_call", "done", "error"
+	Type     string // "text", "reasoning", "tool_call", "done", "error"
 	Text     string
+	Reasoning string // reasoning / thinking content (e.g. from DeepSeek/R1-style models)
 	ToolCall *ToolCall
 	Error    error
 }

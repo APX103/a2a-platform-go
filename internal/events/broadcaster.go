@@ -55,21 +55,20 @@ func (b *Broadcaster) Broadcast(eventType string, data interface{}) {
 		return
 	}
 
-	b.mu.RLock()
-	clients := make(map[string]chan string, len(b.clients))
-	for id, ch := range b.clients {
-		clients[id] = ch
-	}
-	b.mu.RUnlock()
-
 	msg := fmt.Sprintf("data: %s\n\n", string(payload))
-	for id, ch := range clients {
+
+	// Hold the read lock during send to prevent Unsubscribe from closing
+	// channels while we are sending. Since select is non-blocking, this
+	// will not block Unsubscribe for a meaningful amount of time.
+	b.mu.RLock()
+	for id, ch := range b.clients {
 		select {
 		case ch <- msg:
 		default:
 			slog.Warn("SSE client channel full, dropping event", "session", id)
 		}
 	}
+	b.mu.RUnlock()
 }
 
 func (b *Broadcaster) AgentStatus(name, status, agentType string) {

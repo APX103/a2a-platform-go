@@ -36,7 +36,7 @@ export default function InputBox({ onSend, disabled = false, placeholder = 'Type
             placeholder={placeholder}
             disabled={disabled}
             rows={1}
-            className="w-full px-4 py-3 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-xl text-sm text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400 resize-none outline-none focus:border-purple-500 disabled:opacity-50"
+            className="w-full px-4 py-3 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-xl text-sm text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400 resize-none outline-none focus:border-orange-500 disabled:opacity-50"
             style={{
               minHeight: '48px',
               maxHeight: '200px',
@@ -46,7 +46,7 @@ export default function InputBox({ onSend, disabled = false, placeholder = 'Type
         <button
           onClick={handleSend}
           disabled={disabled || !content.trim()}
-          className="self-end px-4 py-3 bg-purple-500 text-white rounded-xl hover:bg-purple-600 disabled:bg-gray-300 dark:disabled:bg-gray-700 disabled:text-gray-500 dark:disabled:text-gray-500 disabled:cursor-not-allowed transition-all flex items-center gap-2"
+          className="self-end px-4 py-3 bg-orange-500 text-white rounded-xl hover:bg-orange-600 disabled:bg-gray-300 dark:disabled:bg-gray-700 disabled:text-gray-500 dark:disabled:text-gray-500 disabled:cursor-not-allowed transition-all flex items-center gap-2"
         >
           {disabled ? <Square size={16} /> : <Send size={16} />}
         </button>

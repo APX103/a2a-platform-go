@@ -143,6 +143,12 @@ export const api = {
       headers: { 'Content-Type': 'application/json', 'X-Admin-Token': token },
       body: JSON.stringify(agent),
     }),
+  updateBuiltinAgent: (name: string, agent: CreateBuiltinAgentReq, token: string) =>
+    request<{ ok: boolean }>(`/api/builtin-agents/${name}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Token': token },
+      body: JSON.stringify(agent),
+    }),
   deleteBuiltinAgent: (name: string, token: string) =>
     request<void>(`/api/builtin-agents/${name}`, {
       method: 'DELETE',

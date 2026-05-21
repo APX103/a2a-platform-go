@@ -33,6 +33,7 @@ const (
 type Deps struct {
 	LoadHistory func(contextId string) ([]*model.Message, error)
 	RecordTrace func(e *model.TraceEvent) error
+	SaveMessage func(m *model.Message) error
 }
 
 type BuiltinAgent struct {
@@ -43,12 +44,15 @@ type BuiltinAgent struct {
 }
 
 type Engine struct {
-	agents map[string]*BuiltinAgent
-	mu     sync.RWMutex
+	agents   map[string]*BuiltinAgent
+	mu       sync.RWMutex
+	callTool func(agent *BuiltinAgent, name string, arguments string) (string, error)
 }
 
 func New() *Engine {
-	return &Engine{agents: make(map[string]*BuiltinAgent)}
+	e := &Engine{agents: make(map[string]*BuiltinAgent)}
+	e.callTool = e.defaultCallTool
+	return e
 }
 
 func (e *Engine) RegisterAgent(cfg config.BuiltinAgent) error {
@@ -270,6 +274,7 @@ func (e *Engine) runLoop(
 		}
 
 		var textBuf strings.Builder
+		var reasoningBuf strings.Builder
 		var toolCalls []llm.ToolCall
 
 		for evt := range stream {
@@ -279,6 +284,12 @@ func (e *Engine) runLoop(
 				writeSSE(w, flusher, sseEventTextDelta, map[string]interface{}{
 					"taskId": taskId,
 					"text":   evt.Text,
+				})
+			case "reasoning":
+				reasoningBuf.WriteString(evt.Reasoning)
+				writeSSE(w, flusher, sseEventThinkingDelta, map[string]interface{}{
+					"taskId":   taskId,
+					"thinking": evt.Reasoning,
 				})
 			case "tool_call":
 				if evt.ToolCall != nil {
@@ -291,7 +302,26 @@ func (e *Engine) runLoop(
 
 		// If no tool calls, we're done
 		if len(toolCalls) == 0 {
+			if deps.SaveMessage != nil {
+				msg := &model.Message{
+					TaskId:    taskId,
+					ContextId: &contextId,
+					Role:      "agent",
+					Content:   textBuf.String(),
+				}
+				if reasoningBuf.Len() > 0 {
+					rc := reasoningBuf.String()
+					msg.ReasoningContent = &rc
+				}
+				deps.SaveMessage(msg)
+			}
 			return textBuf.String(), nil
+		}
+
+		// If this is the last allowed round, don't execute tools.
+		// Return an error before producing side effects.
+		if round == maxRounds {
+			return "", fmt.Errorf("max tool rounds (%d) exceeded", maxRounds)
 		}
 
 		// Record assistant message with tool calls
@@ -302,6 +332,23 @@ func (e *Engine) runLoop(
 		}
 		messages = append(messages, assistantMsg)
 
+		// Persist assistant message with tool calls
+		if deps.SaveMessage != nil {
+			tcJSON, _ := json.Marshal(toolCalls)
+			msg := &model.Message{
+				TaskId:    taskId,
+				ContextId: &contextId,
+				Role:      "agent",
+				Content:   textBuf.String(),
+				ToolCalls: string(tcJSON),
+			}
+			if reasoningBuf.Len() > 0 {
+				rc := reasoningBuf.String()
+				msg.ReasoningContent = &rc
+			}
+			deps.SaveMessage(msg)
+		}
+
 		// Execute tool calls
 		for _, tc := range toolCalls {
 			toolStart := time.Now()
@@ -309,10 +356,10 @@ func (e *Engine) runLoop(
 			writeSSE(w, flusher, sseEventToolCallStart, map[string]interface{}{
 				"taskId": taskId,
 				"tool": map[string]interface{}{
-					"id":        tc.ID,
-					"name":      tc.Name,
-					"arguments": tc.Arguments,
-					"status":    "started",
+					"id":         tc.ID,
+					"name":       tc.Name,
+					"arguments":  tc.Arguments,
+					"status":     "started",
 					"start_time": toolStart.Format(time.RFC3339),
 				},
 			})
@@ -356,13 +403,24 @@ func (e *Engine) runLoop(
 				Content:    result,
 				ToolCallID: tc.ID,
 			})
+
+			// Persist tool result message
+			if deps.SaveMessage != nil {
+				deps.SaveMessage(&model.Message{
+					TaskId:     taskId,
+					ContextId:  &contextId,
+					Role:       "tool",
+					Content:    result,
+					ToolCallId: &tc.ID,
+				})
+			}
 		}
 	}
 
 	return "", fmt.Errorf("max tool rounds (%d) exceeded", maxRounds)
 }
 
-func (e *Engine) callTool(agent *BuiltinAgent, name string, arguments string) (string, error) {
+func (e *Engine) defaultCallTool(agent *BuiltinAgent, name string, arguments string) (string, error) {
 	// Check MCP tools first
 	for _, c := range agent.MCPClients {
 		for _, t := range c.Tools {
@@ -397,7 +455,23 @@ func (e *Engine) callTool(agent *BuiltinAgent, name string, arguments string) (s
 }
 
 func writeSSE(w http.ResponseWriter, flusher http.Flusher, event string, data interface{}) {
-	jsonData, _ := json.Marshal(data)
+	// Inject event type into the data payload so the frontend can use data.type
+	// to determine the event type, matching the frontend SSEEvent interface.
+	payload := data
+	if m, ok := data.(map[string]interface{}); ok {
+		// Make a shallow copy to avoid mutating the caller's map
+		copyMap := make(map[string]interface{}, len(m)+1)
+		for k, v := range m {
+			copyMap[k] = v
+		}
+		copyMap["type"] = event
+		payload = copyMap
+	}
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		slog.Error("Failed to marshal SSE data", "event", event, "error", err)
+		return
+	}
 	fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, string(jsonData))
 	flusher.Flush()
 }

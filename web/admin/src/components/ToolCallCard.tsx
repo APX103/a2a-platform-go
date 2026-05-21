@@ -10,13 +10,13 @@ export default function ToolCallCard({ tool }: ToolCallCardProps) {
   const [expanded, setExpanded] = useState(false);
 
   const statusIcon = {
-    started: <Loader2 size={14} className="animate-spin text-purple-500" />,
+    started: <Loader2 size={14} className="animate-spin text-orange-500" />,
     completed: <CheckCircle size={14} className="text-green-500" />,
     error: <XCircle size={14} className="text-red-500" />,
   }[tool.status] || <Wrench size={14} className="text-gray-500" />;
 
   const statusColor = {
-    started: 'text-purple-500',
+    started: 'text-orange-500',
     completed: 'text-green-500',
     error: 'text-red-500',
   }[tool.status] || 'text-gray-500';

@@ -96,7 +96,7 @@ export default function MarkdownRenderer({ content, className = '' }: MarkdownRe
     // Blockquotes
     blockquote({ children }: any) {
       return (
-        <blockquote className="pl-4 border-l-4 border-purple-500 my-4 text-gray-600 dark:text-gray-400 italic">
+        <blockquote className="pl-4 border-l-4 border-orange-500 my-4 text-gray-600 dark:text-gray-400 italic">
           {children}
         </blockquote>
       );
@@ -109,7 +109,7 @@ export default function MarkdownRenderer({ content, className = '' }: MarkdownRe
           href={href}
           target="_blank"
           rel="noopener noreferrer"
-          className="text-purple-600 hover:underline dark:text-purple-400"
+          className="text-orange-600 hover:underline dark:text-orange-400"
         >
           {children}
         </a>

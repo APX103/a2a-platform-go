@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import { Bot, ListTodo, Activity, Clock } from 'lucide-react'
 import { api, Agent, Task, HealthResponse } from '../api/client'
 
@@ -21,8 +21,10 @@ export default function Dashboard() {
   const [agents, setAgents] = useState<Agent[]>([])
   const [tasks, setTasks] = useState<Task[]>([])
   const [error, setError] = useState('')
+  const location = useLocation()
 
   useEffect(() => {
+    setError('')
     Promise.all([
       api.getHealth().catch(() => null),
       api.listAgents().catch(() => []),
@@ -33,7 +35,7 @@ export default function Dashboard() {
       setAgents(Array.isArray(a) ? a : [])
       setTasks((t as { items: Task[] }).items || [])
     })
-  }, [])
+  }, [location.key])
 
   if (error) {
     return (

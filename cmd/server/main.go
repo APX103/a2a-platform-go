@@ -305,6 +305,8 @@ func makeBuiltinAgentDetailHandler(svcCtx *svc.ServiceContext) http.HandlerFunc 
 		}
 		r.Header.Set("X-Path-Param-Name", name)
 		switch r.Method {
+		case http.MethodPut:
+			handler.NewUpdateBuiltinAgentHandler(svcCtx).ServeHTTP(w, r)
 		case http.MethodDelete:
 			handler.NewDeleteBuiltinAgentHandler(svcCtx).ServeHTTP(w, r)
 		default:
@@ -429,7 +431,7 @@ func authMiddleware(next http.Handler, svcCtx *svc.ServiceContext) http.Handler 
 		if method == http.MethodDelete && strings.HasPrefix(path, "/api/agents/") {
 			needsAuth = true
 		}
-		if (method == http.MethodPost || method == http.MethodDelete) && strings.HasPrefix(path, "/api/builtin-agents") {
+		if (method == http.MethodPost || method == http.MethodPut || method == http.MethodDelete) && strings.HasPrefix(path, "/api/builtin-agents") {
 			needsAuth = true
 		}
 

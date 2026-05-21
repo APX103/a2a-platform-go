@@ -209,9 +209,10 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	userText := extractUserText(rpcReq)
 	if userText != "" {
 		h.svcCtx.Messages.Append(&model.Message{
-			TaskId:  taskId,
-			Role:    "user",
-			Content: userText,
+			TaskId:    taskId,
+			ContextId: contextId,
+			Role:      "user",
+			Content:   userText,
 		})
 	}
 
@@ -238,6 +239,9 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			},
 			RecordTrace: func(e *model.TraceEvent) error {
 				return h.svcCtx.Traces.Append(e)
+			},
+			SaveMessage: func(m *model.Message) error {
+				return h.svcCtx.Messages.Append(m)
 			},
 		}
 		h.svcCtx.Engine.HandleRequest(r.Context(), w, name, userText, *contextId, taskId, deps)
@@ -356,9 +360,10 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// Record agent response
 		if finalText != "" {
 			h.svcCtx.Messages.Append(&model.Message{
-				TaskId:  taskId,
-				Role:    "agent",
-				Content: finalText,
+				TaskId:    taskId,
+				ContextId: contextId,
+				Role:      "agent",
+				Content:   finalText,
 			})
 			h.svcCtx.Tasks.Update(taskId, map[string]interface{}{"state": "RESPONDED"})
 			if h.svcCtx.EventBus != nil {
@@ -389,9 +394,10 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		respText := extractResponseText(respBody)
 		if respText != "" {
 			h.svcCtx.Messages.Append(&model.Message{
-				TaskId:  taskId,
-				Role:    "agent",
-				Content: respText,
+				TaskId:    taskId,
+				ContextId: contextId,
+				Role:      "agent",
+				Content:   respText,
 			})
 			h.svcCtx.Tasks.Update(taskId, map[string]interface{}{"state": "RESPONDED"})
 		}

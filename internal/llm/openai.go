@@ -139,8 +139,9 @@ func (p *OpenAIProvider) readStream(body io.ReadCloser, ch chan<- StreamEvent) {
 		var chunk struct {
 			Choices []struct {
 				Delta struct {
-					Content   string `json:"content"`
-					ToolCalls []struct {
+					Content          string `json:"content"`
+					ReasoningContent string `json:"reasoning_content"`
+					ToolCalls        []struct {
 						Index    int    `json:"index"`
 						ID       string `json:"id"`
 						Function struct {
@@ -160,6 +161,10 @@ func (p *OpenAIProvider) readStream(body io.ReadCloser, ch chan<- StreamEvent) {
 		}
 
 		delta := chunk.Choices[0].Delta
+
+		if delta.ReasoningContent != "" {
+			ch <- StreamEvent{Type: "reasoning", Reasoning: delta.ReasoningContent}
+		}
 
 		if delta.Content != "" {
 			ch <- StreamEvent{Type: "text", Text: delta.Content}
