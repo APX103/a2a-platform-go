@@ -267,8 +267,15 @@ func (e *Engine) runLoop(
 ) (string, error) {
 	cfg := agent.Config
 	maxRounds := cfg.MaxToolRounds
+	maxTurns := cfg.MaxTurns
+	turnCount := 0
 
 	for round := 0; round <= maxRounds; round++ {
+		turnCount++
+		if turnCount > maxTurns {
+			return "", fmt.Errorf("max turns (%d) exceeded", maxTurns)
+		}
+
 		req := &llm.ChatRequest{
 			Model:        cfg.Model,
 			SystemPrompt: cfg.SystemPrompt,
