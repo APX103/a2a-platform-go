@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"a2a-platform/internal/llm"
+	"a2a-platform/internal/model"
 )
 
 const (
@@ -20,25 +21,10 @@ const (
 // SubagentStore is the interface for subagent session persistence
 // Must match svc.SubagentStore method signatures
 type SubagentStore interface {
-	Create(parentContextId, parentToolCallId, task, context string) (*SubagentSession, error)
+	Create(parentContextId, parentToolCallId, task, context string) (*model.SubagentSession, error)
 	Complete(id, result string) error
 	Fail(id, errorMsg string) error
 	UpdateMessages(id, messagesJSON string) error
-}
-
-// SubagentSession represents a spawned subagent execution
-type SubagentSession struct {
-	ID               string    `json:"id"`
-	ParentContextId  string    `json:"parent_context_id"`
-	ParentToolCallId string    `json:"parent_tool_call_id"`
-	Task             string    `json:"task"`
-	Context          string    `json:"context"`
-	Status           string    `json:"status"`
-	Messages         string    `json:"messages"`
-	Result           string    `json:"result"`
-	Error            string    `json:"error"`
-	CreatedAt        time.Time `json:"created_at"`
-	CompletedAt      *time.Time `json:"completed_at"`
 }
 
 // SubagentEngine handles spawning and managing subagents for isolated task execution
@@ -49,6 +35,11 @@ type SubagentEngine struct {
 	agentConfig  llm.ChatRequest
 	mu           sync.Mutex
 	activeCount  int
+}
+
+// Store returns the subagent store for session management
+func (e *SubagentEngine) Store() SubagentStore {
+	return e.store
 }
 
 // NewSubagentEngine creates a new subagent engine
@@ -268,8 +259,8 @@ func SpawnAgent(engine *SubagentEngine) func(args map[string]any) (string, error
 		contextStr, _ := args["context"].(string)
 
 		// Get parent context from the calling context if available
-		parentContextId := ""
-		parentToolCallId := ""
+		parentContextId, _ := args["_parent_context_id"].(string)
+		parentToolCallId, _ := args["_parent_tool_call_id"].(string)
 
 		// Execute subagent
 		ctx, cancel := context.WithTimeout(context.Background(), subagentTimeout)
@@ -281,5 +272,28 @@ func SpawnAgent(engine *SubagentEngine) func(args map[string]any) (string, error
 		}
 
 		return result, nil
+	}
+}
+
+// NewSpawnAgentTool creates a BuiltinTool definition for spawn_agent
+func NewSpawnAgentTool(engine *SubagentEngine) model.BuiltinTool {
+	return model.BuiltinTool{
+		Name:        "spawn_agent",
+		Description: "Spawn a subagent to handle a specific task with isolated context. Use this when the task is complex, self-contained, or requires different tools than the current conversation. The subagent runs independently and returns its result.",
+		Parameters: []model.ToolParameter{
+			{
+				Name:        "task",
+				Type:        "string",
+				Description: "The specific task description for the subagent to complete",
+				Required:    true,
+			},
+			{
+				Name:        "context",
+				Type:        "string",
+				Description: "Optional additional context or background information to pass to the subagent",
+				Required:    false,
+			},
+		},
+		Execute: SpawnAgent(engine),
 	}
 }

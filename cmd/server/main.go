@@ -19,6 +19,8 @@ import (
 	"a2a-platform/internal/bridge"
 	"a2a-platform/internal/config"
 	"a2a-platform/internal/handler"
+	"a2a-platform/internal/llm"
+	"a2a-platform/internal/model"
 	"a2a-platform/internal/svc"
 	"a2a-platform/internal/tools"
 	"a2a-platform/web"
@@ -557,4 +559,27 @@ func loadBuiltinAgents(svcCtx *svc.ServiceContext) {
 		registered++
 	}
 	slog.Info("Loaded builtin agents from database", "count", registered, "total", len(agents))
+
+	// Set up subagent engine using the first agent's provider config
+	if len(agents) > 0 && svcCtx.Engine != nil {
+		cfg := agents[0].ToConfig()
+		var provider llm.Provider
+		switch cfg.Provider {
+		case "openai":
+			provider = llm.NewOpenAIProvider(cfg.BaseURL, cfg.APIKey)
+		case "anthropic":
+			provider = llm.NewAnthropicProvider(cfg.BaseURL, cfg.APIKey)
+		}
+		if provider != nil {
+			chatReq := llm.ChatRequest{
+				Model:     cfg.Model,
+				MaxTokens: cfg.MaxTokens,
+			}
+			se := tools.NewSubagentEngine(svcCtx.Subagents, provider, cfg.Name, chatReq)
+			svcCtx.Engine.SetSubagentEngine(se)
+			// Register spawn_agent as a dynamic tool
+			tools.RegisterDynamicTools([]model.BuiltinTool{tools.NewSpawnAgentTool(se)})
+			slog.Info("Registered spawn_agent tool", "agent", cfg.Name)
+		}
+	}
 }

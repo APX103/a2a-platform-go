@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
 import { fetchEventSource } from '@microsoft/fetch-event-source';
 import { useChatStore } from '../stores/chatStore';
-import type { SSEEvent, ToolCall, ThinkingBlock } from '../types/chat';
+import type { SSEEvent, ToolCall, ThinkingBlock, SubagentSession } from '../types/chat';
 
 export function useChat(agentName: string) {
   const {
@@ -15,6 +15,8 @@ export function useChat(agentName: string) {
     addToolCall,
     updateToolCall,
     addThinkingBlock,
+    setSubagent,
+    updateSubagent,
     appendToLastMessage,
   } = useChatStore();
 
@@ -190,11 +192,36 @@ export function useChat(agentName: string) {
                 break;
 
               case 'subagent.started':
-                // Subagent spawned, could show in UI
+                if (data.subagent_id && data.tool_call_id) {
+                  const subagent: SubagentSession = {
+                    id: data.subagent_id,
+                    parent_context_id: '',
+                    parent_tool_call_id: data.tool_call_id,
+                    task: data.subagent_task || '',
+                    context: '',
+                    status: 'running',
+                    created_at: new Date().toISOString(),
+                  };
+                  setSubagent(data.tool_call_id, subagent);
+                }
                 break;
 
               case 'subagent.completed':
-                // Subagent finished
+                if (data.subagent_id && data.tool_call_id) {
+                  updateSubagent(data.tool_call_id, {
+                    status: 'completed',
+                    result: data.result || '',
+                  });
+                }
+                break;
+
+              case 'subagent.error':
+                if (data.subagent_id && data.tool_call_id) {
+                  updateSubagent(data.tool_call_id, {
+                    status: 'failed',
+                    error: data.error || 'Unknown error',
+                  });
+                }
                 break;
             }
           },
@@ -220,6 +247,8 @@ export function useChat(agentName: string) {
       addToolCall,
       updateToolCall,
       addThinkingBlock,
+      setSubagent,
+      updateSubagent,
       appendToLastMessage,
     ]
   );

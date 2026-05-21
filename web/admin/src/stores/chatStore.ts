@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
-import type { ChatMessage, ContextListItem, ToolCall, ThinkingBlock } from '../types/chat';
+import type { ChatMessage, ContextListItem, ToolCall, ThinkingBlock, SubagentSession } from '../types/chat';
 
 interface ChatState {
   // Current chat
@@ -13,6 +13,9 @@ interface ChatState {
   // Context list
   contexts: ContextListItem[];
 
+  // Subagents keyed by tool_call_id
+  subagents: Record<string, SubagentSession>;
+
   // Actions
   setAgentName: (name: string) => void;
   setContextId: (id: string | null) => void;
@@ -22,6 +25,8 @@ interface ChatState {
   setStreaming: (isStreaming: boolean) => void;
   setError: (error: string | null) => void;
   setContexts: (contexts: ContextListItem[]) => void;
+  setSubagent: (toolCallId: string, subagent: SubagentSession) => void;
+  updateSubagent: (toolCallId: string, updates: Partial<SubagentSession>) => void;
   appendToLastMessage: (content: string, field: 'content' | 'reasoning_content') => void;
   addToolCall: (taskId: string, toolCall: ToolCall) => void;
   updateToolCall: (taskId: string, toolId: string, updates: Partial<ToolCall>) => void;
@@ -38,6 +43,7 @@ export const useChatStore = create<ChatState>()(
     isStreaming: false,
     error: null,
     contexts: [],
+    subagents: {},
 
     // Actions
     setAgentName: (name) => set({ agentName: name }),
@@ -62,6 +68,21 @@ export const useChatStore = create<ChatState>()(
     setError: (error) => set({ error }),
 
     setContexts: (contexts) => set({ contexts }),
+
+    setSubagent: (toolCallId, subagent) => set((state) => ({
+      subagents: { ...state.subagents, [toolCallId]: subagent },
+    })),
+
+    updateSubagent: (toolCallId, updates) => set((state) => {
+      const existing = state.subagents[toolCallId];
+      if (!existing) return state;
+      return {
+        subagents: {
+          ...state.subagents,
+          [toolCallId]: { ...existing, ...updates },
+        },
+      };
+    }),
 
     appendToLastMessage: (content, field) => set((state) => {
       if (state.messages.length === 0) return state;
@@ -120,6 +141,7 @@ export const useChatStore = create<ChatState>()(
       messages: [],
       isStreaming: false,
       error: null,
+      subagents: {},
     }),
   }))
 );

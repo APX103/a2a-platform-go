@@ -2,6 +2,8 @@ import { useMemo, useState } from 'react';
 import MarkdownRenderer from './MarkdownRenderer';
 import ThinkingBlock from './ThinkingBlock';
 import ToolCallCard from './ToolCallCard';
+import SubagentCard from './SubagentCard';
+import { useChatStore } from '../stores/chatStore';
 import { User, Bot, Clock, ChevronRight, ChevronDown, Brain } from 'lucide-react';
 import type { ChatMessage, ThinkingBlock as ThinkingBlockType, ToolCall as ToolCallType } from '../types/chat';
 
@@ -44,6 +46,16 @@ interface MessageItemProps {
     type: 'user' | 'assistant';
     message: ChatMessage;
   };
+}
+
+function ToolCallWithSubagent({ tool }: { tool: ToolCallType }) {
+  const subagent = useChatStore((state) => state.subagents[tool.id]);
+
+  if (tool.name === 'spawn_agent' && subagent) {
+    return <SubagentCard subagent={subagent} />;
+  }
+
+  return <ToolCallCard tool={tool} />;
 }
 
 function MessageItem({ item }: MessageItemProps) {
@@ -113,7 +125,7 @@ function MessageItem({ item }: MessageItemProps) {
 
         {/* Tool calls (before content) */}
         {toolCalls.map((tool: ToolCallType) => (
-          <ToolCallCard key={tool.id} tool={tool} />
+          <ToolCallWithSubagent key={tool.id} tool={tool} />
         ))}
 
         {/* Message content */}

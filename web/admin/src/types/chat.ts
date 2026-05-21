@@ -87,6 +87,8 @@ export interface SSEEvent {
   status?: { state: string; message?: unknown };
   subagent_id?: string;
   subagent_task?: string;
+  tool_call_id?: string;
+  result?: string;
   metadata?: Record<string, unknown>;
 }
 

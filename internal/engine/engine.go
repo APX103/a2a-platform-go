@@ -44,15 +44,20 @@ type BuiltinAgent struct {
 }
 
 type Engine struct {
-	agents   map[string]*BuiltinAgent
-	mu       sync.RWMutex
-	callTool func(agent *BuiltinAgent, name string, arguments string) (string, error)
+	agents         map[string]*BuiltinAgent
+	mu             sync.RWMutex
+	callTool       func(agent *BuiltinAgent, name string, arguments string) (string, error)
+	subagentEngine *tools.SubagentEngine
 }
 
 func New() *Engine {
 	e := &Engine{agents: make(map[string]*BuiltinAgent)}
 	e.callTool = e.defaultCallTool
 	return e
+}
+
+func (e *Engine) SetSubagentEngine(se *tools.SubagentEngine) {
+	e.subagentEngine = se
 }
 
 func (e *Engine) RegisterAgent(cfg config.BuiltinAgent) error {
@@ -373,9 +378,56 @@ func (e *Engine) runLoop(
 				DataJson:  string(traceData),
 			})
 
-			result, err := e.callTool(agent, tc.Name, tc.Arguments)
-			if err != nil {
-				result = fmt.Sprintf("Error: %s", err)
+			var result string
+			var err error
+
+			// Inline handling for spawn_agent to emit subagent SSE events
+			if tc.Name == "spawn_agent" && e.subagentEngine != nil {
+				var args map[string]any
+				if tc.Arguments != "" {
+					_ = json.Unmarshal([]byte(tc.Arguments), &args)
+				}
+				task, _ := args["task"].(string)
+				contextStr, _ := args["context"].(string)
+
+				// Create subagent session first to get the ID
+				subSession, createErr := e.subagentEngine.Store().Create(contextId, tc.ID, task, contextStr)
+				if createErr == nil && subSession != nil {
+					writeSSE(w, flusher, sseEventSubagentStarted, map[string]interface{}{
+						"taskId":        taskId,
+						"subagent_id":   subSession.ID,
+						"subagent_task": task,
+						"tool_call_id":  tc.ID,
+					})
+
+					result, err = e.subagentEngine.Run(ctx, task, contextStr, contextId, tc.ID)
+					if err != nil {
+						result = fmt.Sprintf("Error: %s", err)
+						writeSSE(w, flusher, sseEventSubagentError, map[string]interface{}{
+							"taskId":       taskId,
+							"subagent_id":  subSession.ID,
+							"error":        err.Error(),
+							"tool_call_id": tc.ID,
+						})
+					} else {
+						writeSSE(w, flusher, sseEventSubagentComplete, map[string]interface{}{
+							"taskId":       taskId,
+							"subagent_id":  subSession.ID,
+							"result":       truncate(result, 500),
+							"tool_call_id": tc.ID,
+						})
+					}
+				} else {
+					result, err = e.callTool(agent, tc.Name, tc.Arguments)
+					if err != nil {
+						result = fmt.Sprintf("Error: %s", err)
+					}
+				}
+			} else {
+				result, err = e.callTool(agent, tc.Name, tc.Arguments)
+				if err != nil {
+					result = fmt.Sprintf("Error: %s", err)
+				}
 			}
 
 			writeSSE(w, flusher, sseEventToolCallEnd, map[string]interface{}{
