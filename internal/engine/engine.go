@@ -61,6 +61,17 @@ func (e *Engine) SetSubagentEngine(se *tools.SubagentEngine) {
 }
 
 func (e *Engine) RegisterAgent(cfg config.BuiltinAgent) error {
+	// Normalize defaults
+	if cfg.MaxToolRounds == 0 {
+		cfg.MaxToolRounds = 10
+	}
+	if cfg.MaxTurns == 0 {
+		cfg.MaxTurns = 20
+	}
+	if cfg.MaxToolResultSize == 0 {
+		cfg.MaxToolResultSize = 10000
+	}
+
 	var provider llm.Provider
 	switch cfg.Provider {
 	case "openai":
@@ -367,7 +378,38 @@ func (e *Engine) runLoop(
 			deps.SaveMessage(msg)
 		}
 
-		// Execute tool calls
+		// Build read-only lookup from registered tools
+		toolRO := make(map[string]bool, len(agent.Tools))
+		for _, t := range agent.Tools {
+			toolRO[t.Name] = t.IsReadOnly
+		}
+
+		// Pre-execute read-only tools in parallel (no side effects)
+		roResults := make(map[string]struct {
+			result string
+			err    error
+		})
+		var roWg sync.WaitGroup
+		for _, tc := range toolCalls {
+			if tc.Name == "spawn_agent" || !toolRO[tc.Name] {
+				continue
+			}
+			roWg.Add(1)
+			go func(tcall llm.ToolCall) {
+				defer roWg.Done()
+				res, err := e.callTool(agent, tcall.Name, tcall.Arguments)
+				if err != nil {
+					res = fmt.Sprintf("Error: %s", err)
+				}
+				roResults[tcall.ID] = struct {
+					result string
+					err    error
+				}{result: res, err: err}
+			}(tc)
+		}
+		roWg.Wait()
+
+		// Process all tool calls serially (SSE + persist must be thread-safe)
 		for _, tc := range toolCalls {
 			toolStart := time.Now()
 
@@ -436,7 +478,12 @@ func (e *Engine) runLoop(
 						result = fmt.Sprintf("Error: %s", err)
 					}
 				}
+			} else if res, ok := roResults[tc.ID]; ok {
+				// Read-only result from parallel execution
+				result = res.result
+				err = res.err
 			} else {
+				// Write tool: execute serially
 				result, err = e.callTool(agent, tc.Name, tc.Arguments)
 				if err != nil {
 					result = fmt.Sprintf("Error: %s", err)
@@ -444,7 +491,10 @@ func (e *Engine) runLoop(
 			}
 
 			// Truncate large tool results to prevent context explosion
-			const maxToolResultSize = 8000
+			maxToolResultSize := cfg.MaxToolResultSize
+			if maxToolResultSize == 0 {
+				maxToolResultSize = 10000
+			}
 			truncatedResult := result
 			if len(result) > maxToolResultSize {
 				truncatedResult = result[:maxToolResultSize] + fmt.Sprintf("\n... (truncated, %d chars omitted)", len(result)-maxToolResultSize)
@@ -476,13 +526,13 @@ func (e *Engine) runLoop(
 				ToolCallID: tc.ID,
 			})
 
-			// Persist tool result message
+			// Persist tool result message (store truncated to protect DB)
 			if deps.SaveMessage != nil {
 				deps.SaveMessage(&model.Message{
 					TaskId:     taskId,
 					ContextId:  &contextId,
 					Role:       "tool",
-					Content:    result,
+					Content:    truncatedResult,
 					ToolCallId: &tc.ID,
 				})
 			}

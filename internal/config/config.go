@@ -95,7 +95,8 @@ type BuiltinAgent struct {
 	SystemPrompt   string      `yaml:"system_prompt" json:"system_prompt"`
 	MaxTokens      int         `yaml:"max_tokens" json:"max_tokens"`
 	MaxToolRounds  int         `yaml:"max_tool_rounds" json:"max_tool_rounds"`
-	MaxTurns       int         `yaml:"max_turns" json:"max_turns"`
+	MaxTurns          int         `yaml:"max_turns" json:"max_turns"`
+	MaxToolResultSize int         `yaml:"max_tool_result_size" json:"max_tool_result_size"`
 	MCPServers     []MCPServer `yaml:"mcp_servers" json:"mcp_servers,omitempty"`
 }
 
@@ -157,6 +158,9 @@ func MustLoad(path string) *Config {
 		}
 		if c.BuiltinAgents[i].MaxTurns == 0 {
 			c.BuiltinAgents[i].MaxTurns = 20
+		}
+		if c.BuiltinAgents[i].MaxToolResultSize == 0 {
+			c.BuiltinAgents[i].MaxToolResultSize = 10000
 		}
 	}
 	return &c
