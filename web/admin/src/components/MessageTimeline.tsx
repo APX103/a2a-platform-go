@@ -92,8 +92,8 @@ function MessageItem({ item }: MessageItemProps) {
         {thinkingBlocks.length > 0 && <ThinkingBlock blocks={thinkingBlocks as ThinkingBlockType[]} />}
 
         {/* Tool calls (before content) */}
-        {toolCalls.map((tool) => (
-          <ToolCallCard key={(tool as ToolCallType).id} tool={tool as ToolCallType} />
+        {toolCalls.map((tool: ToolCallType) => (
+          <ToolCallCard key={tool.id} tool={tool} />
         ))}
 
         {/* Message content */}

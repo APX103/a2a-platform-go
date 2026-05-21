@@ -12,7 +12,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json();
 }
 
-export type {
+import type {
   Context,
   ContextListItem,
   ContextDetail,

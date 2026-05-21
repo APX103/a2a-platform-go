@@ -20,6 +20,7 @@ import (
 	"a2a-platform/internal/config"
 	"a2a-platform/internal/handler"
 	"a2a-platform/internal/svc"
+	"a2a-platform/internal/tools"
 	"a2a-platform/web"
 
 	"golang.org/x/time/rate"
@@ -110,6 +111,10 @@ func main() {
 	} else {
 		hostURL = fmt.Sprintf("http://%s:%d", cfg.Host, cfg.Port)
 	}
+
+	// Set platform base URL for A2A tools
+	tools.SetPlatformBaseURL(hostURL)
+
 	mcpHandler := handler.NewMCPSSEHandler(svcCtx, hostURL)
 	mux.HandleFunc("/mcp/sse", mcpHandler.ServeSSE)
 	mux.HandleFunc("/mcp/messages", mcpHandler.ServeMessages)

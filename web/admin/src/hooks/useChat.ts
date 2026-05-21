@@ -52,7 +52,16 @@ export function useChat(agentName: string) {
         role: 'user',
         content,
         task_id: taskId,
-        context_id: contextId || null,
+        context_id: contextId || undefined,
+        timestamp: new Date().toISOString(),
+      });
+
+      // Add empty assistant message to receive streaming content
+      addMessage({
+        role: 'assistant',
+        content: '',
+        task_id: taskId,
+        context_id: contextId || undefined,
         timestamp: new Date().toISOString(),
       });
 
@@ -109,9 +118,10 @@ export function useChat(agentName: string) {
                 break;
 
               case 'tool.call_start':
-                if (data.tool) {
+                if (data.tool && data.tool.id) {
                   const tc: ToolCall = {
                     ...data.tool,
+                    id: data.tool.id,
                     status: 'started',
                     start_time: new Date().toISOString(),
                   };
@@ -124,17 +134,18 @@ export function useChat(agentName: string) {
                 break;
 
               case 'tool.call_delta':
-                if (data.tool) {
-                  const existing = toolCallBuffer[data.tool.id];
+                if (data.tool && data.tool.id) {
+                  const toolId = data.tool.id;
+                  const existing = toolCallBuffer[toolId];
                   if (existing) {
                     const updated: ToolCall = {
                       ...existing,
                       arguments: existing.arguments + (data.tool.arguments || ''),
                     };
-                    updateToolCall(taskId, data.tool.id, { arguments: updated.arguments });
+                    updateToolCall(taskId, toolId, { arguments: updated.arguments });
                     setToolCallBuffer((prev) => ({
                       ...prev,
-                      [data.tool.id]: updated,
+                      [toolId]: updated,
                     }));
                   }
                 }

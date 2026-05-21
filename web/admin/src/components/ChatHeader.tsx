@@ -46,11 +46,12 @@ export default function ChatHeader({ agentName, contextId, onNewContext, onDelet
             {showMenu && (
               <div className="absolute right-0 mt-2 w-48 bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg shadow-lg z-10">
                 <button
-                  onClick={() => {
+                  onClick={async (e) => {
+                    e.stopPropagation();
                     if (confirm('Delete this conversation?')) {
-                      onDeleteContext();
+                      await onDeleteContext();
+                      setShowMenu(false);
                     }
-                    setShowMenu(false);
                   }}
                   className="w-full flex items-center gap-2 px-4 py-2 text-sm text-left text-red-500 hover:bg-gray-300 dark:hover:bg-gray-700 transition-colors"
                 >

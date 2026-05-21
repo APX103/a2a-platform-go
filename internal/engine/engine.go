@@ -89,8 +89,8 @@ func (e *Engine) RegisterAgent(cfg config.BuiltinAgent) error {
 		allTools = append(allTools, client.Tools...)
 	}
 
-	// Add builtin tools
-	for _, builtinTool := range tools.GetBuiltinTools() {
+	// Add builtin tools (including A2A platform tools)
+	for _, builtinTool := range tools.GetAllTools() {
 		// Convert ToolParameter to InputSchema
 		properties := make(map[string]interface{})
 		required := make([]string, 0)

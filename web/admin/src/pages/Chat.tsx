@@ -75,10 +75,14 @@ export default function Chat() {
 
   const handleDeleteContext = async () => {
     if (contextId) {
-      await api.deleteContext(contextId);
-      setContextId(null);
-      clearChat();
-      loadContextList();
+      try {
+        await api.deleteContext(contextId);
+        setContextId(null);
+        clearChat();
+        loadContextList();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to delete conversation');
+      }
     }
   };
 
