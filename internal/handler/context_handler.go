@@ -91,12 +91,41 @@ func (h *GetContextHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		messages = []*model.Message{}
 	}
 
+	// Build map of tool_call_id -> result content from tool-role messages
+	toolResults := make(map[string]string)
+	for _, m := range messages {
+		if m.Role == "tool" && m.ToolCallId != nil && *m.ToolCallId != "" {
+			toolResults[*m.ToolCallId] = m.Content
+		}
+	}
+
 	msgValues := make([]model.Message, 0, len(messages))
 	for _, m := range messages {
 		msg := *m
 		// Normalize internal 'agent' role to standard 'assistant' for frontend
 		if msg.Role == "agent" {
 			msg.Role = "assistant"
+			// Inject tool results into tool_calls so they render in the UI
+			if msg.ToolCalls != "" && len(toolResults) > 0 {
+				var calls []map[string]interface{}
+				if err := json.Unmarshal([]byte(msg.ToolCalls), &calls); err == nil {
+					for i := range calls {
+						if id, ok := calls[i]["id"].(string); ok && id != "" {
+							if result, ok := toolResults[id]; ok {
+								calls[i]["result"] = result
+								calls[i]["status"] = "completed"
+							}
+						}
+					}
+					if updated, err := json.Marshal(calls); err == nil {
+						msg.ToolCalls = string(updated)
+					}
+				}
+			}
+		}
+		// Skip standalone tool messages; their results are now embedded in assistant tool_calls
+		if msg.Role == "tool" {
+			continue
 		}
 		msgValues = append(msgValues, msg)
 	}
