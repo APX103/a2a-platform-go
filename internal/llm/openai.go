@@ -67,9 +67,9 @@ func (p *OpenAIProvider) buildRequest(req *ChatRequest) map[string]interface{} {
 	}
 
 	for _, m := range req.Messages {
-		msg := map[string]interface{}{"role": m.Role}
-		if m.Content != "" {
-			msg["content"] = m.Content
+		msg := map[string]interface{}{
+			"role":    m.Role,
+			"content": m.Content,
 		}
 		if m.ReasoningContent != "" {
 			msg["reasoning_content"] = m.ReasoningContent

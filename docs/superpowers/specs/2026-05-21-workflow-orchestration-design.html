@@ -1,0 +1,857 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>A2A Platform - Workflow Orchestration Design</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --surface2: #222533;
+    --border: #2e3348;
+    --text: #e1e4ed;
+    --text2: #9ca3b8;
+    --accent: #6366f1;
+    --accent2: #818cf8;
+    --green: #34d399;
+    --orange: #fb923c;
+    --pink: #f472b6;
+    --purple: #a78bfa;
+    --teal: #2dd4bf;
+    --blue: #60a5fa;
+    --red: #f87171;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, 'SF Pro Text', 'Helvetica Neue', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    padding: 2rem;
+    max-width: 1100px;
+    margin: 0 auto;
+  }
+  h1 {
+    font-size: 2rem;
+    font-weight: 700;
+    margin-bottom: 0.5rem;
+    background: linear-gradient(135deg, var(--accent2), var(--purple));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .subtitle { color: var(--text2); margin-bottom: 2.5rem; }
+  h2 {
+    font-size: 1.4rem;
+    font-weight: 600;
+    margin-top: 3rem;
+    margin-bottom: 1rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  h2 .icon { font-size: 1.2rem; }
+  h3 {
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin-top: 2rem;
+    margin-bottom: 0.75rem;
+    color: var(--accent2);
+  }
+  p { margin-bottom: 1rem; color: var(--text); }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+  .card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+  }
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.25rem;
+  }
+  .stat-card .label { font-size: 0.8rem; color: var(--text2); text-transform: uppercase; letter-spacing: 0.05em; }
+  .stat-card .value { font-size: 1rem; font-weight: 600; margin-top: 0.25rem; }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 1.5rem;
+    font-size: 0.9rem;
+  }
+  th {
+    text-align: left;
+    padding: 0.75rem 1rem;
+    background: var(--surface2);
+    color: var(--text2);
+    font-weight: 600;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    border-bottom: 1px solid var(--border);
+  }
+  td {
+    padding: 0.6rem 1rem;
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+  }
+  tr:hover td { background: rgba(99,102,241,0.05); }
+
+  pre {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.25rem;
+    overflow-x: auto;
+    font-size: 0.85rem;
+    line-height: 1.6;
+    margin-bottom: 1.5rem;
+    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  }
+  code {
+    background: var(--surface2);
+    padding: 0.15em 0.4em;
+    border-radius: 4px;
+    font-size: 0.88em;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    color: var(--accent2);
+  }
+  pre code { background: none; padding: 0; color: var(--text); }
+
+  .badge {
+    display: inline-block;
+    padding: 0.15em 0.6em;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    vertical-align: middle;
+  }
+  .badge-blue { background: rgba(96,165,250,0.15); color: var(--blue); }
+  .badge-orange { background: rgba(251,146,60,0.15); color: var(--orange); }
+  .badge-purple { background: rgba(167,139,250,0.15); color: var(--purple); }
+  .badge-teal { background: rgba(45,212,191,0.15); color: var(--teal); }
+  .badge-green { background: rgba(52,211,153,0.15); color: var(--green); }
+  .badge-pink { background: rgba(244,114,182,0.15); color: var(--pink); }
+  .badge-gray { background: rgba(156,163,184,0.15); color: var(--text2); }
+
+  .diagram {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 2rem;
+    margin-bottom: 1.5rem;
+    font-family: 'SF Mono', monospace;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    overflow-x: auto;
+    white-space: pre;
+    color: var(--text2);
+  }
+
+  .flow-horizontal {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-bottom: 1.5rem;
+  }
+  .flow-node {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.5rem 1rem;
+    font-size: 0.85rem;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .flow-node.active { border-color: var(--accent); color: var(--accent2); }
+  .flow-node.start { border-color: var(--green); color: var(--green); }
+  .flow-node.end { border-color: var(--red); color: var(--red); }
+  .flow-arrow { color: var(--text2); font-size: 1.2rem; }
+
+  .section-number {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    background: var(--accent);
+    color: white;
+    font-size: 0.85rem;
+    font-weight: 700;
+    margin-right: 0.5rem;
+    flex-shrink: 0;
+  }
+
+  .toc {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.5rem 2rem;
+    margin-bottom: 2.5rem;
+  }
+  .toc h3 { margin-top: 0; margin-bottom: 1rem; color: var(--text); font-size: 1rem; }
+  .toc ol { padding-left: 1.5rem; }
+  .toc li { margin-bottom: 0.4rem; }
+  .toc a { color: var(--accent2); text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+
+  .callout {
+    background: rgba(99,102,241,0.08);
+    border-left: 3px solid var(--accent);
+    border-radius: 0 8px 8px 0;
+    padding: 1rem 1.25rem;
+    margin-bottom: 1.5rem;
+    font-size: 0.9rem;
+  }
+  .callout strong { color: var(--accent2); }
+
+  .node-visual {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.4rem 0.8rem;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    font-weight: 500;
+  }
+
+  .compare-table td:first-child { font-weight: 500; }
+
+  .api-method {
+    font-family: 'SF Mono', monospace;
+    font-size: 0.8rem;
+    font-weight: 600;
+    padding: 0.15em 0.5em;
+    border-radius: 4px;
+  }
+  .api-get { background: rgba(52,211,153,0.15); color: var(--green); }
+  .api-post { background: rgba(96,165,250,0.15); color: var(--blue); }
+  .api-put { background: rgba(251,146,60,0.15); color: var(--orange); }
+  .api-delete { background: rgba(248,113,113,0.15); color: var(--red); }
+</style>
+</head>
+<body>
+
+<h1>Workflow Orchestration Design</h1>
+<p class="subtitle">A2A Platform Agent 编排模块设计方案 &mdash; 2026-05-21</p>
+
+<div class="toc">
+  <h3>目录</h3>
+  <ol>
+    <li><a href="#overview">Overview &amp; 核心决策</a></li>
+    <li><a href="#yaml">YAML Schema</a></li>
+    <li><a href="#database">数据库设计</a></li>
+    <li><a href="#engine">执行引擎</a></li>
+    <li><a href="#state">共享状态模型</a></li>
+    <li><a href="#frontend">前端可视化编辑器</a></li>
+    <li><a href="#api">API 设计</a></li>
+    <li><a href="#integration">集成点 &amp; 新增文件</a></li>
+  </ol>
+</div>
+
+<!-- ==================== Section 1 ==================== -->
+<h2 id="overview"><span class="section-number">1</span> Overview &amp; 核心决策</h2>
+
+<p>在 A2A 平台中新增可视化 Workflow 编排模块。用户通过 YAML 定义多 Agent 协作的 DAG 流程，在 React Flow 画布上可视化编辑，由内置 Go 引擎按图执行。</p>
+
+<div class="card">
+  <h3 style="margin-top:0">核心决策一览</h3>
+  <table>
+    <thead><tr><th>决策项</th><th>选择</th><th>理由</th></tr></thead>
+    <tbody>
+      <tr><td>架构</td><td>内置 Go 引擎（单体）</td><td>与当前单二进制部署一致</td></tr>
+      <tr><td>编辑器交互</td><td>自动布局 (dagre) + 可拖拽微调</td><td>默认整洁，用户可调</td></tr>
+      <tr><td>存储</td><td>数据库 + YAML 导入导出</td><td>与现有 Agent 存储一致；文件可版本控制</td></tr>
+      <tr><td>节点间数据流</td><td>共享状态（全局 KV）</td><td>灵活，支持分支和并行</td></tr>
+      <tr><td>Agent 上下文</td><td>每个 Agent 节点独立 contextId</td><td>不污染 system prompt，仅传递结构化数据</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="card-grid">
+  <div class="stat-card">
+    <div class="label">节点类型</div>
+    <div class="value" style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.5rem">
+      <span class="badge badge-blue">Agent</span>
+      <span class="badge badge-orange">Tool</span>
+      <span class="badge badge-purple">Conditional</span>
+      <span class="badge badge-teal">Parallel</span>
+      <span class="badge badge-green">Loop</span>
+      <span class="badge badge-pink">Human</span>
+    </div>
+  </div>
+  <div class="stat-card">
+    <div class="label">触发方式</div>
+    <div class="value" style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.5rem">
+      <span class="badge badge-blue">Chat</span>
+      <span class="badge badge-green">API</span>
+      <span class="badge badge-orange">Schedule</span>
+      <span class="badge badge-purple">Event</span>
+    </div>
+  </div>
+  <div class="stat-card">
+    <div class="label">技术选型</div>
+    <div class="value">React Flow + dagre + Monaco</div>
+  </div>
+</div>
+
+<!-- ==================== Section 2 ==================== -->
+<h2 id="yaml"><span class="section-number">2</span> YAML Schema</h2>
+
+<p>Workflow 定义完全基于 YAML，支持双向同步到可视化画布。</p>
+
+<h3>完整示例</h3>
+<pre><code>workflows:
+  customer-support:
+    description: "Customer support workflow"
+
+    input_schema:
+      type: object
+      properties:
+        user_message: { type: string }
+        priority: { type: string, enum: [low, medium, high] }
+
+    shared_state:                          # 初始共享状态
+      classification: null
+      response: null
+      approved: false
+
+    nodes:
+      classify:
+        type: agent
+        agent_name: classifier
+        instruction: "Classify the user message"
+        inputs: ["{{.input.user_message}}"]
+        outputs:
+          classification: "{{.result}}"
+        timeout: 30s
+        retry: { max: 2, backoff: exponential }
+
+      route:
+        type: conditional
+        expression: "{{.state.classification}}"
+        routes:
+          BUG: handle_bug
+          SUPPORT: handle_support
+          default: general_response
+
+      handle_bug:
+        type: agent
+        agent_name: bug-agent
+        instruction: "Handle bug: {{.state.classification}}"
+        inputs: ["{{.state.classification}}"]
+        outputs:
+          response: "{{.result}}"
+
+      handle_support:
+        type: parallel
+        nodes: [lookup_order, check_faq]
+        timeout: 60s
+
+      lookup_order:
+        type: tool
+        tool_name: http_request
+        config:
+          url: "https://api.example.com/orders/{{.input.order_id}}"
+          method: GET
+        outputs:
+          order_info: "{{.result.body}}"
+
+      check_faq:
+        type: agent
+        agent_name: faq-agent
+        outputs:
+          faq_answer: "{{.result}}"
+
+      human_review:
+        type: human
+        prompt: "Review: {{.state.response}}"
+        timeout: 30m
+        outputs:
+          approved: "{{.result.approved}}"
+
+      send_response:
+        type: agent
+        agent_name: responder
+
+      general_response:
+        type: agent
+        agent_name: general-agent
+        outputs:
+          response: "{{.result}}"
+
+    edges:
+      - [START, classify]
+      - [classify, route]
+      - [route, handle_bug, { condition: BUG }]
+      - [route, handle_support, { condition: SUPPORT }]
+      - [route, general_response, { condition: default }]
+      - [handle_bug, human_review]
+      - [handle_support, send_response]
+      - [human_review, send_response, { condition: approved }]
+      - [send_response, END]
+      - [general_response, END]
+
+    triggers:
+      - type: api
+      - type: chat
+        agent_name: support-wf
+      - type: schedule
+        cron: "0 9 * * 1-5"
+        input: { report_type: "daily_summary" }
+      - type: event
+        event_type: "task.completed"
+        filter: "agent_name == 'bug-agent'"</code></pre>
+
+<h3>节点类型定义</h3>
+<table>
+  <thead><tr><th>类型</th><th>必填字段</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><span class="badge badge-blue">agent</span></td><td><code>agent_name</code>, <code>instruction</code></td><td>调用内置 Agent，通过 Engine.HandleRequest()</td></tr>
+    <tr><td><span class="badge badge-orange">tool</span></td><td><code>tool_name</code>, <code>config</code></td><td>执行确定性工具（HTTP、函数等），不经过 LLM</td></tr>
+    <tr><td><span class="badge badge-purple">conditional</span></td><td><code>expression</code>, <code>routes</code></td><td>计算表达式，路由到匹配分支</td></tr>
+    <tr><td><span class="badge badge-teal">parallel</span></td><td><code>nodes</code></td><td>并发执行子节点，等待全部完成</td></tr>
+    <tr><td><span class="badge badge-green">loop</span></td><td><code>nodes</code>, <code>condition</code>, <code>max_iterations</code></td><td>循环执行子节点直到条件满足</td></tr>
+    <tr><td><span class="badge badge-pink">human</span></td><td><code>prompt</code>, <code>timeout</code></td><td>暂停执行，等待人工审批/输入</td></tr>
+  </tbody>
+</table>
+
+<h3>模板表达式</h3>
+<p>所有 <code>inputs</code>、<code>instruction</code>、<code>prompt</code> 字段支持 Go template 语法：</p>
+<table>
+  <thead><tr><th>表达式</th><th>含义</th></tr></thead>
+  <tbody>
+    <tr><td><code>{{.input.xxx}}</code></td><td>Workflow 运行输入参数</td></tr>
+    <tr><td><code>{{.state.xxx}}</code></td><td>共享状态中的某个字段</td></tr>
+    <tr><td><code>{{.result}}</code></td><td>当前节点的原始执行结果</td></tr>
+    <tr><td><code>{{.state}}</code></td><td>整个共享状态对象（需 pass_full_state: true）</td></tr>
+  </tbody>
+</table>
+
+<!-- ==================== Section 3 ==================== -->
+<h2 id="database"><span class="section-number">3</span> 数据库设计</h2>
+
+<p>新增 3 张表，与现有 SQLite/MySQL 双驱动兼容。</p>
+
+<h3>workflows &mdash; Workflow 定义</h3>
+<table>
+  <thead><tr><th>字段</th><th>类型</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>id</code></td><td>VARCHAR(64) PK</td><td>如 "customer-support"</td></tr>
+    <tr><td><code>name</code></td><td>VARCHAR(255)</td><td>显示名称</td></tr>
+    <tr><td><code>description</code></td><td>TEXT</td><td>描述</td></tr>
+    <tr><td><code>yaml_def</code></td><td>TEXT</td><td>完整 YAML 定义</td></tr>
+    <tr><td><code>version</code></td><td>INT</td><td>版本号，默认 1</td></tr>
+    <tr><td><code>enabled</code></td><td>BOOLEAN</td><td>是否启用</td></tr>
+    <tr><td><code>created_at</code></td><td>DATETIME</td><td>创建时间</td></tr>
+    <tr><td><code>updated_at</code></td><td>DATETIME</td><td>更新时间</td></tr>
+  </tbody>
+</table>
+
+<h3>workflow_runs &mdash; 运行实例</h3>
+<table>
+  <thead><tr><th>字段</th><th>类型</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>id</code></td><td>VARCHAR(36) PK</td><td>UUID</td></tr>
+    <tr><td><code>workflow_id</code></td><td>VARCHAR(64) FK</td><td>关联 Workflow</td></tr>
+    <tr><td><code>status</code></td><td>VARCHAR(20)</td><td>pending / running / paused / completed / failed / cancelled</td></tr>
+    <tr><td><code>input_json</code></td><td>TEXT</td><td>运行输入</td></tr>
+    <tr><td><code>state_json</code></td><td>TEXT</td><td>共享状态（每步更新）</td></tr>
+    <tr><td><code>context_id</code></td><td>VARCHAR(36)</td><td>关联对话 context</td></tr>
+    <tr><td><code>trigger_type</code></td><td>VARCHAR(20)</td><td>触发方式：api / chat / schedule / event</td></tr>
+    <tr><td><code>started_at</code></td><td>DATETIME</td><td>开始时间</td></tr>
+    <tr><td><code>completed_at</code></td><td>DATETIME</td><td>完成时间</td></tr>
+    <tr><td><code>error</code></td><td>TEXT</td><td>错误信息</td></tr>
+  </tbody>
+</table>
+
+<h3>workflow_node_runs &mdash; 节点执行记录</h3>
+<table>
+  <thead><tr><th>字段</th><th>类型</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>id</code></td><td>VARCHAR(36) PK</td><td>UUID</td></tr>
+    <tr><td><code>run_id</code></td><td>VARCHAR(36) FK</td><td>关联 Workflow Run</td></tr>
+    <tr><td><code>node_id</code></td><td>VARCHAR(64)</td><td>YAML 中的节点 key</td></tr>
+    <tr><td><code>node_type</code></td><td>VARCHAR(20)</td><td>agent / tool / conditional / parallel / loop / human</td></tr>
+    <tr><td><code>status</code></td><td>VARCHAR(20)</td><td>pending / running / completed / failed / skipped / timeout</td></tr>
+    <tr><td><code>input_json</code></td><td>TEXT</td><td>节点输入</td></tr>
+    <tr><td><code>output_json</code></td><td>TEXT</td><td>节点输出</td></tr>
+    <tr><td><code>started_at</code></td><td>DATETIME</td><td>开始时间</td></tr>
+    <tr><td><code>completed_at</code></td><td>DATETIME</td><td>完成时间</td></tr>
+    <tr><td><code>error</code></td><td>TEXT</td><td>错误信息</td></tr>
+  </tbody>
+</table>
+
+<!-- ==================== Section 4 ==================== -->
+<h2 id="engine"><span class="section-number">4</span> 执行引擎</h2>
+
+<h3>架构图</h3>
+<div class="diagram">                        ┌─────────────────────────────────┐
+                        │         Workflow Engine          │
+                        │   internal/workflow/engine.go    │
+                        └──────────┬──────────────────────┘
+                                   │
+                  ┌────────────────┼────────────────┐
+                  ▼                ▼                ▼
+         ┌──────────────┐  ┌──────────────┐  ┌──────────────┐
+         │  DAG Parser  │  │  Executor    │  │  State Store │
+         │  (YAML → DAG)│  │  (节点执行)   │  │  (共享状态)   │
+         └──────────────┘  └──────┬───────┘  └──────────────┘
+                                  │
+               ┌──────────────────┼──────────────────┐
+               ▼                  ▼                  ▼
+       ┌──────────────┐  ┌──────────────┐  ┌──────────────┐
+       │Agent Executor│  │Tool Executor │  │Control Flow  │
+       │(Engine.      │  │(HTTP / 函数) │  │(条件/并行/   │
+       │ HandleRequest│  │              │  │ 循环)        │
+       └──────────────┘  └──────────────┘  └──────────────┘</div>
+
+<h3>执行流程</h3>
+<div class="flow-horizontal">
+  <div class="flow-node start">解析 YAML → DAG</div>
+  <span class="flow-arrow">→</span>
+  <div class="flow-node">校验无环</div>
+  <span class="flow-arrow">→</span>
+  <div class="flow-node">创建 Run + 初始化 State</div>
+  <span class="flow-arrow">→</span>
+  <div class="flow-node active">执行循环</div>
+  <span class="flow-arrow">→</span>
+  <div class="flow-node end">END / Error</div>
+</div>
+
+<ol style="padding-left:1.5rem;margin-bottom:1.5rem">
+  <li><strong>解析阶段：</strong>YAML → DAG 结构（节点 + 边），校验无环、有入度/出度</li>
+  <li><strong>初始化阶段：</strong>创建 <code>workflow_run</code>，初始化共享状态，找到入度为 0 的起始节点</li>
+  <li><strong>执行循环：</strong>
+    <ul style="margin-top:0.3rem">
+      <li>从就绪队列取出节点（入度全部完成）</li>
+      <li>根据节点类型分派执行器</li>
+      <li>执行完毕后将输出写入共享状态，更新下游节点入度</li>
+      <li>通过 <code>Broadcaster</code> 广播节点状态变更</li>
+      <li>重复直到 END 节点或出错</li>
+    </ul>
+  </li>
+  <li><strong>并行执行：</strong><code>parallel</code> 节点为子节点启动多个 goroutine，用 <code>sync.WaitGroup</code> 等待</li>
+</ol>
+
+<h3>各节点执行器</h3>
+<table>
+  <thead><tr><th>节点类型</th><th>执行逻辑</th></tr></thead>
+  <tbody>
+    <tr><td><span class="badge badge-blue">agent</span></td><td>调用 <code>Engine.HandleRequest()</code>，将渲染后的 instruction 和 inputs 传给指定 agent</td></tr>
+    <tr><td><span class="badge badge-orange">tool</span></td><td>执行内置工具函数或 HTTP 调用，直接返回结果，不经过 LLM</td></tr>
+    <tr><td><span class="badge badge-purple">conditional</span></td><td>计算 Go template 表达式，匹配 routes 中的分支，激活对应的下游节点</td></tr>
+    <tr><td><span class="badge badge-teal">parallel</span></td><td>为子节点列表启动并发 goroutine，等待全部完成（或超时）</td></tr>
+    <tr><td><span class="badge badge-green">loop</span></td><td>循环执行子节点直到条件满足或达到最大迭代次数</td></tr>
+    <tr><td><span class="badge badge-pink">human</span></td><td>将状态改为 <code>paused</code>，通过 SSE 广播等待事件；前端展示审批界面，用户操作后恢复</td></tr>
+  </tbody>
+</table>
+
+<h3>错误处理</h3>
+<p>每个节点可配置：</p>
+<pre><code>retry:
+  max: 2
+  backoff: exponential    # fixed | exponential
+  interval: 5s
+timeout: 30s
+on_error: fail            # fail | skip | fallback
+fallback: error_handler_node_id</code></pre>
+<table class="compare-table">
+  <thead><tr><th>策略</th><th>行为</th></tr></thead>
+  <tbody>
+    <tr><td><code>fail</code></td><td>标记整个 Workflow Run 为 failed</td></tr>
+    <tr><td><code>skip</code></td><td>标记节点为 skipped，继续执行下游（空输出）</td></tr>
+    <tr><td><code>fallback</code></td><td>路由到备选节点执行</td></tr>
+  </tbody>
+</table>
+
+<!-- ==================== Section 5 ==================== -->
+<h2 id="state"><span class="section-number">5</span> 共享状态模型</h2>
+
+<div class="callout">
+  <strong>核心原则：Agent 之间不共享对话历史，只共享结构化数据。</strong>
+  每个 Agent 节点在独立的 contextId 中执行，仅通过 Workflow 引擎渲染的 instruction 和 inputs 接收数据。
+</div>
+
+<h3>数据流示意</h3>
+<div class="diagram"> 用户输入
+   │
+   ▼
+ ┌──────────────────────────────────────────────────┐
+ │              Workflow 共享状态                      │
+ │                                                   │
+ │  input: { user_message: "...", priority: "high" }│
+ │  state: {                                         │
+ │    classification: "BUG",       ← Agent A 写入    │
+ │    order_info: { ... },         ← Tool 节点写入    │
+ │    response: "...",             ← Agent B 写入    │
+ │    approved: true               ← Human 节点写入  │
+ │  }                                                │
+ └──────────────────────────────────────────────────┘
+
+ 执行流:
+   classify Agent (独立 context)
+     → 写入 { classification: "BUG" }
+   → handle_bug Agent (独立 context，只收到 "BUG" 标签)
+     → 写入 { response: "已创建工单 #123..." }
+   → human_review (展示回复，用户审批)
+     → 写入 { approved: true }</div>
+
+<h3>为什么这样设计</h3>
+<table class="compare-table">
+  <thead><tr><th>方案</th><th>优点</th><th>缺点</th></tr></thead>
+  <tbody>
+    <tr><td>共享对话历史</td><td>Agent 看到完整上下文</td><td>system prompt 冲突、token 浪费、隐私泄露</td></tr>
+    <tr><td style="color:var(--green)">共享结构化数据（当前方案）</td><td>干净、可预测、token 高效</td><td>Agent 看不到前序节点的完整推理</td></tr>
+  </tbody>
+</table>
+
+<p>如需 Agent 感知更多上下文，可在 <code>instruction</code> 中传入更多字段，或设置 <code>pass_full_state: true</code> 将整个共享状态渲染到指令中。</p>
+
+<!-- ==================== Section 6 ==================== -->
+<h2 id="frontend"><span class="section-number">6</span> 前端可视化编辑器</h2>
+
+<h3>页面路由</h3>
+<table>
+  <thead><tr><th>路由</th><th>页面</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>/workflows</code></td><td>WorkflowList</td><td>Workflow 列表（卡片/表格）</td></tr>
+    <tr><td><code>/workflows/:id</code></td><td>WorkflowEditor</td><td>可视化编辑器 + YAML 双模式</td></tr>
+    <tr><td><code>/workflows/:id/runs</code></td><td>RunList</td><td>运行历史</td></tr>
+    <tr><td><code>/workflows/:id/runs/:runId</code></td><td>RunDetail</td><td>实时运行监控</td></tr>
+  </tbody>
+</table>
+
+<h3>技术选型</h3>
+<table>
+  <thead><tr><th>组件</th><th>选型</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td>画布</td><td><code>@xyflow/react</code> (React Flow)</td><td>与 Hector 一致</td></tr>
+    <tr><td>自动布局</td><td><code>@dagrejs/dagre</code></td><td>Top-to-Bottom DAG 布局</td></tr>
+    <tr><td>YAML 编辑</td><td><code>@monaco-editor/react</code> + <code>monaco-yaml</code></td><td>代码编辑 + schema 校验</td></tr>
+    <tr><td>解析/序列化</td><td><code>js-yaml</code></td><td>YAML ↔ JS 对象</td></tr>
+    <tr><td>状态管理</td><td>Zustand（现有）</td><td>新增 workflow slice</td></tr>
+  </tbody>
+</table>
+
+<h3>编辑器布局</h3>
+<div class="diagram">┌──────────────────────────────────────────────────────┐
+│ 工具栏: [保存] [运行] [导入] [导出] [代码/画布 切换]    │
+├──────────┬─────────────────────────┬─────────────────┤
+│          │                         │                 │
+│ 节点面板  │     React Flow 画布      │   属性面板       │
+│          │                         │                 │
+│ · Agent  │   ┌──────┐  ┌──────┐   │  名称: classify  │
+│ · Tool   │   │classify│→│ route │   │  类型: agent    │
+│ · 条件   │   └──────┘  └──────┘   │  Agent: xxx     │
+│ · 并行   │        ↓       ↓       │  Instruction:   │
+│ · 循环   │   ┌──────┐ ┌──────┐   │  [textarea]      │
+│ · 人工   │   │handle │ │handle│   │                 │
+│          │   │_bug   │ │_sup  │   │  Inputs:        │
+│ (拖入画布)│   └──────┘ └──────┘   │  · state.xxx    │
+│          │                         │                 │
+│          │                         │  Outputs:       │
+│          │                         │  · result →     │
+│          │                         │    classification│
+├──────────┴─────────────────────────┴─────────────────┤
+│ YAML 编辑器（Monaco，可折叠或切换为纯代码模式）          │
+└──────────────────────────────────────────────────────┘</div>
+
+<h3>节点视觉设计</h3>
+<table>
+  <thead><tr><th>类型</th><th>颜色</th><th>图标</th><th>详情</th></tr></thead>
+  <tbody>
+    <tr><td><span class="node-visual badge-blue" style="background:rgba(96,165,250,0.15)">Agent</span></td><td>蓝色</td><td>Bot</td><td>显示 agent 名称，运行时脉冲动画</td></tr>
+    <tr><td><span class="node-visual badge-orange" style="background:rgba(251,146,60,0.15)">Tool</span></td><td>橙色</td><td>Wrench</td><td>显示 tool 名称和配置预览</td></tr>
+    <tr><td><span class="node-visual badge-purple" style="background:rgba(167,139,250,0.15)">Conditional</span></td><td>紫色</td><td>GitBranch</td><td>显示条件表达式，边标注分支值</td></tr>
+    <tr><td><span class="node-visual badge-teal" style="background:rgba(45,212,191,0.15)">Parallel</span></td><td>青色</td><td>Layers</td><td>容器节点，子节点竖排</td></tr>
+    <tr><td><span class="node-visual badge-green" style="background:rgba(52,211,153,0.15)">Loop</span></td><td>墨绿</td><td>Repeat</td><td>容器节点，显示最大迭代次数</td></tr>
+    <tr><td><span class="node-visual badge-pink" style="background:rgba(244,114,182,0.15)">Human</span></td><td>粉色</td><td>UserCheck</td><td>显示提示文本和超时</td></tr>
+    <tr><td><span class="node-visual badge-gray" style="background:rgba(156,163,184,0.15)">START/END</span></td><td>灰色</td><td>Play / Flag</td><td>固定起止节点</td></tr>
+  </tbody>
+</table>
+
+<h3>双向同步机制</h3>
+<ul style="padding-left:1.5rem;margin-bottom:1.5rem">
+  <li><strong>画布 → YAML：</strong>拖拽/编辑后，将 React Flow 的 nodes/edges 序列化为 YAML</li>
+  <li><strong>YAML → 画布：</strong>编辑 YAML 后，解析并重新生成 nodes/edges</li>
+  <li>用 dagre 自动布局，允许用户微调后保存位置</li>
+  <li>Debounce (300ms) 防循环更新，<code>syncedYamlRef</code> 打破循环渲染</li>
+</ul>
+
+<h3>运行监控</h3>
+<p>Run Detail 页面在 Workflow 画布上叠加实时状态：</p>
+<ul style="padding-left:1.5rem;margin-bottom:1.5rem">
+  <li><span class="badge badge-gray">pending</span> 灰色 &mdash; <span class="badge badge-blue">running</span> 蓝色 spinner &mdash; <span class="badge badge-green">completed</span> 绿色 check &mdash; <span class="badge" style="background:rgba(248,113,113,0.15);color:var(--red)">failed</span> 红色 X</li>
+  <li>点击节点查看 input/output/error 详情</li>
+  <li>Human 节点暂停时弹出审批对话框</li>
+  <li>实时更新通过 SSE 事件推送</li>
+</ul>
+
+<!-- ==================== Section 7 ==================== -->
+<h2 id="api"><span class="section-number">7</span> API 设计</h2>
+
+<h3>Workflow CRUD</h3>
+<table>
+  <thead><tr><th>方法</th><th>路径</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><span class="api-method api-get">GET</span></td><td><code>/api/workflows</code></td><td>列出所有 Workflow</td></tr>
+    <tr><td><span class="api-method api-get">GET</span></td><td><code>/api/workflows/:id</code></td><td>获取单个 Workflow（含 YAML）</td></tr>
+    <tr><td><span class="api-method api-post">POST</span></td><td><code>/api/workflows</code></td><td>创建 Workflow</td></tr>
+    <tr><td><span class="api-method api-put">PUT</span></td><td><code>/api/workflows/:id</code></td><td>更新 Workflow</td></tr>
+    <tr><td><span class="api-method api-delete">DELETE</span></td><td><code>/api/workflows/:id</code></td><td>删除 Workflow</td></tr>
+    <tr><td><span class="api-method api-post">POST</span></td><td><code>/api/workflows/import</code></td><td>导入 YAML 文件</td></tr>
+    <tr><td><span class="api-method api-get">GET</span></td><td><code>/api/workflows/:id/export</code></td><td>导出为 YAML 文件</td></tr>
+  </tbody>
+</table>
+
+<h3>运行管理</h3>
+<table>
+  <thead><tr><th>方法</th><th>路径</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><span class="api-method api-post">POST</span></td><td><code>/api/workflows/:id/run</code></td><td>触发执行（传入 input）</td></tr>
+    <tr><td><span class="api-method api-get">GET</span></td><td><code>/api/workflows/:id/runs</code></td><td>运行历史（分页）</td></tr>
+    <tr><td><span class="api-method api-get">GET</span></td><td><code>/api/workflows/:id/runs/:runId</code></td><td>运行详情（含节点状态）</td></tr>
+    <tr><td><span class="api-method api-post">POST</span></td><td><code>/api/workflows/:id/runs/:runId/cancel</code></td><td>取消运行</td></tr>
+    <tr><td><span class="api-method api-post">POST</span></td><td><code>/api/workflows/:id/runs/:runId/resume</code></td><td>恢复暂停（如审批后）</td></tr>
+  </tbody>
+</table>
+
+<h3>API 示例</h3>
+
+<p><strong>触发执行：</strong></p>
+<pre><code>POST /api/workflows/customer-support/run
+{
+  "input": {
+    "user_message": "我的订单没到",
+    "priority": "high"
+  }
+}
+
+→ Response:
+{
+  "run_id": "uuid-xxx",
+  "status": "running"
+}</code></pre>
+
+<p><strong>运行详情：</strong></p>
+<pre><code>GET /api/workflows/customer-support/runs/uuid-xxx
+
+→ Response:
+{
+  "run_id": "uuid-xxx",
+  "workflow_id": "customer-support",
+  "status": "running",
+  "state": {
+    "classification": "BUG",
+    "response": null
+  },
+  "nodes": [
+    { "node_id": "classify",     "status": "completed", "output": {"classification": "BUG"} },
+    { "node_id": "route",        "status": "completed" },
+    { "node_id": "handle_bug",   "status": "running" },
+    { "node_id": "human_review", "status": "pending" }
+  ]
+}</code></pre>
+
+<h3>Chat 触发机制</h3>
+<p>Workflow 配置了 <code>triggers: [{ type: chat, agent_name: "support-wf" }]</code> 后，注册为虚拟 Agent。当 <code>/agent/:name</code> 收到请求时：</p>
+<ol style="padding-left:1.5rem;margin-bottom:1.5rem">
+  <li>Handler 检查 WorkflowStore（优先于 Builtin/Bridge/External）</li>
+  <li>提取用户消息作为 <code>input</code></li>
+  <li>创建 Workflow Run</li>
+  <li>最终输出通过 SSE 流式返回 Chat 界面</li>
+</ol>
+
+<h3>定时触发</h3>
+<p>引擎启动时解析 <code>schedule</code> 触发器，注册到 cron 调度器（如 <code>robfig/cron</code>），按 cron 表达式自动创建 Run。</p>
+
+<h3>事件触发</h3>
+<p>引擎订阅 <code>events.Broadcaster</code>，匹配 <code>event_type</code> 和 <code>filter</code> 表达式，命中时自动创建 Run。</p>
+
+<!-- ==================== Section 8 ==================== -->
+<h2 id="integration"><span class="section-number">8</span> 集成点 &amp; 新增文件</h2>
+
+<h3>复用现有基础设施</h3>
+<table>
+  <thead><tr><th>组件</th><th>复用方式</th></tr></thead>
+  <tbody>
+    <tr><td><code>Engine.HandleRequest()</code></td><td>Agent 节点直接调用</td></tr>
+    <tr><td><code>send_to_agent</code> 工具逻辑</td><td>调用外部/bridge agent</td></tr>
+    <tr><td><code>events.Broadcaster</code></td><td>实时推送 workflow/node 状态</td></tr>
+    <tr><td><code>svc/</code> store 模式</td><td>数据库持久化</td></tr>
+    <tr><td><code>cmd/server/main.go</code> 路由</td><td>新增路由</td></tr>
+    <tr><td><code>model/types.go</code></td><td>新增 model 类型</td></tr>
+  </tbody>
+</table>
+
+<h3>新增 Go 包</h3>
+<pre><code>internal/workflow/
+  engine.go            — WorkflowEngine: parse, validate, execute
+  dag.go               — DAG 构建和拓扑排序
+  executor.go          — 节点执行器分发
+  state.go             — 共享状态管理
+  store.go             — 数据库持久化
+  nodes/
+    agent.go           — Agent 节点执行器
+    tool.go            — Tool 节点执行器
+    conditional.go     — 条件路由执行器
+    parallel.go        — 并行执行执行器
+    loop.go            — 循环执行执行器
+    human.go           — 人工审批执行器
+
+internal/handler/
+  workflow_handler.go  — Workflow API Handler</code></pre>
+
+<h3>新增前端模块</h3>
+<pre><code>web/admin/src/
+  pages/
+    WorkflowList.tsx
+    WorkflowEditor.tsx
+    WorkflowRunDetail.tsx
+  components/WorkflowCanvas/
+    CanvasMode.tsx
+    nodes/
+      AgentNode.tsx
+      ToolNode.tsx
+      ConditionalNode.tsx
+      ParallelGroupNode.tsx
+      LoopGroupNode.tsx
+      HumanNode.tsx
+    yaml-converter.ts    — YAML ↔ React Flow 双向转换
+  stores/
+    workflowStore.ts     — Zustand workflow slice
+  api/
+    workflowClient.ts    — Workflow API 调用</code></pre>
+
+<h3>新增依赖</h3>
+<table>
+  <thead><tr><th>语言</th><th>包</th><th>用途</th></tr></thead>
+  <tbody>
+    <tr><td>Go</td><td><code>github.com/robfig/cron/v3</code></td><td>定时调度触发</td></tr>
+    <tr><td>Frontend</td><td><code>@xyflow/react</code></td><td>React Flow 画布</td></tr>
+    <tr><td>Frontend</td><td><code>@dagrejs/dagre</code></td><td>自动布局</td></tr>
+    <tr><td>Frontend</td><td><code>@monaco-editor/react</code></td><td>YAML 编辑器</td></tr>
+    <tr><td>Frontend</td><td><code>monaco-yaml</code></td><td>YAML schema 校验</td></tr>
+    <tr><td>Frontend</td><td><code>js-yaml</code></td><td>YAML 解析/序列化</td></tr>
+  </tbody>
+</table>
+
+<div style="margin-top:3rem;padding-top:1.5rem;border-top:1px solid var(--border);text-align:center;color:var(--text2);font-size:0.85rem">
+  A2A Platform Workflow Orchestration Design &mdash; 2026-05-21
+</div>
+
+</body>
+</html>
