@@ -43,7 +43,7 @@ a2a-server/
 ├── cmd/server/main.go          # 入口，依赖注入
 ├── internal/
 │   ├── config/                 # 配置加载（YAML + 环境变量）
-│   ├── model/                  # 数据模型（Agent、Task、Skill 等）
+│   ├── model/                  # 数据模型（Agent、Skill、API 请求/响应类型）
 │   ├── store/                  # 存储层接口 + SQLite/MySQL 实现
 │   ├── registry/               # Agent 注册表（内存 map + 接口抽象）
 │   ├── proxy/                  # 消息代理核心（JSON-RPC 路由、SSE 透传）
