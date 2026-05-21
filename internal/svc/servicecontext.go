@@ -20,18 +20,19 @@ import (
 var DBDriver string
 
 type ServiceContext struct {
-	Config         *config.Config
-	DB             *sql.DB
-	Agents         *AgentStore
-	Tasks          *TaskStore
-	Messages       *MessageStore
-	Traces         *TraceStore
-	Contexts       *ContextStore
-	Subagents      *SubagentStore
-	Registry       *AgentRegistry
-	EventBus       *events.Broadcaster
-	Engine         *engine.Engine
-	BridgeRegistry *bridge.BridgeRegistry
+	Config           *config.Config
+	DB               *sql.DB
+	Agents           *AgentStore
+	Tasks            *TaskStore
+	Messages         *MessageStore
+	Traces           *TraceStore
+	Contexts         *ContextStore
+	Subagents        *SubagentStore
+	BuiltinAgents    *BuiltinAgentStore
+	Registry         *AgentRegistry
+	EventBus         *events.Broadcaster
+	Engine           *engine.Engine
+	BridgeRegistry   *bridge.BridgeRegistry
 }
 
 func NewServiceContext(c *config.Config) *ServiceContext {
@@ -44,24 +45,26 @@ func NewServiceContext(c *config.Config) *ServiceContext {
 	traces := NewTraceStore(db)
 	contexts := NewContextStore(db)
 	subagents := NewSubagentStore(db)
+	builtinAgents := NewBuiltinAgentStore(db)
 	registry := NewAgentRegistry(agents)
 	eventBus := events.NewBroadcaster()
 	eng := engine.New()
 	bridgeReg := bridge.NewRegistry()
 
 	return &ServiceContext{
-		Config:         c,
-		DB:             db,
-		Agents:         agents,
-		Tasks:          tasks,
-		Messages:       messages,
-		Traces:         traces,
-		Contexts:       contexts,
-		Subagents:      subagents,
-		Registry:       registry,
-		EventBus:       eventBus,
-		Engine:         eng,
-		BridgeRegistry: bridgeReg,
+		Config:           c,
+		DB:               db,
+		Agents:           agents,
+		Tasks:            tasks,
+		Messages:         messages,
+		Traces:           traces,
+		Contexts:         contexts,
+		Subagents:        subagents,
+		BuiltinAgents:    builtinAgents,
+		Registry:         registry,
+		EventBus:         eventBus,
+		Engine:           eng,
+		BridgeRegistry:   bridgeReg,
 	}
 }
 
@@ -226,6 +229,21 @@ CREATE TABLE IF NOT EXISTS subagent_sessions (
 	INDEX idx_parent_context (parent_context_id),
 	INDEX idx_status (status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS builtin_agents (
+	id INT AUTO_INCREMENT PRIMARY KEY,
+	name VARCHAR(255) NOT NULL UNIQUE,
+	provider VARCHAR(64) NOT NULL,
+	base_url VARCHAR(512),
+	api_key VARCHAR(512),
+	model VARCHAR(255) NOT NULL,
+	description TEXT,
+	system_prompt TEXT,
+	max_tokens INT DEFAULT 4096,
+	max_tool_rounds INT DEFAULT 10,
+	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+	updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 `
 
 const sqliteSchema = `
@@ -319,6 +337,21 @@ CREATE TABLE IF NOT EXISTS subagent_sessions (
 
 CREATE INDEX IF NOT EXISTS idx_subagent_parent ON subagent_sessions(parent_context_id);
 CREATE INDEX IF NOT EXISTS idx_subagent_status ON subagent_sessions(status);
+
+CREATE TABLE IF NOT EXISTS builtin_agents (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	name TEXT NOT NULL UNIQUE,
+	provider TEXT NOT NULL,
+	base_url TEXT,
+	api_key TEXT,
+	model TEXT NOT NULL,
+	description TEXT,
+	system_prompt TEXT,
+	max_tokens INTEGER DEFAULT 4096,
+	max_tool_rounds INTEGER DEFAULT 10,
+	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+	updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 `
 
 func splitStatements(schema string) []string {

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"a2a-platform/internal/config"
@@ -80,6 +81,13 @@ func (h *CreateBuiltinAgentHandler) ServeHTTP(w http.ResponseWriter, r *http.Req
 
 	cfg := req.toConfig()
 
+	// Persist to database
+	_, err := h.svcCtx.BuiltinAgents.Create(cfg)
+	if err != nil {
+		jsonError(w, fmt.Sprintf("failed to save builtin agent: %v", err), 500)
+		return
+	}
+
 	if existing := h.svcCtx.Engine.GetAgent(cfg.Name); existing != nil {
 		h.svcCtx.Engine.RemoveAgent(cfg.Name)
 	}
@@ -115,7 +123,8 @@ func (h *DeleteBuiltinAgentHandler) ServeHTTP(w http.ResponseWriter, r *http.Req
 
 	h.svcCtx.Engine.RemoveAgent(name)
 	h.svcCtx.Registry.DisconnectAgent(name)
-	h.svcCtx.Agents.Delete(name)
+	_ = h.svcCtx.Agents.Delete(name)
+	_ = h.svcCtx.BuiltinAgents.Delete(name)
 
 	w.WriteHeader(204)
 }

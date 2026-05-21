@@ -147,6 +147,9 @@ func main() {
 		server.Shutdown(ctx)
 	}()
 
+	// Load and register builtin agents from database
+	loadBuiltinAgents(svcCtx)
+
 	slog.Info("A2A Platform (Go) starting", "addr", addr)
 	slog.Info("  API:      http://" + addr + "/api/agents")
 	slog.Info("  MCP SSE:  http://" + addr + "/mcp/sse")
@@ -522,4 +525,29 @@ func spaHandler(fsys fs.FS) http.HandlerFunc {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Write(index)
 	}
+}
+
+// loadBuiltinAgents loads all builtin agents from database and registers them.
+func loadBuiltinAgents(svcCtx *svc.ServiceContext) {
+	agents, err := svcCtx.BuiltinAgents.List()
+	if err != nil {
+		slog.Warn("Failed to load builtin agents from database", "error", err)
+		return
+	}
+
+	if len(agents) == 0 {
+		return
+	}
+
+	registered := 0
+	for _, agent := range agents {
+		cfg := agent.ToConfig()
+		if err := svcCtx.Engine.RegisterAgent(cfg); err != nil {
+			slog.Error("Failed to register builtin agent from database", "name", agent.Name, "error", err)
+			continue
+		}
+		svcCtx.Registry.RegisterBuiltinAgent(cfg.Name, cfg.Description, nil)
+		registered++
+	}
+	slog.Info("Loaded builtin agents from database", "count", registered, "total", len(agents))
 }
