@@ -7,6 +7,7 @@ import ContextPanel from '../components/ContextPanel';
 import ChatHeader from '../components/ChatHeader';
 import MessageTimeline from '../components/MessageTimeline';
 import InputBox from '../components/InputBox';
+import TaskPanel from '../components/TaskPanel';
 
 export default function Chat() {
   const { agentName } = useParams<{ agentName: string }>();
@@ -15,6 +16,7 @@ export default function Chat() {
   const { contextId, setContextId, setContexts, setAgentName, clearChat, setError } = useChatStore();
   const { sendMessage, loadContext, isStreaming, messages, error } = useChat(agentName || '');
   const [showSidebar, setShowSidebar] = useState(true);
+  const [showTaskPanel, setShowTaskPanel] = useState(true);
 
   // Initialize agent name from URL
   useEffect(() => {
@@ -138,6 +140,8 @@ export default function Chat() {
           contextId={contextId}
           onNewContext={handleNewContext}
           onDeleteContext={handleDeleteContext}
+          onToggleTaskPanel={() => setShowTaskPanel(v => !v)}
+          showTaskPanel={showTaskPanel}
         />
 
         <div className="flex-1 overflow-y-auto bg-white dark:bg-gray-900 p-6">
@@ -170,6 +174,10 @@ export default function Chat() {
 
         <InputBox onSend={handleSend} disabled={isStreaming} placeholder={`Message ${agentName}...`} />
       </div>
+
+      {showTaskPanel && (
+        <TaskPanel contextId={contextId} />
+      )}
     </div>
   );
 }

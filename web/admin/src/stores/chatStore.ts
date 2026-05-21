@@ -27,6 +27,7 @@ interface ChatState {
   setContexts: (contexts: ContextListItem[]) => void;
   setSubagent: (toolCallId: string, subagent: TaskSession) => void;
   updateSubagent: (toolCallId: string, updates: Partial<TaskSession>) => void;
+  setSubagents: (subagents: Record<string, TaskSession>) => void;
   appendToLastMessage: (content: string, field: 'content' | 'reasoning_content') => void;
   addToolCall: (taskId: string, toolCall: ToolCall) => void;
   updateToolCall: (taskId: string, toolId: string, updates: Partial<ToolCall>) => void;
@@ -72,6 +73,8 @@ export const useChatStore = create<ChatState>()(
     setSubagent: (toolCallId, subagent) => set((state) => ({
       subagents: { ...state.subagents, [toolCallId]: subagent },
     })),
+
+    setSubagents: (subagents) => set({ subagents }),
 
     updateSubagent: (toolCallId, updates) => set((state) => {
       const existing = state.subagents[toolCallId];

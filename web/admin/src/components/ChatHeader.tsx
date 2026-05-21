@@ -1,4 +1,4 @@
-import { ArrowLeft, MoreVertical, Trash2, Plus } from 'lucide-react';
+import { ArrowLeft, MoreVertical, Trash2, Plus, PanelRight } from 'lucide-react';
 import { useState } from 'react';
 
 interface ChatHeaderProps {
@@ -6,9 +6,11 @@ interface ChatHeaderProps {
   contextId: string | null;
   onNewContext: () => void;
   onDeleteContext: () => void;
+  onToggleTaskPanel?: () => void;
+  showTaskPanel?: boolean;
 }
 
-export default function ChatHeader({ agentName, contextId, onNewContext, onDeleteContext }: ChatHeaderProps) {
+export default function ChatHeader({ agentName, contextId, onNewContext, onDeleteContext, onToggleTaskPanel, showTaskPanel }: ChatHeaderProps) {
   const [showMenu, setShowMenu] = useState(false);
 
   return (
@@ -33,6 +35,16 @@ export default function ChatHeader({ agentName, contextId, onNewContext, onDelet
           <Plus size={14} />
           New Chat
         </button>
+
+        {onToggleTaskPanel && (
+          <button
+            onClick={onToggleTaskPanel}
+            className={`p-2 rounded-lg transition-colors ${showTaskPanel ? 'bg-orange-100 dark:bg-orange-900/20 text-orange-600 dark:text-orange-400' : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 hover:bg-gray-200 dark:hover:bg-gray-800'}`}
+            title="Toggle task panel"
+          >
+            <PanelRight size={18} />
+          </button>
+        )}
 
         {contextId && (
           <div className="relative">

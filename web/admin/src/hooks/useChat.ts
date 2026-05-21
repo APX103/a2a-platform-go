@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
 import { fetchEventSource } from '@microsoft/fetch-event-source';
 import { useChatStore } from '../stores/chatStore';
+import { api } from '../api/client';
 import type { SSEEvent, ToolCall, ThinkingBlock, TaskSession } from '../types/chat';
 
 export function useChat(agentName: string) {
@@ -17,6 +18,7 @@ export function useChat(agentName: string) {
     addThinkingBlock,
     setSubagent,
     updateSubagent,
+    setSubagents,
     appendToLastMessage,
   } = useChatStore();
 
@@ -270,15 +272,29 @@ export function useChat(agentName: string) {
     async (contextId: string) => {
       setContextId(contextId);
       try {
-        const response = await fetch(`/api/contexts/${contextId}`);
-        if (!response.ok) throw new Error('Failed to load context');
-        const data = await response.json();
+        const [ctxRes, subRes] = await Promise.all([
+          fetch(`/api/contexts/${contextId}`),
+          api.listSubagents(contextId),
+        ]);
+        if (!ctxRes.ok) throw new Error('Failed to load context');
+        const data = await ctxRes.json();
         setMessages(data.messages || []);
+
+        // Restore subagents from API
+        if (subRes?.subagents) {
+          const subagentMap: Record<string, TaskSession> = {};
+          for (const s of subRes.subagents) {
+            if (s.parent_tool_call_id) {
+              subagentMap[s.parent_tool_call_id] = s as TaskSession;
+            }
+          }
+          setSubagents(subagentMap);
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load messages');
       }
     },
-    [setContextId, setMessages, setError]
+    [setContextId, setMessages, setError, setSubagents]
   );
 
   return {
