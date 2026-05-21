@@ -86,11 +86,13 @@ export const useChatStore = create<ChatState>()(
 
     appendToLastMessage: (content, field) => set((state) => {
       if (state.messages.length === 0) return state;
-      const lastIdx = state.messages.length - 1;
+      // Find the last assistant message to append streaming content
+      const lastAssistantIdx = state.messages.map((m) => m.role).lastIndexOf('assistant');
+      if (lastAssistantIdx === -1) return state;
       const messages = [...state.messages];
-      const currentContent = messages[lastIdx][field] || '';
-      messages[lastIdx] = {
-        ...messages[lastIdx],
+      const currentContent = messages[lastAssistantIdx][field] || '';
+      messages[lastAssistantIdx] = {
+        ...messages[lastAssistantIdx],
         [field]: currentContent + content,
       };
       return { messages };
@@ -98,7 +100,7 @@ export const useChatStore = create<ChatState>()(
 
     addToolCall: (taskId, toolCall) => set((state) => {
       const messages = state.messages.map((m) => {
-        if (m.task_id === taskId) {
+        if (m.task_id === taskId && m.role === 'assistant') {
           const toolCalls = m.tool_calls || [];
           return {
             ...m,
@@ -112,7 +114,7 @@ export const useChatStore = create<ChatState>()(
 
     updateToolCall: (taskId, toolId, updates) => set((state) => {
       const messages = state.messages.map((m) => {
-        if (m.task_id === taskId && m.tool_calls) {
+        if (m.task_id === taskId && m.role === 'assistant' && m.tool_calls) {
           const toolCalls = m.tool_calls.map((tc) =>
             tc.id === toolId ? { ...tc, ...updates } : tc
           );
@@ -125,7 +127,7 @@ export const useChatStore = create<ChatState>()(
 
     addThinkingBlock: (taskId, block) => set((state) => {
       const messages = state.messages.map((m) => {
-        if (m.task_id === taskId) {
+        if (m.task_id === taskId && m.role === 'assistant') {
           const blocks = m.thinking_blocks || [];
           return {
             ...m,
