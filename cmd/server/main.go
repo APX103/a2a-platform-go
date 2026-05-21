@@ -233,6 +233,7 @@ func makeAgentDetailHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 		case http.MethodDelete:
 			svcCtx.Engine.RemoveAgent(name)
 			svcCtx.Registry.DisconnectAgent(name)
+			_ = svcCtx.Agents.Delete(name)
 			w.WriteHeader(204)
 		default:
 			jsonError(w, "method not allowed", 405)
