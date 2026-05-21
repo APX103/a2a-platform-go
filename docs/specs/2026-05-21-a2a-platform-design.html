@@ -1,0 +1,905 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>A2A 代理平台 — 调研与设计总结</title>
+<style>
+  :root {
+    --claude-orange: #E8703A;
+    --claude-orange-light: #F09A6A;
+    --claude-orange-pale: #FEF0E7;
+    --claude-bg: #F9F7F4;
+    --claude-surface: #FFFFFF;
+    --claude-text: #1A1612;
+    --claude-text-secondary: #6B6560;
+    --claude-text-muted: #9B9590;
+    --claude-border: #E8E4DF;
+    --claude-border-light: #F0ECE8;
+    --claude-code-bg: #1E1E1E;
+    --claude-code-text: #D4D4D4;
+    --claude-tag-bg: #FEF0E7;
+    --claude-tag-text: #C05A20;
+    --claude-accent-blue: #3B7DD8;
+    --claude-green: #2D8A56;
+    --claude-red: #C4483E;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans SC', 'PingFang SC', 'Hiragino Sans GB', sans-serif;
+    background: var(--claude-bg);
+    color: var(--claude-text);
+    line-height: 1.7;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page {
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 60px 40px 120px;
+  }
+
+  /* Header */
+  .header {
+    margin-bottom: 56px;
+    padding-bottom: 32px;
+    border-bottom: 2px solid var(--claude-orange);
+  }
+  .header h1 {
+    font-size: 32px;
+    font-weight: 700;
+    color: var(--claude-text);
+    letter-spacing: -0.5px;
+    margin-bottom: 12px;
+  }
+  .header .meta {
+    display: flex;
+    gap: 20px;
+    font-size: 14px;
+    color: var(--claude-text-secondary);
+  }
+  .header .meta span {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .header .meta .tag {
+    display: inline-block;
+    padding: 2px 10px;
+    background: var(--claude-tag-bg);
+    color: var(--claude-tag-text);
+    border-radius: 4px;
+    font-size: 13px;
+    font-weight: 500;
+  }
+
+  /* TOC */
+  .toc {
+    background: var(--claude-surface);
+    border: 1px solid var(--claude-border);
+    border-radius: 10px;
+    padding: 24px 32px;
+    margin-bottom: 48px;
+  }
+  .toc-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--claude-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 12px;
+  }
+  .toc ol {
+    list-style: none;
+    counter-reset: toc;
+    padding: 0;
+  }
+  .toc > ol > li {
+    counter-increment: toc;
+    margin-bottom: 4px;
+  }
+  .toc > ol > li::before {
+    content: counter(toc) ".";
+    color: var(--claude-orange);
+    font-weight: 600;
+    font-size: 14px;
+    width: 24px;
+    display: inline-block;
+  }
+  .toc a {
+    color: var(--claude-text);
+    text-decoration: none;
+    font-size: 15px;
+  }
+  .toc a:hover { color: var(--claude-orange); }
+
+  /* Sections */
+  .section {
+    margin-bottom: 56px;
+  }
+  .section-num {
+    display: inline-block;
+    background: var(--claude-orange);
+    color: white;
+    font-size: 13px;
+    font-weight: 700;
+    width: 28px;
+    height: 28px;
+    line-height: 28px;
+    text-align: center;
+    border-radius: 6px;
+    margin-right: 10px;
+    vertical-align: middle;
+  }
+  h2 {
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--claude-text);
+    margin-bottom: 24px;
+    letter-spacing: -0.3px;
+    display: flex;
+    align-items: center;
+  }
+  h3 {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--claude-text);
+    margin: 32px 0 14px;
+  }
+  h4 {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--claude-text-secondary);
+    margin: 24px 0 10px;
+  }
+
+  p {
+    margin-bottom: 14px;
+    font-size: 15px;
+  }
+
+  strong { font-weight: 600; }
+
+  /* Tables */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0 24px;
+    font-size: 14px;
+    background: var(--claude-surface);
+    border: 1px solid var(--claude-border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  thead th {
+    background: var(--claude-border-light);
+    text-align: left;
+    padding: 10px 16px;
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--claude-text-secondary);
+    border-bottom: 1px solid var(--claude-border);
+  }
+  tbody td {
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--claude-border-light);
+    vertical-align: top;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: var(--claude-orange-pale); }
+  td code, th code {
+    background: var(--claude-border-light);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 13px;
+    font-family: 'SF Mono', 'Fira Code', 'JetBrains Mono', Consolas, monospace;
+    color: var(--claude-accent-blue);
+  }
+
+  /* Code blocks */
+  pre {
+    background: var(--claude-code-bg);
+    color: var(--claude-code-text);
+    padding: 20px 24px;
+    border-radius: 10px;
+    overflow-x: auto;
+    margin: 16px 0 24px;
+    font-size: 13.5px;
+    line-height: 1.6;
+    font-family: 'SF Mono', 'Fira Code', 'JetBrains Mono', Consolas, monospace;
+  }
+  pre code {
+    background: none;
+    padding: 0;
+    color: inherit;
+    font-size: inherit;
+  }
+
+  /* Lists */
+  ul, ol {
+    margin: 10px 0 18px 24px;
+    font-size: 15px;
+  }
+  li { margin-bottom: 6px; }
+
+  /* Callouts */
+  .callout {
+    border-left: 3px solid var(--claude-orange);
+    background: var(--claude-orange-pale);
+    padding: 14px 20px;
+    margin: 18px 0;
+    border-radius: 0 8px 8px 0;
+    font-size: 14px;
+  }
+  .callout-title {
+    font-weight: 600;
+    color: var(--claude-orange);
+    margin-bottom: 4px;
+    font-size: 13px;
+  }
+
+  /* Cards */
+  .card-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+    margin: 16px 0 24px;
+  }
+  .card {
+    background: var(--claude-surface);
+    border: 1px solid var(--claude-border);
+    border-radius: 10px;
+    padding: 18px 20px;
+  }
+  .card-title {
+    font-weight: 600;
+    font-size: 15px;
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .card p {
+    font-size: 14px;
+    color: var(--claude-text-secondary);
+    margin: 0;
+    line-height: 1.6;
+  }
+  .card .icon {
+    font-size: 18px;
+  }
+
+  /* Divider */
+  hr {
+    border: none;
+    border-top: 1px solid var(--claude-border);
+    margin: 48px 0;
+  }
+
+  /* Badge */
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .badge-v1 { background: #E8F5E9; color: #2D8A56; }
+  .badge-research { background: #E3F2FD; color: #1565C0; }
+  .badge-open { background: #FFF3E0; color: #E65100; }
+
+  /* Architecture diagram */
+  .arch-diagram {
+    background: var(--claude-surface);
+    border: 1px solid var(--claude-border);
+    border-radius: 10px;
+    padding: 28px;
+    margin: 16px 0 24px;
+    font-family: 'SF Mono', 'Fira Code', 'JetBrains Mono', Consolas, monospace;
+    font-size: 13px;
+    line-height: 1.5;
+    white-space: pre;
+    overflow-x: auto;
+    color: var(--claude-text-secondary);
+  }
+
+  /* Flow steps */
+  .flow-steps {
+    margin: 16px 0 24px;
+    padding: 0;
+    list-style: none;
+    counter-reset: step;
+  }
+  .flow-steps li {
+    counter-increment: step;
+    position: relative;
+    padding: 10px 16px 10px 48px;
+    margin-bottom: 2px;
+    background: var(--claude-surface);
+    border: 1px solid var(--claude-border-light);
+    border-radius: 8px;
+    font-size: 14px;
+  }
+  .flow-steps li::before {
+    content: counter(step);
+    position: absolute;
+    left: 14px;
+    top: 10px;
+    background: var(--claude-orange);
+    color: white;
+    font-size: 12px;
+    font-weight: 700;
+    width: 22px;
+    height: 22px;
+    line-height: 22px;
+    text-align: center;
+    border-radius: 50%;
+  }
+
+  /* Comparison */
+  .vs-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin: 16px 0 24px;
+  }
+  .vs-card {
+    background: var(--claude-surface);
+    border: 1px solid var(--claude-border);
+    border-radius: 10px;
+    padding: 20px;
+  }
+  .vs-card h5 {
+    font-size: 15px;
+    font-weight: 700;
+    margin-bottom: 10px;
+    color: var(--claude-orange);
+  }
+  .vs-card ul {
+    margin-left: 18px;
+    font-size: 14px;
+  }
+
+  /* Open questions */
+  .question-list {
+    list-style: none;
+    padding: 0;
+    margin: 16px 0;
+  }
+  .question-list li {
+    background: var(--claude-surface);
+    border: 1px solid var(--claude-border);
+    border-radius: 10px;
+    padding: 16px 20px;
+    margin-bottom: 10px;
+    font-size: 14px;
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+  }
+  .question-list li .q-num {
+    background: var(--claude-orange);
+    color: white;
+    font-size: 12px;
+    font-weight: 700;
+    min-width: 24px;
+    height: 24px;
+    line-height: 24px;
+    text-align: center;
+    border-radius: 6px;
+    flex-shrink: 0;
+  }
+
+  /* References */
+  .ref-list {
+    list-style: none;
+    padding: 0;
+  }
+  .ref-list li {
+    padding: 8px 0;
+    border-bottom: 1px solid var(--claude-border-light);
+    font-size: 14px;
+  }
+  .ref-list li:last-child { border-bottom: none; }
+  .ref-list a {
+    color: var(--claude-accent-blue);
+    text-decoration: none;
+  }
+  .ref-list a:hover { text-decoration: underline; }
+
+  /* Responsive */
+  @media (max-width: 700px) {
+    .page { padding: 32px 20px 80px; }
+    .card-grid, .vs-grid { grid-template-columns: 1fr; }
+    .header h1 { font-size: 24px; }
+    h2 { font-size: 20px; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- Header -->
+  <div class="header">
+    <h1>A2A 代理平台 — 调研与设计总结</h1>
+    <div class="meta">
+      <span>更新日期：2026-05-21</span>
+      <span class="tag">调研阶段</span>
+    </div>
+  </div>
+
+  <!-- TOC -->
+  <div class="toc">
+    <div class="toc-title">目录</div>
+    <ol>
+      <li><a href="#s1">项目概述</a></li>
+      <li><a href="#s2">确定要做的 — A2A 代理平台</a></li>
+      <li><a href="#s3">调研内容</a></li>
+      <li><a href="#s4">技术预期与待决策项</a></li>
+      <li><a href="#s5">开放问题</a></li>
+      <li><a href="#s6">参考资料</a></li>
+    </ol>
+  </div>
+
+  <!-- Section 1 -->
+  <div class="section" id="s1">
+    <h2><span class="section-num">1</span>项目概述</h2>
+
+    <h3>1.1 目标</h3>
+    <p>构建一套<strong>生产级别的纯 A2A（Agent-to-Agent）代理平台</strong>。平台作为 Agent 间通信的中间层，提供注册、发现、保活和消息转发能力。Agent 通过自研 Bridge 对接平台 API 或 MCP 服务来接入。</p>
+
+    <h3>1.2 第一版范围 <span class="badge badge-v1">V1 必做</span></h3>
+    <div class="card-grid">
+      <div class="card">
+        <div class="card-title"><span class="icon">&#128269;</span> Agent 注册与发现</div>
+        <p>Agent 通过 REST API 注册到平台，提交 AgentCard，平台维护可用 Agent 列表</p>
+      </div>
+      <div class="card">
+        <div class="card-title"><span class="icon">&#128147;</span> 保活机制</div>
+        <p>支持长连接（SSE）和定时 poll 两种保活模式</p>
+      </div>
+      <div class="card">
+        <div class="card-title"><span class="icon">&#128230;</span> 消息代理</div>
+        <p>所有 Agent 间消息通过平台转发，遵循 A2A 协议（JSON-RPC <code>SendStreamingMessage</code>），平台只做协议层面的转发</p>
+      </div>
+      <div class="card">
+        <div class="card-title"><span class="icon">&#128272;</span> API 接口 + MCP 服务</div>
+        <p>REST API 提供 Agent 管理、消息发送等接口；MCP 端点提供 <code>list_agents</code>、<code>send_to_agent</code>、<code>get_agent_info</code> 等工具</p>
+      </div>
+    </div>
+
+    <h3>1.3 明确不在第一版范围</h3>
+    <ul>
+      <li>Bridge 的具体实现（Agent 自行对接平台 API 或 MCP）</li>
+      <li>内建 Agent（LLM Agent 引擎）</li>
+      <li>会话管理、多轮对话上下文</li>
+      <li>消息追踪（Trace）与可观测性</li>
+      <li>前端管理界面</li>
+    </ul>
+
+    <h3>1.4 技术选型</h3>
+    <table>
+      <thead><tr><th>层面</th><th>选择</th><th>理由</th></tr></thead>
+      <tbody>
+        <tr><td>语言</td><td>Go</td><td>高并发、单二进制部署、标准库 <code>net/http</code> 足够</td></tr>
+        <tr><td>服务发现与保活</td><td>etcd</td><td>lease + keepalive 天然支持注册与保活；Watch 机制支持实时发现变更；生产级可靠性与一致性</td></tr>
+        <tr><td>存储</td><td>SQLite（开发）/ MySQL（生产）</td><td>双方言兼容，SQLite 零配置本地开发</td></tr>
+        <tr><td>通信协议</td><td>A2A Protocol（JSON-RPC over HTTP/SSE）</td><td>遵循 Google A2A 规范</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <hr>
+
+  <!-- Section 2 -->
+  <div class="section" id="s2">
+    <h2><span class="section-num">2</span>确定要做的 — A2A 代理平台</h2>
+
+    <h3>2.1 整体架构</h3>
+    <div class="arch-diagram">┌──────────────────────────────────────────────────────┐
+│                   A2A 代理平台                        │
+│                                                       │
+│  ┌──────────┐  ┌──────────┐  ┌────────────────────┐ │
+│  │ REST API │  │ MCP 服务  │  │ etcd 服务发现/保活  │ │
+│  │ /api/*   │  │ /mcp/*   │  │ lease + watch      │ │
+│  └────┬─────┘  └────┬─────┘  └────────┬───────────┘ │
+│       │              │                  │             │
+│  ┌────┴──────────────┴──────────────────┴──────────┐ │
+│  │              消息代理核心                         │ │
+│  │   - A2A 协议解析与转发                           │ │
+│  │   - Agent 路由表                                 │ │
+│  │   - SSE 流式响应                                 │ │
+│  └─────────────────────────────────────────────────┘ │
+│                                                       │
+│  ┌─────────────────────────────────────────────────┐ │
+│  │         存储层 (SQLite / MySQL)                  │ │
+│  │   - Agent 注册信息                               │ │
+│  │   - 消息转发记录                                 │ │
+│  └─────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────┘
+        ▲                               ▲
+        │ A2A Protocol                  │ A2A Protocol
+        │ (HTTP/SSE)                    │ (HTTP/SSE)
+   ┌────┴────┐                     ┌────┴────┐
+   │ Agent A │                     │ Agent B │
+   │+ Bridge │                     │+ Bridge │
+   └─────────┘                     └─────────┘</div>
+
+    <h3>2.2 Agent 注册与发现</h3>
+
+    <h4>注册流程</h4>
+    <ol class="flow-steps">
+      <li>Agent 启动后调用 <code>POST /api/agents</code> 提交注册信息（名称、地址、AgentCard）</li>
+      <li>平台将注册信息写入 etcd（带 TTL lease）</li>
+      <li>平台抓取 <code>/.well-known/agent.json</code> 获取 AgentCard（能力、版本、健康端点）</li>
+    </ol>
+
+    <h4>发现机制</h4>
+    <ul>
+      <li>Agent 调用 <code>GET /api/agents</code> 查询在线 Agent 列表</li>
+      <li>MCP 工具 <code>list_agents</code> 也提供发现能力</li>
+      <li>etcd Watch 机制可用于内部组件监听 Agent 变更事件</li>
+    </ul>
+
+    <div class="callout">
+      <div class="callout-title">为什么用 etcd 而非纯数据库？</div>
+      etcd 的 lease + keepalive 天然适合"注册 + 保活"模式，比自建心跳更可靠；Watch 机制可以实时感知 Agent 上下线，无需轮询；支持集群部署，平台多实例间可共享状态。
+    </div>
+
+    <h3>2.3 保活机制</h3>
+    <p>两种模式并存，Agent 可按需选择：</p>
+
+    <div class="vs-grid">
+      <div class="vs-card">
+        <h5>长连接模式（SSE）</h5>
+        <ul>
+          <li>Agent 与平台建立 SSE 长连接 <code>/api/events</code></li>
+          <li>连接断开即触发下线逻辑</li>
+          <li>适合需要实时接收事件的场景</li>
+        </ul>
+      </div>
+      <div class="vs-card">
+        <h5>定时 poll 模式</h5>
+        <ul>
+          <li>Agent 定期调用 <code>POST /api/agents/{name}/heartbeat</code> 续约</li>
+          <li>etcd lease TTL 自动过期处理下线</li>
+          <li>适合无法保持长连接的场景（如 Serverless 环境）</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3>2.4 消息代理</h3>
+
+    <h4>协议</h4>
+    <p>A2A JSON-RPC over HTTP/SSE</p>
+
+    <h4>流程</h4>
+    <ol class="flow-steps">
+      <li>发送方 Agent 向 <code>POST /agent/{target_name}</code> 发送 JSON-RPC 请求</li>
+      <li>平台根据 <code>{target_name}</code> 查找目标 Agent 地址</li>
+      <li>平台将请求转发给目标 Agent</li>
+      <li>目标 Agent 的响应（SSE 流式）由平台代理回传给发送方</li>
+    </ol>
+
+    <h4>消息格式</h4>
+    <pre><code>{
+  "jsonrpc": "2.0",
+  "id": "request-1",
+  "method": "SendStreamingMessage",
+  "params": {
+    "message": {
+      "role": "ROLE_USER",
+      "parts": [{"text": "你好"}]
+    }
+  }
+}</code></pre>
+
+    <h4>设计原则</h4>
+    <ul>
+      <li>平台只做转发，不解析消息内容语义</li>
+      <li>平台记录消息转发日志（来源、目标、时间戳），用于排查问题</li>
+      <li>不负责会话管理、上下文保持——这些由 Agent 自行处理</li>
+    </ul>
+
+    <h3>2.5 API 接口</h3>
+    <table>
+      <thead><tr><th>方法</th><th>路径</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr><td><code>GET</code></td><td><code>/health</code></td><td>平台健康检查</td></tr>
+        <tr><td><code>POST</code></td><td><code>/api/agents</code></td><td>注册 Agent</td></tr>
+        <tr><td><code>GET</code></td><td><code>/api/agents</code></td><td>列出所有在线 Agent</td></tr>
+        <tr><td><code>GET</code></td><td><code>/api/agents/{name}</code></td><td>获取指定 Agent 详情</td></tr>
+        <tr><td><code>DELETE</code></td><td><code>/api/agents/{name}</code></td><td>注销 Agent</td></tr>
+        <tr><td><code>POST</code></td><td><code>/api/agents/{name}/heartbeat</code></td><td>心跳续约</td></tr>
+        <tr><td><code>POST</code></td><td><code>/agent/{name}</code></td><td>向指定 Agent 发送 A2A 消息（代理转发）</td></tr>
+        <tr><td><code>GET</code></td><td><code>/api/events</code></td><td>SSE 实时事件流</td></tr>
+      </tbody>
+    </table>
+
+    <h3>2.6 MCP 服务</h3>
+
+    <h4>端点</h4>
+    <ul>
+      <li><code>POST /mcp/sse</code> — SSE 传输建立</li>
+      <li><code>POST /mcp/messages</code> — JSON-RPC 消息处理</li>
+    </ul>
+
+    <h4>暴露的工具</h4>
+    <table>
+      <thead><tr><th>工具</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr><td><code>list_agents</code></td><td>列出所有已注册 Agent</td></tr>
+        <tr><td><code>send_to_agent</code></td><td>向 Agent 发消息并等待回复</td></tr>
+        <tr><td><code>get_agent_info</code></td><td>获取 Agent 详情（能力、版本等）</td></tr>
+      </tbody>
+    </table>
+
+    <h4>暴露的资源</h4>
+    <ul>
+      <li><code>a2a://agents</code> — 所有 Agent 列表</li>
+      <li><code>a2a://agents/{name}</code> — 单个 Agent 详情</li>
+    </ul>
+  </div>
+
+  <hr>
+
+  <!-- Section 3 -->
+  <div class="section" id="s3">
+    <h2><span class="section-num">3</span>调研内容 <span class="badge badge-research">调研</span></h2>
+
+    <div class="callout">
+      以下内容为平台后续演进方向的调研，尚未确定实现方案。
+    </div>
+
+    <h3>3.1 内建 Agent</h3>
+
+    <h4>概念</h4>
+    <p>内建 Agent 是指平台自身提供 LLM 推理能力的 Agent。它不需要外部 Bridge，平台直接调用 LLM API（如 OpenAI、Anthropic），将 LLM 包装为一个 Agent 暴露给其他 Agent 调用。</p>
+
+    <h4>已实现的调研原型</h4>
+    <p>当前仓库中已有一个功能完整的内建 Agent 实现（<code>internal/engine/engine.go</code>），具备：</p>
+    <ul>
+      <li><strong>多轮对话能力</strong>：通过 <code>contextId</code> 维护会话历史</li>
+      <li><strong>工具调用循环</strong>：LLM 可调用内置工具（<code>fetch_url</code>、<code>read_file</code>、<code>write_file</code>、<code>list_directory</code>）和 A2A 平台工具（<code>list_agents</code>、<code>send_to_agent</code>、<code>get_agent_info</code>）</li>
+      <li><strong>MCP 客户端集成</strong>：可接入外部 MCP Server 作为额外工具</li>
+      <li><strong>多 Provider 支持</strong>：OpenAI 和 Anthropic 流式 API</li>
+      <li><strong>SSE 流式响应</strong>：<code>text.delta</code>、<code>thinking.delta</code>、<code>tool.call_start</code>、<code>tool.result</code> 等事件类型</li>
+      <li><strong>Agent 间调用</strong>：内建 Agent 可以通过 <code>send_to_agent</code> 工具调用平台上的其他 Agent</li>
+    </ul>
+
+    <h4>待决策问题</h4>
+    <ol>
+      <li><strong>内建 Agent 是否属于平台核心能力？</strong> 如果是：平台需要管理 LLM API Key、Provider 配置、模型选择；如果不是：内建 Agent 作为独立的 Bridge Agent 存在，平台只做转发</li>
+      <li><strong>安全边界</strong>：内建 Agent 调用其他 Agent 时，是否需要权限控制？工具调用是否需要沙箱？</li>
+      <li><strong>资源隔离</strong>：多个内建 Agent 实例并发时的资源限制（并发数、Token 配额、超时）</li>
+    </ol>
+
+    <h3>3.2 SubAgent vs AgentTeam</h3>
+
+    <div class="vs-grid">
+      <div class="vs-card">
+        <h5>SubAgent（子代理）</h5>
+        <p style="font-size:14px;color:var(--claude-text-secondary);margin-bottom:10px;">一个 Agent 在执行任务时，生成子代理来完成子任务。子代理有独立上下文，完成后将结果返回给父代理。</p>
+        <ul>
+          <li>父子关系明确，层级结构</li>
+          <li>独立的执行上下文</li>
+          <li>生命周期短暂：任务完成即结束</li>
+          <li>结果单向返回给父代理</li>
+          <li>已实现调研原型（<code>internal/tools/subagent.go</code>）</li>
+        </ul>
+      </div>
+      <div class="vs-card">
+        <h5>AgentTeam（代理团队）</h5>
+        <p style="font-size:14px;color:var(--claude-text-secondary);margin-bottom:10px;">多个 Agent 组成团队，角色不同，分工协作。可能是平等协作或主从模式。</p>
+        <ul>
+          <li>平等协作或主从关系</li>
+          <li>可能有共享上下文</li>
+          <li>持久，可跨任务复用</li>
+          <li>双向交互</li>
+          <li>需要编排机制（轮转、投票、协调者）</li>
+        </ul>
+      </div>
+    </div>
+
+    <h4>对比总结</h4>
+    <table>
+      <thead><tr><th>维度</th><th>SubAgent</th><th>AgentTeam</th></tr></thead>
+      <tbody>
+        <tr><td>关系</td><td>父子（层级）</td><td>平等协作（扁平）或主从</td></tr>
+        <tr><td>生命周期</td><td>临时，任务完成即销毁</td><td>持久，可跨任务复用</td></tr>
+        <tr><td>上下文</td><td>独立，不共享</td><td>可能有共享上下文</td></tr>
+        <tr><td>调度</td><td>父代理直接调度</td><td>需要编排机制</td></tr>
+        <tr><td>通信</td><td>结果单向返回</td><td>双向交互</td></tr>
+        <tr><td>典型场景</td><td>拆分子任务并行执行</td><td>多角色协作（研究员+写手+审核员）</td></tr>
+      </tbody>
+    </table>
+
+    <h4>行业参考</h4>
+    <ul>
+      <li><strong>CrewAI</strong>：AgentTeam 模型，预定义角色和目标，支持顺序、层级、共识等编排模式</li>
+      <li><strong>AutoGen</strong>：Multi-Agent 对话框架，Agent 间可自由对话</li>
+      <li><strong>LangGraph</strong>：基于图的工作流编排，支持循环和条件分支</li>
+    </ul>
+
+    <h3>3.3 Agent 交互编排</h3>
+
+    <h4>Workflow 类型</h4>
+    <table>
+      <thead><tr><th>类型</th><th>说明</th><th>适用场景</th></tr></thead>
+      <tbody>
+        <tr><td>顺序（Sequential）</td><td>A → B → C，按顺序执行</td><td>流水线处理</td></tr>
+        <tr><td>并行（Parallel）</td><td>A、B、C 同时执行，结果汇总</td><td>独立子任务并行处理</td></tr>
+        <tr><td>条件分支（Conditional）</td><td>根据 A 的输出决定走 B 还是 C</td><td>分类、判断类任务</td></tr>
+        <tr><td>循环（Loop）</td><td>重复执行某步骤直到满足条件</td><td>迭代优化、重试</td></tr>
+        <tr><td>人工审批（HITL）</td><td>某个步骤需要人工确认</td><td>需要人类判断的决策点</td></tr>
+      </tbody>
+    </table>
+
+    <h4>编排方式对比</h4>
+    <table>
+      <thead><tr><th>方式</th><th>说明</th><th>优点</th><th>缺点</th></tr></thead>
+      <tbody>
+        <tr><td>代码编排</td><td>在 Agent/Bridge 代码中硬编码流程</td><td>灵活，完全可控</td><td>不可复用，维护成本高</td></tr>
+        <tr><td>配置编排</td><td>YAML/JSON 声明工作流定义</td><td>可视化、可复用</td><td>灵活性受限</td></tr>
+        <tr><td>图编排</td><td>DAG 定义节点和边</td><td>直观，支持复杂拓扑</td><td>实现复杂度高</td></tr>
+        <tr><td>事件驱动</td><td>Agent 发布/订阅事件</td><td>松耦合，可扩展</td><td>调试困难，流程不直观</td></tr>
+      </tbody>
+    </table>
+
+    <h4>行业参考</h4>
+    <ul>
+      <li><strong>LangGraph</strong>：基于状态图的编排，节点是函数/Agent，边是条件转移</li>
+      <li><strong>Dify</strong>：可视化工作流编排，支持拖拽节点</li>
+      <li><strong>Google A2A 规范</strong>：目前不包含工作流定义，Agent 间交互是点对点的</li>
+    </ul>
+
+    <h3>3.4 MCP 集成</h3>
+
+    <h4>已实现的调研</h4>
+    <p>当前仓库已实现完整的 MCP 服务端和客户端：</p>
+
+    <div class="card-grid">
+      <div class="card">
+        <div class="card-title">MCP 服务端</div>
+        <p><code>internal/handler/mcp_sse.go</code> — SSE 传输，协议版本 <code>2024-11-05</code>，暴露 list_agents / send_to_agent / get_agent_info 工具，支持有状态和无状态两种会话模式</p>
+      </div>
+      <div class="card">
+        <div class="card-title">MCP 客户端</div>
+        <p><code>internal/mcpclient/client.go</code> — 支持 stdio 和 SSE 两种传输，内建 Agent 可接入外部 MCP Server 扩展工具能力</p>
+      </div>
+    </div>
+
+    <h4>意义</h4>
+    <ul>
+      <li>被任何 MCP 兼容客户端（如 Claude Desktop、Cursor）直接使用</li>
+      <li>让 Agent 无需实现 A2A 客户端，通过 MCP SDK 即可接入平台</li>
+      <li>作为工具层的标准协议，解耦工具提供和工具使用</li>
+    </ul>
+  </div>
+
+  <hr>
+
+  <!-- Section 4 -->
+  <div class="section" id="s4">
+    <h2><span class="section-num">4</span>技术预期与待决策项</h2>
+
+    <h3>4.1 etcd 引入的影响</h3>
+
+    <div class="card-grid">
+      <div class="card" style="border-left: 3px solid var(--claude-green);">
+        <div class="card-title" style="color:var(--claude-green);">优势</div>
+        <p>注册、保活、发现的原生支持，减少自建逻辑；Watch 机制实现实时变更通知；支持平台多实例水平扩展；分布式锁可用于 Leader 选举</p>
+      </div>
+      <div class="card" style="border-left: 3px solid var(--claude-red);">
+        <div class="card-title" style="color:var(--claude-red);">挑战</div>
+        <p>新增基础设施依赖，部署复杂度上升；etcd 运维（备份、监控、集群管理）；与存储层的关系：etcd 管运行时状态，数据库管持久化数据</p>
+      </div>
+    </div>
+
+    <div class="callout">
+      <div class="callout-title">待决策</div>
+      第一版是否直接引入 etcd，还是先用数据库 + 内存注册表实现，后续再迁移到 etcd？
+    </div>
+
+    <h3>4.2 性能预期</h3>
+    <table>
+      <thead><tr><th>指标</th><th>预期</th></tr></thead>
+      <tbody>
+        <tr><td>消息转发延迟</td><td>&lt; 50ms（同机房）</td></tr>
+        <tr><td>并发连接数</td><td>1000+ SSE 长连接</td></tr>
+        <tr><td>Agent 注册数</td><td>100+</td></tr>
+        <tr><td>消息吞吐量</td><td>1000 msg/s</td></tr>
+      </tbody>
+    </table>
+
+    <h3>4.3 安全性</h3>
+    <table>
+      <thead><tr><th>方面</th><th>考虑</th></tr></thead>
+      <tbody>
+        <tr><td>认证</td><td>Agent 注册需要 token 认证，消息发送暂不强制认证</td></tr>
+        <tr><td>授权</td><td>第一版不做细粒度权限控制，后续可引入 RBAC</td></tr>
+        <tr><td>传输加密</td><td>生产环境建议 TLS，平台本身不强制</td></tr>
+        <tr><td>消息隔离</td><td>Agent 间消息默认不可被第三方读取</td></tr>
+      </tbody>
+    </table>
+
+    <h3>4.4 部署模式</h3>
+    <table>
+      <thead><tr><th>模式</th><th>适用</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr><td>单二进制</td><td>开发/测试</td><td>SQLite + 内存注册表</td></tr>
+        <tr><td>Docker Compose</td><td>小规模生产</td><td>MySQL + etcd（可选）</td></tr>
+        <tr><td>Kubernetes</td><td>大规模生产</td><td>MySQL + etcd + 水平扩展</td></tr>
+      </tbody>
+    </table>
+
+    <h3>4.5 与现有原型的关系</h3>
+    <p>当前仓库（<code>a2a-platform-go</code>）是一个功能完整的调研原型。新建生产平台时需要：</p>
+
+    <div class="card-grid">
+      <div class="card" style="border-left: 3px solid var(--claude-green);">
+        <div class="card-title" style="color:var(--claude-green);">复用</div>
+        <p>MCP 服务端/客户端实现、A2A 协议解析、SSE 事件广播、数据模型定义</p>
+      </div>
+      <div class="card" style="border-left: 3px solid var(--claude-accent-blue);">
+        <div class="card-title" style="color:var(--claude-accent-blue);">重写</div>
+        <p>注册/发现层（引入 etcd）、消息代理层（简化为纯转发）、API 层（精简接口）</p>
+      </div>
+      <div class="card" style="border-left: 3px solid var(--claude-red);">
+        <div class="card-title" style="color:var(--claude-red);">移除</div>
+        <p>内建 Agent 引擎、Bridge Agent、聊天界面、会话管理、追踪系统</p>
+      </div>
+    </div>
+  </div>
+
+  <hr>
+
+  <!-- Section 5 -->
+  <div class="section" id="s5">
+    <h2><span class="section-num">5</span>开放问题 <span class="badge badge-open">待讨论</span></h2>
+
+    <ul class="question-list">
+      <li>
+        <span class="q-num">1</span>
+        <div><strong>etcd vs 自建心跳</strong>：第一版是否引入 etcd？还是先用简单的内存注册表 + 数据库持久化？</div>
+      </li>
+      <li>
+        <span class="q-num">2</span>
+        <div><strong>消息持久化粒度</strong>：平台是否需要记录每条消息的内容？还是只记录转发元数据（来源、目标、时间、状态）？</div>
+      </li>
+      <li>
+        <span class="q-num">3</span>
+        <div><strong>Bridge 规范</strong>：是否需要为 Bridge 提供标准化的接入规范（如最少需要实现哪些 API）？</div>
+      </li>
+      <li>
+        <span class="q-num">4</span>
+        <div><strong>内建 Agent 定位</strong>：内建 Agent 是平台核心能力还是可选组件？这决定了架构上的耦合程度</div>
+      </li>
+      <li>
+        <span class="q-num">5</span>
+        <div><strong>工作流优先级</strong>：Agent 交互编排是否需要在平台层面支持？如果支持，与 Agent 侧自编排的边界在哪？</div>
+      </li>
+    </ul>
+  </div>
+
+  <hr>
+
+  <!-- Section 6 -->
+  <div class="section" id="s6">
+    <h2><span class="section-num">6</span>参考资料</h2>
+
+    <ul class="ref-list">
+      <li><a href="https://github.com/google/A2A" target="_blank">Google A2A 协议规范</a> — Agent-to-Agent 协议定义</li>
+      <li><a href="https://modelcontextprotocol.io/" target="_blank">Model Context Protocol (MCP) 规范</a> — 工具层标准协议</li>
+      <li><a href="https://github.com/crewAIInc/crewAI" target="_blank">CrewAI</a> — Multi-Agent 框架（AgentTeam 模型）</li>
+      <li><a href="https://github.com/microsoft/autogen" target="_blank">AutoGen</a> — Multi-Agent 对话框架</li>
+      <li><a href="https://github.com/langchain-ai/langgraph" target="_blank">LangGraph</a> — 基于图的工作流编排</li>
+      <li><a href="https://etcd.io/" target="_blank">etcd</a> — 分布式键值存储</li>
+    </ul>
+  </div>
+
+</div>
+</body>
+</html>
