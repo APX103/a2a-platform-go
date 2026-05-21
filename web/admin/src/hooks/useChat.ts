@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
 import { fetchEventSource } from '@microsoft/fetch-event-source';
 import { useChatStore } from '../stores/chatStore';
-import type { SSEEvent, ToolCall, ThinkingBlock, SubagentSession } from '../types/chat';
+import type { SSEEvent, ToolCall, ThinkingBlock, TaskSession } from '../types/chat';
 
 export function useChat(agentName: string) {
   const {
@@ -205,13 +205,13 @@ export function useChat(agentName: string) {
 
               case 'subagent.started':
                 if (data.subagent_id && data.tool_call_id) {
-                  const subagent: SubagentSession = {
+                  const subagent: TaskSession = {
                     id: data.subagent_id,
                     parent_context_id: '',
                     parent_tool_call_id: data.tool_call_id,
                     task: data.subagent_task || '',
                     context: '',
-                    status: 'running',
+                    status: 'in_progress',
                     created_at: new Date().toISOString(),
                   };
                   setSubagent(data.tool_call_id, subagent);

@@ -434,13 +434,13 @@ func (h *ListTasksHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	items := make([]model.TaskItem, 0, len(tasks))
+	items := make([]model.TaskListItem, 0, len(tasks))
 	for _, t := range tasks {
 		displayId := t.LocalTaskId[:8]
 		if t.ServerTaskId != nil && *t.ServerTaskId != "" {
 			displayId = *t.ServerTaskId
 		}
-		items = append(items, model.TaskItem{
+		items = append(items, model.TaskListItem{
 			LocalTaskId: t.LocalTaskId,
 			DisplayId:   displayId,
 			AgentName:   t.AgentName,

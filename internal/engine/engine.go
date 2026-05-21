@@ -134,6 +134,7 @@ func (e *Engine) RegisterAgent(cfg config.BuiltinAgent) error {
 			Name:        builtinTool.Name,
 			Description: builtinTool.Description,
 			InputSchema: inputSchema,
+			IsReadOnly:  builtinTool.IsReadOnly,
 		})
 	}
 
@@ -442,6 +443,13 @@ func (e *Engine) runLoop(
 				}
 			}
 
+			// Truncate large tool results to prevent context explosion
+			const maxToolResultSize = 8000
+			truncatedResult := result
+			if len(result) > maxToolResultSize {
+				truncatedResult = result[:maxToolResultSize] + fmt.Sprintf("\n... (truncated, %d chars omitted)", len(result)-maxToolResultSize)
+			}
+
 			writeSSE(w, flusher, sseEventToolCallEnd, map[string]interface{}{
 				"taskId": taskId,
 				"tool": map[string]interface{}{
@@ -456,7 +464,7 @@ func (e *Engine) runLoop(
 				"tool": map[string]interface{}{
 					"id":       tc.ID,
 					"name":     tc.Name,
-					"result":   truncate(result, 2000),
+					"result":   truncate(truncatedResult, 2000),
 					"status":   "completed",
 					"end_time": time.Now().Format(time.RFC3339),
 				},
@@ -464,7 +472,7 @@ func (e *Engine) runLoop(
 
 			messages = append(messages, llm.ChatMessage{
 				Role:       "tool",
-				Content:    result,
+				Content:    truncatedResult,
 				ToolCallID: tc.ID,
 			})
 

@@ -93,13 +93,17 @@ export interface SSEEvent {
 }
 
 // Subagent types
-export interface SubagentSession {
+export interface TaskSession {
   id: string;
   parent_context_id: string;
   parent_tool_call_id: string;
+  subject?: string;
+  description?: string;
   task: string;
   context: string;
-  status: 'running' | 'completed' | 'failed' | 'timeout';
+  status: 'pending' | 'in_progress' | 'completed' | 'failed' | 'timeout';
+  owner?: string;
+  blocked_by?: string[];
   messages?: string;
   result?: string;
   error?: string;

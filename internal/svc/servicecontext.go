@@ -28,6 +28,7 @@ type ServiceContext struct {
 	Traces           *TraceStore
 	Contexts         *ContextStore
 	Subagents        *SubagentStore
+	TaskItems        *TaskItemStore
 	BuiltinAgents    *BuiltinAgentStore
 	Registry         *AgentRegistry
 	EventBus         *events.Broadcaster
@@ -45,6 +46,7 @@ func NewServiceContext(c *config.Config) *ServiceContext {
 	traces := NewTraceStore(db)
 	contexts := NewContextStore(db)
 	subagents := NewSubagentStore(db)
+	taskItems := NewTaskItemStore(db)
 	builtinAgents := NewBuiltinAgentStore(db)
 	registry := NewAgentRegistry(agents)
 	eventBus := events.NewBroadcaster()
@@ -60,6 +62,7 @@ func NewServiceContext(c *config.Config) *ServiceContext {
 		Traces:           traces,
 		Contexts:         contexts,
 		Subagents:        subagents,
+		TaskItems:        taskItems,
 		BuiltinAgents:    builtinAgents,
 		Registry:         registry,
 		EventBus:         eventBus,
@@ -230,6 +233,22 @@ CREATE TABLE IF NOT EXISTS subagent_sessions (
 	INDEX idx_status (status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+CREATE TABLE IF NOT EXISTS task_items (
+	id VARCHAR(36) PRIMARY KEY,
+	context_id VARCHAR(36) NOT NULL,
+	subject TEXT NOT NULL,
+	description TEXT,
+	status VARCHAR(16) NOT NULL DEFAULT 'pending',
+	owner VARCHAR(128),
+	blocked_by TEXT,
+	result TEXT,
+	error TEXT,
+	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+	completed_at TIMESTAMP,
+	INDEX idx_task_items_context (context_id),
+	INDEX idx_task_items_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS builtin_agents (
 	id INT AUTO_INCREMENT PRIMARY KEY,
 	name VARCHAR(255) NOT NULL UNIQUE,
@@ -337,6 +356,23 @@ CREATE TABLE IF NOT EXISTS subagent_sessions (
 
 CREATE INDEX IF NOT EXISTS idx_subagent_parent ON subagent_sessions(parent_context_id);
 CREATE INDEX IF NOT EXISTS idx_subagent_status ON subagent_sessions(status);
+
+CREATE TABLE IF NOT EXISTS task_items (
+	id TEXT PRIMARY KEY,
+	context_id TEXT NOT NULL,
+	subject TEXT NOT NULL,
+	description TEXT,
+	status TEXT NOT NULL DEFAULT 'pending',
+	owner TEXT,
+	blocked_by TEXT,
+	result TEXT,
+	error TEXT,
+	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+	completed_at TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_task_items_context ON task_items(context_id);
+CREATE INDEX IF NOT EXISTS idx_task_items_status ON task_items(status);
 
 CREATE TABLE IF NOT EXISTS builtin_agents (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,

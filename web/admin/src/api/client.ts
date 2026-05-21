@@ -26,7 +26,7 @@ import type {
   ContextDetail,
   ListContextsResponse,
   CreateContextRequest,
-  SubagentSession,
+  TaskSession,
 } from '../types/chat';
 
 export interface Agent {
@@ -190,7 +190,7 @@ export const api = {
   }),
 
   // Subagent API
-  listSubagents: (contextId: string) => request<{ context_id: string; subagents: SubagentSession[] }>(`/api/subagents/${contextId}`),
+  listSubagents: (contextId: string) => request<{ context_id: string; subagents: TaskSession[] }>(`/api/subagents/${contextId}`),
 
-  getSubagent: (id: string) => request<SubagentSession>(`/api/subagents/${id}`),
+  getSubagent: (id: string) => request<TaskSession>(`/api/subagents/${id}`),
 };

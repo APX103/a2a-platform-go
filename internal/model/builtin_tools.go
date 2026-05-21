@@ -6,6 +6,7 @@ type BuiltinTool struct {
 	Description string                 `json:"description"`
 	Parameters  []ToolParameter         `json:"parameters"`
 	Execute     func(args map[string]any) (string, error)
+	IsReadOnly  bool                   `json:"is_read_only,omitempty"` // true = safe for concurrent execution
 }
 
 // ToolParameter represents a tool parameter.

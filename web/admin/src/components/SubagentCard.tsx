@@ -1,15 +1,29 @@
 import { useState } from 'react';
 import { ChevronRight, ChevronDown, Loader2, CheckCircle, XCircle, Clock, Bot } from 'lucide-react';
-import type { SubagentSession } from '../types/chat';
+import type { TaskSession } from '../types/chat';
 
 interface SubagentCardProps {
-  subagent: SubagentSession;
+  subagent: TaskSession;
 }
 
 export default function SubagentCard({ subagent }: SubagentCardProps) {
   const [expanded, setExpanded] = useState(false);
 
   const statusConfig = {
+    pending: {
+      icon: <Clock size={14} className="text-blue-400" />,
+      label: 'Pending',
+      badgeClass: 'bg-blue-500/10 text-blue-600 dark:text-blue-400',
+      borderClass: 'border-blue-300 dark:border-blue-700',
+      bgClass: 'bg-blue-50 dark:bg-blue-950/20',
+    },
+    in_progress: {
+      icon: <Loader2 size={14} className="animate-spin text-orange-500" />,
+      label: 'In Progress',
+      badgeClass: 'bg-orange-500/10 text-orange-600 dark:text-orange-400',
+      borderClass: 'border-orange-300 dark:border-orange-700',
+      bgClass: 'bg-orange-50 dark:bg-orange-950/20',
+    },
     running: {
       icon: <Loader2 size={14} className="animate-spin text-orange-500" />,
       label: 'Running',
@@ -60,6 +74,24 @@ export default function SubagentCard({ subagent }: SubagentCardProps) {
 
       {expanded && (
         <div className="px-3 pb-3 space-y-2">
+          {subagent.subject && (
+            <div>
+              <div className="text-[10px] text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Subject</div>
+              <div className="text-xs font-medium text-gray-800 dark:text-gray-200">{subagent.subject}</div>
+            </div>
+          )}
+          {subagent.owner && (
+            <div className="flex items-center gap-1">
+              <div className="text-[10px] text-gray-500 dark:text-gray-400 uppercase tracking-wider">Owner:</div>
+              <span className="text-xs text-gray-700 dark:text-gray-300">{subagent.owner}</span>
+            </div>
+          )}
+          {subagent.blocked_by && subagent.blocked_by.length > 0 && (
+            <div className="flex items-center gap-1">
+              <div className="text-[10px] text-gray-500 dark:text-gray-400 uppercase tracking-wider">Blocked By:</div>
+              <span className="text-xs text-gray-700 dark:text-gray-300">{subagent.blocked_by.join(', ')}</span>
+            </div>
+          )}
           <div>
             <div className="text-[10px] text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Task</div>
             <div className="text-xs text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded p-2">

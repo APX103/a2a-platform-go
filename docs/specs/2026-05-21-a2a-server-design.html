@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>A2A Server — 生产版代理平台设计</title>
+<style>
+  :root {
+    --orange: #E8703A;
+    --orange-light: #F09A6A;
+    --orange-pale: #FEF0E7;
+    --bg: #F9F7F4;
+    --surface: #FFFFFF;
+    --text: #1A1612;
+    --text-sec: #6B6560;
+    --text-muted: #9B9590;
+    --border: #E8E4DF;
+    --border-light: #F0ECE8;
+    --code-bg: #1E1E1E;
+    --code-text: #D4D4D4;
+    --tag-bg: #FEF0E7;
+    --tag-text: #C05A20;
+    --blue: #3B7DD8;
+    --green: #2D8A56;
+    --red: #C4483E;
+    --purple: #7C3AED;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans SC', 'PingFang SC', 'Hiragino Sans GB', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  .page { max-width: 900px; margin: 0 auto; padding: 60px 40px 120px; }
+
+  .header { margin-bottom: 48px; padding-bottom: 28px; border-bottom: 2px solid var(--orange); }
+  .header h1 { font-size: 32px; font-weight: 700; letter-spacing: -0.5px; margin-bottom: 10px; }
+  .header .meta { display: flex; gap: 20px; font-size: 14px; color: var(--text-sec); }
+  .header .tag { display: inline-block; padding: 2px 10px; background: var(--tag-bg); color: var(--tag-text); border-radius: 4px; font-size: 13px; font-weight: 500; }
+
+  .toc { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 24px 32px; margin-bottom: 48px; }
+  .toc-title { font-size: 14px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; }
+  .toc ol { list-style: none; counter-reset: toc; padding: 0; }
+  .toc > ol > li { counter-increment: toc; margin-bottom: 3px; }
+  .toc > ol > li::before { content: counter(toc) "."; color: var(--orange); font-weight: 600; font-size: 14px; width: 24px; display: inline-block; }
+  .toc a { color: var(--text); text-decoration: none; font-size: 15px; }
+  .toc a:hover { color: var(--orange); }
+
+  .section { margin-bottom: 56px; }
+  .section-num { display: inline-block; background: var(--orange); color: white; font-size: 13px; font-weight: 700; width: 28px; height: 28px; line-height: 28px; text-align: center; border-radius: 6px; margin-right: 10px; vertical-align: middle; }
+  h2 { font-size: 24px; font-weight: 700; margin-bottom: 24px; letter-spacing: -0.3px; display: flex; align-items: center; }
+  h3 { font-size: 18px; font-weight: 600; margin: 36px 0 14px; }
+  h4 { font-size: 15px; font-weight: 600; color: var(--text-sec); margin: 24px 0 10px; }
+  h5 { font-size: 14px; font-weight: 600; color: var(--text-muted); margin: 18px 0 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+  p { margin-bottom: 14px; font-size: 15px; }
+  strong { font-weight: 600; }
+  a { color: var(--blue); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  table { width: 100%; border-collapse: collapse; margin: 14px 0 22px; font-size: 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  thead th { background: var(--border-light); text-align: left; padding: 10px 14px; font-weight: 600; font-size: 13px; color: var(--text-sec); border-bottom: 1px solid var(--border); }
+  tbody td { padding: 10px 14px; border-bottom: 1px solid var(--border-light); vertical-align: top; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: var(--orange-pale); }
+  td code, th code { background: var(--border-light); padding: 1px 6px; border-radius: 4px; font-size: 13px; font-family: 'SF Mono','Fira Code','JetBrains Mono',Consolas,monospace; color: var(--blue); }
+
+  pre { background: var(--code-bg); color: var(--code-text); padding: 18px 22px; border-radius: 10px; overflow-x: auto; margin: 14px 0 22px; font-size: 13px; line-height: 1.55; font-family: 'SF Mono','Fira Code','JetBrains Mono',Consolas,monospace; }
+  pre code { background: none; padding: 0; color: inherit; font-size: inherit; }
+
+  ul, ol { margin: 10px 0 16px 24px; font-size: 15px; }
+  li { margin-bottom: 5px; }
+
+  .callout { border-left: 3px solid var(--orange); background: var(--orange-pale); padding: 14px 20px; margin: 16px 0; border-radius: 0 8px 8px 0; font-size: 14px; }
+  .callout-title { font-weight: 600; color: var(--orange); margin-bottom: 4px; font-size: 13px; }
+  .callout-blue { border-left-color: var(--blue); background: #EBF3FC; }
+  .callout-blue .callout-title { color: var(--blue); }
+  .callout-green { border-left-color: var(--green); background: #E8F5E9; }
+  .callout-green .callout-title { color: var(--green); }
+
+  .card-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 14px 0 22px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; }
+  .card-title { font-weight: 600; font-size: 15px; margin-bottom: 6px; }
+  .card p { font-size: 14px; color: var(--text-sec); margin: 0; line-height: 1.6; }
+
+  hr { border: none; border-top: 1px solid var(--border); margin: 48px 0; }
+
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; vertical-align: middle; }
+  .badge-v1 { background: #E8F5E9; color: #2D8A56; }
+  .badge-new { background: #F3E8FF; color: #7C3AED; }
+
+  .arch-diagram { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 24px; margin: 14px 0 22px; font-family: 'SF Mono','Fira Code','JetBrains Mono',Consolas,monospace; font-size: 12.5px; line-height: 1.45; white-space: pre; overflow-x: auto; color: var(--text-sec); }
+
+  .flow-steps { margin: 14px 0 22px; padding: 0; list-style: none; counter-reset: step; }
+  .flow-steps li { counter-increment: step; position: relative; padding: 10px 16px 10px 44px; margin-bottom: 2px; background: var(--surface); border: 1px solid var(--border-light); border-radius: 8px; font-size: 14px; }
+  .flow-steps li::before { content: counter(step); position: absolute; left: 14px; top: 10px; background: var(--orange); color: white; font-size: 12px; font-weight: 700; width: 22px; height: 22px; line-height: 22px; text-align: center; border-radius: 50%; }
+
+  .vs-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 14px 0 22px; }
+  .vs-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 18px; }
+  .vs-card h5 { font-size: 15px; font-weight: 700; margin-bottom: 10px; color: var(--orange); text-transform: none; letter-spacing: 0; }
+  .vs-card ul { margin-left: 16px; font-size: 14px; }
+
+  .schema-block { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; margin: 14px 0 22px; }
+  .schema-block h5 { margin-top: 0; margin-bottom: 8px; }
+  .field-table { width: 100%; font-size: 13px; }
+  .field-table td { padding: 4px 8px; }
+  .field-table td:first-child { font-family: 'SF Mono','Fira Code',Consolas,monospace; color: var(--blue); white-space: nowrap; }
+  .field-table td:nth-child(2) { color: var(--text-muted); font-style: italic; width: 80px; }
+  .field-table td:nth-child(3) { color: var(--text-sec); }
+
+  .state-flow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 14px 0 22px; font-size: 14px; }
+  .state { display: inline-block; padding: 4px 12px; border-radius: 6px; font-weight: 600; font-size: 13px; }
+  .state-green { background: #E8F5E9; color: #2D8A56; }
+  .state-blue { background: #E3F2FD; color: #1565C0; }
+  .state-orange { background: #FFF3E0; color: #E65100; }
+  .state-red { background: #FFEBEE; color: #C62828; }
+  .state-purple { background: #F3E8FF; color: #7C3AED; }
+  .arrow { color: var(--text-muted); font-size: 16px; }
+
+  .detail-box { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 20px 22px; margin: 14px 0 22px; }
+  .detail-box > h4:first-child, .detail-box > h5:first-child { margin-top: 0; }
+
+  @media (max-width: 700px) {
+    .page { padding: 32px 20px 80px; }
+    .card-grid, .vs-grid { grid-template-columns: 1fr; }
+    .header h1 { font-size: 24px; }
+    h2 { font-size: 20px; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+<!-- Header -->
+<div class="header">
+  <h1>A2A Server — 生产版代理平台设计</h1>
+  <div class="meta">
+    <span>更新日期：2026-05-21</span>
+    <span class="tag">V1 设计</span>
+  </div>
+</div>
+
+<!-- TOC -->
+<div class="toc">
+  <div class="toc-title">目录</div>
+  <ol>
+    <li><a href="#s1">项目定位</a></li>
+    <li><a href="#s2">技术选型</a></li>
+    <li><a href="#s3">项目结构</a></li>
+    <li><a href="#s4">核心架构：消息流转</a></li>
+    <li><a href="#s5">核心组件设计</a></li>
+    <li><a href="#s6">REST API</a></li>
+    <li><a href="#s7">MCP 服务</a></li>
+    <li><a href="#s8">Events &amp; Middleware</a></li>
+    <li><a href="#s9">配置</a></li>
+    <li><a href="#s10">与原型的关系</a></li>
+  </ol>
+</div>
+
+<!-- ==================== Section 1 ==================== -->
+<div class="section" id="s1">
+<h2><span class="section-num">1</span>项目定位</h2>
+
+<p>平台是一个<strong>透明的消息代理</strong>——不参与 Agent 内部逻辑，只负责"谁在线"和"消息怎么到"。所有 A2A 协议消息经过平台转发，但不解析消息内容的语义。</p>
+
+<div class="callout-blue callout">
+  <div class="callout-title">核心架构</div>
+  平台即 Proxy——所有 Agent 的 A2A endpoint 都是平台上的路由（<code>POST /agent/{name}</code>）。Agent 不需要有自己的 URL，通过 MCP 收件箱模型拉取消息。
+</div>
+
+<h3>1.1 V1 范围 <span class="badge badge-v1">必做</span></h3>
+<div class="card-grid">
+  <div class="card">
+    <div class="card-title">Agent 注册与发现</div>
+    <p>REST API + MCP tool 注册，AgentCard 抓取，内存注册表 + 数据库持久化。支持无 URL 的 MCP Agent。</p>
+  </div>
+  <div class="card">
+    <div class="card-title">保活机制</div>
+    <p>MCP heartbeat tool + SSE 长连接 + HTTP poll 三种模式。超时自动下线，支持在线恢复。</p>
+  </div>
+  <div class="card">
+    <div class="card-title">消息代理</div>
+    <p>收件箱队列模型：消息入队 → Agent 通过 MCP 拉取 → 回复后推送给发送方。收一条回一条。</p>
+  </div>
+  <div class="card">
+    <div class="card-title">API + MCP 服务</div>
+    <p>REST API 管理 + MCP 端点暴露平台能力，含消息收发、心跳保活、Agent 查询。</p>
+  </div>
+</div>
+
+<h3>1.2 明确不做</h3>
+<ul>
+  <li>内建 Agent / LLM 引擎</li>
+  <li>Bridge Agent</li>
+  <li>消息持久化（不记录消息内容或元数据）</li>
+  <li>会话管理 / 多轮对话上下文</li>
+  <li>消息追踪（Trace）与可观测性</li>
+  <li>前端管理界面</li>
+  <li>etcd 服务发现（V1 用内存 + 数据库）</li>
+</ul>
+</div>
+
+<hr>
+
+<!-- ==================== Section 2 ==================== -->
+<div class="section" id="s2">
+<h2><span class="section-num">2</span>技术选型</h2>
+
+<table>
+  <thead><tr><th>层面</th><th>选择</th><th>理由</th></tr></thead>
+  <tbody>
+    <tr><td>语言</td><td>Go</td><td>高并发、单二进制部署</td></tr>
+    <tr><td>框架</td><td><code>go-zero</code></td><td>全框架：HTTP server、路由、中间件、依赖注入</td></tr>
+    <tr><td>消息队列</td><td><code>go-queue</code>（go-zero 组件）</td><td>Agent 收件箱实现，支持 beanstalkd / kafka</td></tr>
+    <tr><td>持久存储</td><td>SQLite（开发）/ MySQL（生产）</td><td>双方言兼容，SQLite 零配置，MySQL 适合生产</td></tr>
+    <tr><td>通信协议</td><td>A2A Protocol（JSON-RPC over HTTP/SSE）</td><td>遵循 Google A2A 规范</td></tr>
+    <tr><td>工具协议</td><td>MCP（Model Context Protocol）</td><td>标准化工具暴露，Agent 通过 MCP 收发消息和保活</td></tr>
+  </tbody>
+</table>
+</div>
+
+<hr>
+
+<!-- ==================== Section 3 ==================== -->
+<div class="section" id="s3">
+<h2><span class="section-num">3</span>项目结构（go-zero 风格）</h2>
+
+<div class="arch-diagram">a2a-server/
+├── etc/
+│   └── a2a-server.yaml          # 配置文件
+├── internal/
+│   ├── config/                  # 配置结构体 + 加载
+│   ├── handler/                 # HTTP handler（go-zero 风格）
+│   │   ├── agenthandler.go      # Agent CRUD + 心跳
+│   │   ├── proxyhandler.go      # 消息转发入口
+│   │   ├── eventshandler.go     # SSE 事件流
+│   │   ├── healthhandler.go     # 健康检查
+│   │   └── mcphandler.go        # MCP SSE 端点
+│   ├── logic/                   # 业务逻辑层
+│   │   ├── agentlogic.go        # Agent 注册/发现/保活
+│   │   ├── proxylogic.go        # 消息代理逻辑
+│   │   ├── inboxlogic.go        # 收件箱队列管理
+│   │   └── mcplogic.go          # MCP 工具调用逻辑
+│   ├── model/                   # 数据模型 + Store 接口
+│   ├── registry/                # Agent 注册表（内存 map + 接口抽象）
+│   ├── inbox/                   # 收件箱队列（go-queue 封装）
+│   ├── events/                  # SSE 事件广播器
+│   ├── mcp/                     # MCP 协议实现
+│   ├── middleware/              # CORS、认证、限流
+│   └── svc/                     # ServiceContext（依赖注入容器）
+├── cmd/
+│   └── server/
+│       └── main.go              # 入口
+├── sql/                         # DDL 文件
+├── a2a-server.go                # go-zero server 定义
+├── go.mod
+├── Makefile
+└── Dockerfile</div>
+</div>
+
+<hr>
+
+<!-- ==================== Section 4 ==================== -->
+<div class="section" id="s4">
+<h2><span class="section-num">4</span>核心架构：消息流转</h2>
+
+<h3>4.1 整体流程</h3>
+
+<div class="arch-diagram">发送方 Agent                    平台 (go-zero)              接收方 Agent
+     │                              │                           │
+     │ POST /agent/{target}         │                           │
+     │ ──────────────────────────►  │                           │
+     │         SSE 连接等待响应      │  消息入队 (go-queue)       │
+     │◄──────────────────────────   │  ──────► inbox queue      │
+     │                              │                           │
+     │                              │    MCP: receive_message   │
+     │                              │  ◄─────────────────────── │
+     │                              │                           │
+     │                              │    MCP: reply_message     │
+     │                              │  ◄─────────────────────── │
+     │                              │                           │
+     │     SSE 事件流推送响应        │                           │
+     │◄──────────────────────────   │                           │</div>
+
+<h4>关键规则</h4>
+<ol class="flow-steps">
+  <li><strong>收一条回一条</strong>：Agent 在回复当前消息前无法拉取下一条</li>
+  <li><strong>首字超时 1min</strong>：Agent 开始处理的时间，超时后平台回复发送方"对方无法响应"</li>
+  <li><strong>不设总超时</strong>：超时由平台保障，响应可以持续任意长时间</li>
+  <li><strong>A2A 错误信息</strong>：超时、Agent 离线等错误通过 JSON-RPC error 返回</li>
+</ol>
+
+<h3>4.2 双模式 Agent 支持</h3>
+
+<div class="vs-grid">
+  <div class="vs-card" style="border-left: 3px solid var(--purple);">
+    <h5 style="color: var(--purple);">模式 A：MCP Agent（主要）<span class="badge badge-new" style="margin-left:8px">无 URL</span></h5>
+    <ul>
+      <li>通过 MCP tools 收发消息和保活</li>
+      <li>消息通过收件箱队列中转</li>
+      <li>不需要运行自己的 HTTP 服务</li>
+      <li>注册时 <code>type: "mcp"</code>，url 可为空</li>
+      <li>适合 LLM Agent、脚本 Agent 等</li>
+    </ul>
+  </div>
+  <div class="vs-card" style="border-left: 3px solid var(--blue);">
+    <h5 style="color: var(--blue);">模式 B：HTTP Agent（次要）<span class="badge badge-v1" style="margin-left:8px">有 URL</span></h5>
+    <ul>
+      <li>注册时提供 URL</li>
+      <li>平台通过 HTTP POST 主动转发消息</li>
+      <li>Agent 通过 HTTP 响应返回结果（SSE 或 JSON）</li>
+      <li>SSE 长连接存续 = 在线</li>
+      <li>适合已有 HTTP 服务的 Agent</li>
+    </ul>
+  </div>
+</div>
+
+<h4>消息转发对比</h4>
+<table>
+  <thead><tr><th>维度</th><th>MCP Agent</th><th>HTTP Agent</th></tr></thead>
+  <tbody>
+    <tr><td>消息接收</td><td>MCP tool <code>receive_message</code> 拉取</td><td>平台 HTTP POST 到 Agent URL</td></tr>
+    <tr><td>消息回复</td><td>MCP tool <code>reply_message</code> 提交</td><td>HTTP 响应（SSE 流 / JSON）</td></tr>
+    <tr><td>保活方式</td><td>MCP tool <code>heartbeat</code></td><td>SSE 长连接 / HTTP poll</td></tr>
+    <tr><td>是否需要 HTTP 服务</td><td>否</td><td>是</td></tr>
+    <tr><td>消息模型</td><td>收件箱队列（go-queue）</td><td>直接 HTTP 转发</td></tr>
+  </tbody>
+</table>
+</div>
+
+<hr>
+
+<!-- ==================== Section 5 ==================== -->
+<div class="section" id="s5">
+<h2><span class="section-num">5</span>核心组件设计</h2>
+
+<h3>5.1 Registry（注册表）</h3>
+
+<pre><code>type AgentEvent struct {
+    Type      string       // "register", "deregister", "heartbeat", "offline"
+    AgentName string
+    Agent     *model.Agent
+}
+
+type Registry interface {
+    Register(ctx context.Context, agent *model.Agent) error
+    Deregister(ctx context.Context, name string) error
+    Get(ctx context.Context, name string) (*model.Agent, error)
+    List(ctx context.Context) ([]*model.Agent, error)
+    Heartbeat(ctx context.Context, name string) error
+    Watch(ctx context.Context) (&lt;-chan AgentEvent, error)
+}</code></pre>
+
+<h4>MemoryRegistry 实现</h4>
+<ul>
+  <li><code>sync.RWMutex</code> 保护的 <code>map[string]*model.Agent</code></li>
+  <li>启动时从数据库恢复已注册 Agent（状态标记为 offline）</li>
+  <li><code>Heartbeat()</code> 更新 <code>lastHeartbeat</code> 时间戳</li>
+  <li>后台 goroutine 每 10s 扫描，超过 TTL（30s）的标记为 offline 并广播事件</li>
+  <li>接口预留后续 etcd 切换</li>
+</ul>
+
+<h3>5.2 Inbox（收件箱队列）<span class="badge badge-new">新增</span></h3>
+
+<pre><code>type InboxMessage struct {
+    MessageID   string     // UUID
+    FromAgent   string     // 发送方名称
+    TargetAgent string     // 接收方名称
+    Content     string     // JSON-RPC 请求体
+    ReplyChan   chan *Reply // 回复通道（用于同步等待回复）
+    CreatedAt   time.Time
+}
+
+type Reply struct {
+    MessageID string
+    Content   string     // 响应内容
+    IsSSE     bool       // 是否 SSE 流式响应
+    Error     string     // 错误信息
+}
+
+type Inbox interface {
+    Push(ctx context.Context, agentName string, msg *InboxMessage) error
+    Pop(ctx context.Context, agentName string) (*InboxMessage, error)  // 阻塞等待
+    Reply(ctx context.Context, messageID string, reply *Reply) error
+    Close() error
+}</code></pre>
+
+<h4>实现细节</h4>
+<ul>
+  <li>基于 go-queue 组件（beanstalkd 或 kafka）</li>
+  <li>每个 Agent 注册后自动创建一个命名队列</li>
+  <li><code>Pop</code> 阻塞等待直到有消息或上下文取消</li>
+  <li><code>ReplyChan</code> 将回复同步传回等待中的发送方</li>
+  <li>首字超时 1min：Pop 返回后启动计时器，1min 内未收到 reply → 超时</li>
+</ul>
+
+<h4>消息流转状态机</h4>
+<div class="state-flow">
+  <span class="state state-blue">QUEUED</span>
+  <span class="arrow">→</span>
+  <span class="state state-orange">DELIVERED</span>
+  <span class="arrow">→</span>
+  <span class="state state-green">REPLIED</span>
+  <span style="margin-left:16px"></span>
+  <span class="state state-red">TIMEOUT</span>
+  <span style="font-size:13px;color:var(--text-muted)">(首字超时)</span>
+  <span style="margin-left:8px"></span>
+  <span class="state state-red">FAILED</span>
+  <span style="font-size:13px;color:var(--text-muted)">(Agent 离线)</span>
+</div>
+
+<h3>5.3 Store（存储层）</h3>
+
+<pre><code>type Store interface {
+    CreateAgent(ctx context.Context, agent *model.Agent) error
+    UpdateAgent(ctx context.Context, agent *model.Agent) error
+    DeleteAgent(ctx context.Context, name string) error
+    GetAgent(ctx context.Context, name string) (*model.Agent, error)
+    ListAgents(ctx context.Context) ([]*model.Agent, error)
+    Close() error
+}</code></pre>
+
+<h4>双方言实现</h4>
+<ul>
+  <li><code>SQLiteStore</code> — 使用 <code>modernc.org/sqlite</code>（纯 Go，无 CGO）</li>
+  <li><code>MySQLStore</code> — 使用 <code>go-sql-driver/mysql</code></li>
+  <li>通过配置文件切换，接口统一</li>
+</ul>
+
+<h4>数据库表（agents）</h4>
+<div class="schema-block">
+<table class="field-table">
+  <tr><td>id</td><td>int64, PK</td><td>自增主键</td></tr>
+  <tr><td>name</td><td>string, UNIQUE</td><td>Agent 唯一名称</td></tr>
+  <tr><td>type</td><td>string</td><td>Agent 类型（mcp / http）</td></tr>
+  <tr><td>url</td><td>string, nullable</td><td>Agent 服务地址（MCP Agent 可为空）</td></tr>
+  <tr><td>status</td><td>string</td><td>在线状态（connected / offline / unreachable）</td></tr>
+  <tr><td>agent_card_json</td><td>text</td><td>AgentCard JSON</td></tr>
+  <tr><td>skills_json</td><td>text</td><td>技能列表 JSON</td></tr>
+  <tr><td>error_message</td><td>string, nullable</td><td>最近错误信息</td></tr>
+  <tr><td>secret</td><td>string</td><td>幂等重注册密钥</td></tr>
+  <tr><td>connected_at</td><td>timestamp</td><td>最近连接时间</td></tr>
+  <tr><td>created_at / updated_at</td><td>timestamp</td><td>创建 / 更新时间</td></tr>
+</table>
+</div>
+
+<div class="callout">
+  <div class="callout-title">设计决策</div>
+  V1 不做 messages 表——不持久化消息内容或元数据。收件箱队列仅在内存 / 队列服务中暂存。
+</div>
+</div>
+
+<hr>
+
+<!-- ==================== Section 6 ==================== -->
+<div class="section" id="s6">
+<h2><span class="section-num">6</span>REST API</h2>
+
+<table>
+  <thead><tr><th>方法</th><th>路径</th><th>认证</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>GET</code></td><td><code>/health</code></td><td>—</td><td>平台健康检查</td></tr>
+    <tr><td><code>POST</code></td><td><code>/api/agents</code></td><td>token</td><td>注册 Agent</td></tr>
+    <tr><td><code>GET</code></td><td><code>/api/agents</code></td><td>—</td><td>列出所有 Agent</td></tr>
+    <tr><td><code>GET</code></td><td><code>/api/agents/{name}</code></td><td>—</td><td>获取 Agent 详情</td></tr>
+    <tr><td><code>DELETE</code></td><td><code>/api/agents/{name}</code></td><td>token</td><td>注销 Agent</td></tr>
+    <tr><td><code>POST</code></td><td><code>/api/agents/{name}/heartbeat</code></td><td>—</td><td>心跳续约</td></tr>
+    <tr><td><code>POST</code></td><td><code>/agent/{name}</code></td><td>—</td><td>发送 A2A 消息（入队收件箱，SSE 流式返回响应）</td></tr>
+    <tr><td><code>GET</code></td><td><code>/api/events</code></td><td>—</td><td>SSE 事件流（Agent 上下线通知）</td></tr>
+    <tr><td><code>GET</code></td><td><code>/.well-known/agent-card/{name}</code></td><td>—</td><td>获取 AgentCard</td></tr>
+  </tbody>
+</table>
+
+<h4>注册请求体</h4>
+<pre><code>{
+  "name": "my-agent",
+  "type": "mcp",
+  "url": "",
+  "port": 0,
+  "skills": [{"id": "search", "name": "Search", "description": "Web search"}],
+  "secret": "optional-secret"
+}</code></pre>
+
+<ul>
+  <li><code>type: "mcp"</code> — 无 URL，通过 MCP 收消息</li>
+  <li><code>type: "http"</code> — 有 URL，平台 HTTP 转发</li>
+</ul>
+
+<h4>认证方式</h4>
+<ul>
+  <li>需要 token 的接口：注册、注销</li>
+  <li>Header: <code>X-Admin-Token</code> 或 <code>Authorization: Bearer &lt;token&gt;</code></li>
+  <li>Token 从配置文件读取</li>
+</ul>
+</div>
+
+<hr>
+
+<!-- ==================== Section 7 ==================== -->
+<div class="section" id="s7">
+<h2><span class="section-num">7</span>MCP 服务</h2>
+
+<h3>7.1 连接流程</h3>
+<ol class="flow-steps">
+  <li><strong>建立 SSE 连接</strong>：<code>GET /mcp/sse</code>，平台返回 <code>endpoint</code> 事件（含 session_id）</li>
+  <li><strong>发送初始化</strong>：<code>POST /mcp/messages?session_id=xxx</code>，发送 <code>initialize</code> 请求</li>
+  <li><strong>协商能力</strong>：协议版本 <code>2024-11-05</code>，支持 tools + resources</li>
+  <li><strong>正常交互</strong>：调用 <code>tools/list</code>、<code>tools/call</code>、<code>resources/list</code>、<code>resources/read</code></li>
+</ol>
+
+<h3>7.2 MCP 工具</h3>
+<table>
+  <thead><tr><th>工具</th><th>参数</th><th>返回</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>list_agents</code></td><td>—</td><td>Agent 列表</td><td>列出所有已注册 Agent</td></tr>
+    <tr><td><code>receive_message</code> <span class="badge badge-new">新增</span></td><td>—</td><td>message_id, from_agent, content</td><td>从收件箱拉取一条消息，阻塞等待直到有消息</td></tr>
+    <tr><td><code>reply_message</code> <span class="badge badge-new">新增</span></td><td>message_id, response</td><td>确认</td><td>回复指定消息，平台将响应推送给等待中的发送方</td></tr>
+    <tr><td><code>get_agent_info</code></td><td>agent_name</td><td>Agent 详情 JSON</td><td>获取 Agent 详情</td></tr>
+    <tr><td><code>heartbeat</code> <span class="badge badge-new">新增</span></td><td>—</td><td>确认</td><td>保活续约，防止被标记 offline</td></tr>
+    <tr><td><code>send_to_agent</code></td><td>agent_name, message</td><td>Agent 响应</td><td>向指定 Agent 发消息（内部调用代理逻辑）</td></tr>
+  </tbody>
+</table>
+
+<h3>7.3 MCP 资源</h3>
+<table>
+  <thead><tr><th>URI</th><th>类型</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>a2a://agents</code></td><td>application/json</td><td>所有 Agent 列表</td></tr>
+    <tr><td><code>a2a://agents/{name}</code></td><td>application/json</td><td>单个 Agent 详情</td></tr>
+  </tbody>
+</table>
+
+<h3>7.4 会话模式</h3>
+<div class="vs-grid">
+  <div class="vs-card">
+    <h5>有状态模式</h5>
+    <ul>
+      <li>通过 SSE 建立长连接</li>
+      <li>响应通过 SSE channel 推送</li>
+      <li>适合 MCP 客户端（Claude Desktop、Cursor）</li>
+    </ul>
+  </div>
+  <div class="vs-card">
+    <h5>无状态模式</h5>
+    <ul>
+      <li>直接 POST <code>/mcp/messages</code></li>
+      <li>响应作为 HTTP body 返回</li>
+      <li>适合脚本测试和 curl 调用</li>
+    </ul>
+  </div>
+</div>
+</div>
+
+<hr>
+
+<!-- ==================== Section 8 ==================== -->
+<div class="section" id="s8">
+<h2><span class="section-num">8</span>Events &amp; Middleware</h2>
+
+<h3>8.1 SSE 广播事件</h3>
+<table>
+  <thead><tr><th>事件</th><th>触发条件</th></tr></thead>
+  <tbody>
+    <tr><td><code>agent.online</code></td><td>Agent 注册成功或心跳恢复</td></tr>
+    <tr><td><code>agent.offline</code></td><td>Agent 心跳超时或主动注销</td></tr>
+    <tr><td><code>agent.card_updated</code></td><td>AgentCard 更新</td></tr>
+    <tr><td><code>message.timeout</code></td><td>消息响应超时（首字超时 1min）</td></tr>
+  </tbody>
+</table>
+
+<h3>8.2 Middleware</h3>
+<table>
+  <thead><tr><th>中间件</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td>CORS</td><td>允许跨域请求</td></tr>
+    <tr><td>Auth</td><td>Token 认证（注册/注销接口）</td></tr>
+    <tr><td>RateLimit</td><td>全局限流 100 req/s + 每 IP 20 req/s</td></tr>
+    <tr><td>Logger</td><td>请求日志（method、path、status、duration）</td></tr>
+  </tbody>
+</table>
+</div>
+
+<hr>
+
+<!-- ==================== Section 9 ==================== -->
+<div class="section" id="s9">
+<h2><span class="section-num">9</span>配置</h2>
+
+<pre><code>Name: a2a-server
+Host: 0.0.0.0
+Port: 18090
+AdminToken: "${ADMIN_TOKEN}"
+
+DB:
+  Driver: sqlite          # sqlite | mysql
+  DataSource: "./data/a2a.db"
+
+Queue:
+  Type: beanstalkd        # beanstalkd | kafka
+  Beanstalkd:
+    Endpoint: "localhost:11300"
+
+Heartbeat:
+  TTL: 30s
+  CheckInterval: 10s
+
+Proxy:
+  FirstTokenTimeout: 60s  # 首字超时
+  MaxTimeout: 0s          # 总超时（0 = 不限制）
+
+Log:
+  Mode: console
+  Level: info</code></pre>
+</div>
+
+<hr>
+
+<!-- ==================== Section 10 ==================== -->
+<div class="section" id="s10">
+<h2><span class="section-num">10</span>与原型的关系</h2>
+
+<p>当前仓库（<code>a2a-platform-go</code>）是功能完整的调研原型。新项目 <code>a2a-server</code> 从原型中选择性复用和重写。</p>
+
+<div class="card-grid">
+  <div class="card" style="border-left: 3px solid var(--green);">
+    <div class="card-title" style="color:var(--green);">复用</div>
+    <ul style="font-size:14px;margin:0">
+      <li>MCP 协议实现（SSE 传输、JSON-RPC 解析）</li>
+      <li>SSE 事件广播器</li>
+      <li>数据模型定义</li>
+      <li>Store 双方言实现（SQLite / MySQL）</li>
+    </ul>
+  </div>
+  <div class="card" style="border-left: 3px solid var(--blue);">
+    <div class="card-title" style="color:var(--blue);">重写</div>
+    <ul style="font-size:14px;margin:0">
+      <li>注册表（go-zero 风格，内存 map）</li>
+      <li>消息代理（收件箱队列模型）</li>
+      <li>API 层（go-zero handler）</li>
+      <li>中间件（go-zero middleware）</li>
+    </ul>
+  </div>
+  <div class="card" style="border-left: 3px solid var(--purple);">
+    <div class="card-title" style="color:var(--purple);">新增</div>
+    <ul style="font-size:14px;margin:0">
+      <li>Inbox 收件箱（go-queue 封装）</li>
+      <li>MCP receive_message 工具</li>
+      <li>MCP reply_message 工具</li>
+      <li>MCP heartbeat 保活工具</li>
+    </ul>
+  </div>
+  <div class="card" style="border-left: 3px solid var(--red);">
+    <div class="card-title" style="color:var(--red);">移除</div>
+    <ul style="font-size:14px;margin:0">
+      <li>内建 Agent 引擎（engine/）</li>
+      <li>Bridge Agent（bridge/）</li>
+      <li>LLM Provider（llm/）</li>
+      <li>聊天前端（web/admin/）</li>
+      <li>会话管理、追踪系统、子代理</li>
+    </ul>
+  </div>
+</div>
+
+</div>
+
+</div>
+</body>
+</html>

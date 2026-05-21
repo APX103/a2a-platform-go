@@ -581,6 +581,9 @@ func loadBuiltinAgents(svcCtx *svc.ServiceContext) {
 			// Register spawn_agent as a dynamic tool
 			tools.RegisterDynamicTools([]model.BuiltinTool{tools.NewSpawnAgentTool(se)})
 			slog.Info("Registered spawn_agent tool", "agent", cfg.Name)
+			// Register Task System tools
+			tools.RegisterDynamicTools(tools.NewTaskTools(svcCtx.TaskItems))
+			slog.Info("Registered task system tools", "agent", cfg.Name)
 		}
 	}
 }

@@ -143,13 +143,13 @@ type RegisterAgentResp struct {
 }
 
 type ListTasksResp struct {
-	Items []TaskItem `json:"items"`
-	Total int64      `json:"total"`
-	Page  int        `json:"page"`
-	Size  int        `json:"size"`
+	Items []TaskListItem `json:"items"`
+	Total int64          `json:"total"`
+	Page  int            `json:"page"`
+	Size  int            `json:"size"`
 }
 
-type TaskItem struct {
+type TaskListItem struct {
 	LocalTaskId string  `json:"local_task_id"`
 	DisplayId   string  `json:"display_id"`
 	AgentName   string  `json:"agent_name"`

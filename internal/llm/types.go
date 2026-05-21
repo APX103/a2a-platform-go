@@ -26,6 +26,7 @@ type ToolDef struct {
 	Name        string                 `json:"name"`
 	Description string                 `json:"description"`
 	InputSchema map[string]interface{} `json:"input_schema"`
+	IsReadOnly  bool                   `json:"is_read_only,omitempty"` // true = safe for concurrent execution
 }
 
 type ToolCall struct {

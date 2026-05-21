@@ -27,6 +27,7 @@ func GetBuiltinTools() []model.BuiltinTool {
 				{Name: "timeout", Type: "number", Description: "Request timeout in seconds", Required: false},
 			},
 			Execute: executeFetchURL,
+			IsReadOnly: false, // can write via POST/PUT/DELETE
 		},
 		{
 			Name:        "read_file",
@@ -37,6 +38,7 @@ func GetBuiltinTools() []model.BuiltinTool {
 				{Name: "limit", Type: "number", Description: "Maximum lines to read", Required: false},
 			},
 			Execute: executeReadFile,
+			IsReadOnly: true,
 		},
 		{
 			Name:        "write_file",
@@ -47,6 +49,7 @@ func GetBuiltinTools() []model.BuiltinTool {
 				{Name: "append", Type: "boolean", Description: "Append to existing file instead of overwrite", Required: false},
 			},
 			Execute: executeWriteFile,
+			IsReadOnly: false,
 		},
 		{
 			Name:        "list_directory",
@@ -56,6 +59,7 @@ func GetBuiltinTools() []model.BuiltinTool {
 				{Name: "recursive", Type: "boolean", Description: "List recursively", Required: false},
 			},
 			Execute: executeListDirectory,
+			IsReadOnly: true,
 		},
 		{
 			Name:        "tool_search",
@@ -64,6 +68,7 @@ func GetBuiltinTools() []model.BuiltinTool {
 				{Name: "name", Type: "string", Description: "Pattern to search for", Required: true},
 			},
 			Execute: executeToolSearch,
+			IsReadOnly: true,
 		},
 	}
 }

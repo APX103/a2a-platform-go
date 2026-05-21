@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
-import type { ChatMessage, ContextListItem, ToolCall, ThinkingBlock, SubagentSession } from '../types/chat';
+import type { ChatMessage, ContextListItem, ToolCall, ThinkingBlock, TaskSession } from '../types/chat';
 
 interface ChatState {
   // Current chat
@@ -14,7 +14,7 @@ interface ChatState {
   contexts: ContextListItem[];
 
   // Subagents keyed by tool_call_id
-  subagents: Record<string, SubagentSession>;
+  subagents: Record<string, TaskSession>;
 
   // Actions
   setAgentName: (name: string) => void;
@@ -25,8 +25,8 @@ interface ChatState {
   setStreaming: (isStreaming: boolean) => void;
   setError: (error: string | null) => void;
   setContexts: (contexts: ContextListItem[]) => void;
-  setSubagent: (toolCallId: string, subagent: SubagentSession) => void;
-  updateSubagent: (toolCallId: string, updates: Partial<SubagentSession>) => void;
+  setSubagent: (toolCallId: string, subagent: TaskSession) => void;
+  updateSubagent: (toolCallId: string, updates: Partial<TaskSession>) => void;
   appendToLastMessage: (content: string, field: 'content' | 'reasoning_content') => void;
   addToolCall: (taskId: string, toolCall: ToolCall) => void;
   updateToolCall: (taskId: string, toolId: string, updates: Partial<ToolCall>) => void;
