@@ -93,7 +93,12 @@ func (h *GetContextHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	msgValues := make([]model.Message, 0, len(messages))
 	for _, m := range messages {
-		msgValues = append(msgValues, *m)
+		msg := *m
+		// Normalize internal 'agent' role to standard 'assistant' for frontend
+		if msg.Role == "agent" {
+			msg.Role = "assistant"
+		}
+		msgValues = append(msgValues, msg)
 	}
 
 	okJSON(w, model.ContextDetailResp{
