@@ -335,9 +335,10 @@ func (e *Engine) runLoop(
 
 		// Record assistant message with tool calls
 		assistantMsg := llm.ChatMessage{
-			Role:      "assistant",
-			Content:   textBuf.String(),
-			ToolCalls: toolCalls,
+			Role:             "assistant",
+			Content:          textBuf.String(),
+			ReasoningContent: reasoningBuf.String(),
+			ToolCalls:        toolCalls,
 		}
 		messages = append(messages, assistantMsg)
 

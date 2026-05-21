@@ -185,16 +185,16 @@ export function useChat(agentName: string) {
                   const errorMsg = data.status.message as string || 'Task failed';
                   setError(errorMsg);
                   // Mark the last assistant message with the error so it's not just empty
-                  const messages = useChatStore.getState().messages;
-                  const lastAssistantIdx = messages.map((m) => m.role).lastIndexOf('assistant');
-                  if (lastAssistantIdx !== -1) {
-                    const assistantMsg = messages[lastAssistantIdx];
-                    if (!assistantMsg.content) {
-                      useChatStore.getState().updateMessage(assistantMsg.task_id || taskId, {
-                        content: `⚠️ ${errorMsg}`,
-                      });
-                    }
-                  }
+                  // Use setState directly to avoid updateMessage matching user msg by task_id
+                  useChatStore.setState((state) => {
+                    const lastAssistantIdx = state.messages.map((m) => m.role).lastIndexOf('assistant');
+                    if (lastAssistantIdx === -1) return state;
+                    const assistantMsg = state.messages[lastAssistantIdx];
+                    if (assistantMsg.content) return state;
+                    const msgs = [...state.messages];
+                    msgs[lastAssistantIdx] = { ...assistantMsg, content: `⚠️ ${errorMsg}` };
+                    return { messages: msgs };
+                  });
                 }
                 break;
 

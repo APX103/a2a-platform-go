@@ -71,7 +71,11 @@ func (p *OpenAIProvider) buildRequest(req *ChatRequest) map[string]interface{} {
 			"role":    m.Role,
 			"content": m.Content,
 		}
-		if m.ReasoningContent != "" {
+		// MiMo API requires reasoning_content on assistant messages with tool_calls
+		// (even if empty), otherwise it returns 400.
+		if m.Role == "assistant" && len(m.ToolCalls) > 0 {
+			msg["reasoning_content"] = m.ReasoningContent
+		} else if m.ReasoningContent != "" {
 			msg["reasoning_content"] = m.ReasoningContent
 		}
 		if len(m.ToolCalls) > 0 {
