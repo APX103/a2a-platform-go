@@ -109,6 +109,9 @@ func executeSendToAgent(args map[string]any) (string, error) {
 		return "", fmt.Errorf("message is required")
 	}
 	sourceAgent, _ := args["_source_agent"].(string)
+	rootContextId, _ := args["_root_context_id"].(string)
+	parentTaskId, _ := args["_parent_task_id"].(string)
+	parentToolCallId, _ := args["_parent_tool_call_id"].(string)
 
 	reqBody := map[string]interface{}{
 		"jsonrpc": "2.0",
@@ -135,6 +138,15 @@ func executeSendToAgent(args map[string]any) (string, error) {
 	req.Header.Set("Content-Type", "application/json")
 	if sourceAgent != "" {
 		req.Header.Set("X-A2A-Source-Agent", sourceAgent)
+	}
+	if rootContextId != "" {
+		req.Header.Set("X-A2A-Root-Context-Id", rootContextId)
+	}
+	if parentTaskId != "" {
+		req.Header.Set("X-A2A-Parent-Task-Id", parentTaskId)
+	}
+	if parentToolCallId != "" {
+		req.Header.Set("X-A2A-Parent-Tool-Call-Id", parentToolCallId)
 	}
 	resp, err := client.Do(req)
 	if err != nil {

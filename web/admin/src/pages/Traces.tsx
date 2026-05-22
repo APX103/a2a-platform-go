@@ -28,7 +28,7 @@ export default function Traces() {
     <div className="p-8 max-w-5xl">
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-lg font-semibold">Traces</h2>
-        <span className="text-xs text-[var(--text-tertiary)]">{contexts.length} sessions</span>
+        <span className="text-xs text-[var(--text-tertiary)]">{contexts.length} root contexts</span>
       </div>
 
       {error && (
@@ -38,13 +38,13 @@ export default function Traces() {
       )}
 
       {loading ? (
-        <div className="text-sm text-[var(--text-tertiary)]">Loading trace sessions...</div>
+        <div className="text-sm text-[var(--text-tertiary)]">Loading root contexts...</div>
       ) : (
         <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg overflow-hidden">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-[var(--border)]">
-                <th className="text-left px-4 py-3 text-xs font-medium text-[var(--text-tertiary)] uppercase tracking-wider">Context</th>
+                <th className="text-left px-4 py-3 text-xs font-medium text-[var(--text-tertiary)] uppercase tracking-wider">Root Context</th>
                 <th className="text-left px-4 py-3 text-xs font-medium text-[var(--text-tertiary)] uppercase tracking-wider">Events</th>
                 <th className="text-left px-4 py-3 text-xs font-medium text-[var(--text-tertiary)] uppercase tracking-wider">Agents</th>
                 <th className="text-left px-4 py-3 text-xs font-medium text-[var(--text-tertiary)] uppercase tracking-wider">Last Active</th>
@@ -53,7 +53,7 @@ export default function Traces() {
             <tbody className="divide-y divide-[var(--border)]">
               {contexts.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="px-4 py-6 text-center text-[var(--text-tertiary)]">No trace sessions found</td>
+                  <td colSpan={4} className="px-4 py-6 text-center text-[var(--text-tertiary)]">No root contexts found</td>
                 </tr>
               ) : (
                 contexts.map(ctx => (

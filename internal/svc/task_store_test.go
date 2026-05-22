@@ -41,6 +41,128 @@ func TestTaskStoreRecordsSourceAndTargetAgents(t *testing.T) {
 	}
 }
 
+func TestTaskStoreRecordsRootAndParentLineage(t *testing.T) {
+	db := setupRegistryTestDB(t)
+	store := NewTaskStore(db)
+
+	root := "root-context"
+	parent := "parent-task"
+	tool := "tool-call"
+	task := &model.Task{
+		LocalTaskId:      "child-task",
+		TargetAgent:      "mi-2",
+		AgentName:        "mi-2",
+		ContextId:        ptrString("child-context"),
+		RootContextId:    &root,
+		ParentTaskId:     &parent,
+		ParentToolCallId: &tool,
+		State:            "PENDING",
+	}
+	if err := store.Create(task); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	got, err := store.Get("child-task")
+	if err != nil {
+		t.Fatalf("get task: %v", err)
+	}
+	if got.RootContextId == nil || *got.RootContextId != root {
+		t.Fatalf("root_context_id = %v, want %q", got.RootContextId, root)
+	}
+	if got.ParentTaskId == nil || *got.ParentTaskId != parent {
+		t.Fatalf("parent_task_id = %v, want %q", got.ParentTaskId, parent)
+	}
+	if got.ParentToolCallId == nil || *got.ParentToolCallId != tool {
+		t.Fatalf("parent_tool_call_id = %v, want %q", got.ParentToolCallId, tool)
+	}
+
+	tasks, err := store.ListByRootContext(root)
+	if err != nil {
+		t.Fatalf("ListByRootContext: %v", err)
+	}
+	if len(tasks) != 1 || tasks[0].LocalTaskId != "child-task" {
+		t.Fatalf("root tasks = %#v, want child-task", tasks)
+	}
+}
+
+func TestTraceStoreRecordsRootLineage(t *testing.T) {
+	db := setupRegistryTestDB(t)
+	store := NewTraceStore(db)
+
+	ctx := "child-context"
+	root := "root-context"
+	parent := "parent-task"
+	target := "mi-2"
+	if err := store.Append(&model.TraceEvent{
+		TaskId:        "child-task",
+		ContextId:     &ctx,
+		RootContextId: &root,
+		ParentTaskId:  &parent,
+		EventType:     "send",
+		AgentName:     "mi-1",
+		TargetAgent:   &target,
+		DataJson:      "{}",
+	}); err != nil {
+		t.Fatalf("append trace: %v", err)
+	}
+
+	traces, err := store.GetByRootContext(root)
+	if err != nil {
+		t.Fatalf("GetByRootContext: %v", err)
+	}
+	if len(traces) != 1 {
+		t.Fatalf("traces len = %d, want 1", len(traces))
+	}
+	if traces[0].RootContextId == nil || *traces[0].RootContextId != root {
+		t.Fatalf("root_context_id = %v, want %q", traces[0].RootContextId, root)
+	}
+	if traces[0].ParentTaskId == nil || *traces[0].ParentTaskId != parent {
+		t.Fatalf("parent_task_id = %v, want %q", traces[0].ParentTaskId, parent)
+	}
+}
+
+func TestTraceStoreListContextsGroupsByRootContext(t *testing.T) {
+	db := setupRegistryTestDB(t)
+	store := NewTraceStore(db)
+
+	ctx1 := "child-context-1"
+	ctx2 := "child-context-2"
+	root := "root-context"
+	for _, item := range []struct {
+		taskId string
+		ctx    string
+		agent  string
+	}{
+		{taskId: "task-1", ctx: ctx1, agent: "mi-1"},
+		{taskId: "task-2", ctx: ctx2, agent: "mi-2"},
+	} {
+		if err := store.Append(&model.TraceEvent{
+			TaskId:        item.taskId,
+			ContextId:     &item.ctx,
+			RootContextId: &root,
+			EventType:     "send",
+			AgentName:     item.agent,
+			DataJson:      "{}",
+		}); err != nil {
+			t.Fatalf("append trace: %v", err)
+		}
+	}
+
+	contexts, err := store.ListContexts(10)
+	if err != nil {
+		t.Fatalf("ListContexts: %v", err)
+	}
+	if len(contexts) != 1 {
+		t.Fatalf("contexts len = %d, want 1: %#v", len(contexts), contexts)
+	}
+	if contexts[0].ContextId != root {
+		t.Fatalf("context id = %q, want root %q", contexts[0].ContextId, root)
+	}
+	if contexts[0].TraceCount != 2 {
+		t.Fatalf("trace count = %d, want 2", contexts[0].TraceCount)
+	}
+}
+
 func TestTaskStoreBackfillsTargetFromLegacyAgentName(t *testing.T) {
 	db := setupRegistryTestDB(t)
 	store := NewTaskStore(db)
@@ -62,6 +184,10 @@ func TestTaskStoreBackfillsTargetFromLegacyAgentName(t *testing.T) {
 	if got.TargetAgent != "legacy-agent" {
 		t.Fatalf("target_agent = %q, want legacy-agent", got.TargetAgent)
 	}
+}
+
+func ptrString(value string) *string {
+	return &value
 }
 
 func TestLegacyRepairInfersTaskSourceFromSendToAgentTrace(t *testing.T) {

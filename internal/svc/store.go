@@ -138,9 +138,13 @@ func (s *TaskStore) Create(t *model.Task) error {
 	if agentName == "" {
 		agentName = targetAgent
 	}
+	rootContextId := t.RootContextId
+	if rootContextId == nil && t.ContextId != nil && *t.ContextId != "" {
+		rootContextId = t.ContextId
+	}
 	_, err := s.db.Exec(
-		"INSERT INTO tasks (local_task_id, server_task_id, source_agent, target_agent, agent_name, context_id, state) VALUES (?, ?, ?, ?, ?, ?, ?)",
-		t.LocalTaskId, t.ServerTaskId, t.SourceAgent, targetAgent, agentName, t.ContextId, t.State,
+		"INSERT INTO tasks (local_task_id, server_task_id, source_agent, target_agent, agent_name, context_id, root_context_id, parent_task_id, parent_tool_call_id, state) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		t.LocalTaskId, t.ServerTaskId, t.SourceAgent, targetAgent, agentName, t.ContextId, rootContextId, t.ParentTaskId, t.ParentToolCallId, t.State,
 	)
 	return err
 }
@@ -165,11 +169,11 @@ func (s *TaskStore) Update(localTaskId string, fields map[string]interface{}) er
 
 func (s *TaskStore) Get(localTaskId string) (*model.Task, error) {
 	var t model.Task
-	var serverTaskId, sourceAgent, targetAgent, contextId sql.NullString
+	var serverTaskId, sourceAgent, targetAgent, contextId, rootContextId, parentTaskId, parentToolCallId sql.NullString
 	err := s.db.QueryRow(
-		"SELECT id, local_task_id, server_task_id, source_agent, target_agent, agent_name, context_id, state, created_at, updated_at FROM tasks WHERE local_task_id=?",
+		"SELECT id, local_task_id, server_task_id, source_agent, target_agent, agent_name, context_id, root_context_id, parent_task_id, parent_tool_call_id, state, created_at, updated_at FROM tasks WHERE local_task_id=?",
 		localTaskId,
-	).Scan(&t.Id, &t.LocalTaskId, &serverTaskId, &sourceAgent, &targetAgent, &t.AgentName, &contextId, &t.State, &t.CreatedAt, &t.UpdatedAt)
+	).Scan(&t.Id, &t.LocalTaskId, &serverTaskId, &sourceAgent, &targetAgent, &t.AgentName, &contextId, &rootContextId, &parentTaskId, &parentToolCallId, &t.State, &t.CreatedAt, &t.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -189,6 +193,15 @@ func (s *TaskStore) Get(localTaskId string) (*model.Task, error) {
 	}
 	if contextId.Valid {
 		t.ContextId = &contextId.String
+	}
+	if rootContextId.Valid {
+		t.RootContextId = &rootContextId.String
+	}
+	if parentTaskId.Valid {
+		t.ParentTaskId = &parentTaskId.String
+	}
+	if parentToolCallId.Valid {
+		t.ParentToolCallId = &parentToolCallId.String
 	}
 	return &t, nil
 }
@@ -235,7 +248,7 @@ func (s *TaskStore) ListByFilter(agentName, state, search, contextId string, con
 
 	// Query
 	offset := (page - 1) * size
-	querySQL := "SELECT id, local_task_id, server_task_id, source_agent, target_agent, agent_name, context_id, state, created_at, updated_at FROM tasks" +
+	querySQL := "SELECT id, local_task_id, server_task_id, source_agent, target_agent, agent_name, context_id, root_context_id, parent_task_id, parent_tool_call_id, state, created_at, updated_at FROM tasks" +
 		where + " ORDER BY created_at DESC LIMIT ? OFFSET ?"
 	queryArgs := append(args, size, offset)
 	rows, err := s.db.Query(querySQL, queryArgs...)
@@ -247,8 +260,8 @@ func (s *TaskStore) ListByFilter(agentName, state, search, contextId string, con
 	var result []*model.Task
 	for rows.Next() {
 		var t model.Task
-		var serverTaskId, sourceAgent, targetAgent, contextId sql.NullString
-		if err := rows.Scan(&t.Id, &t.LocalTaskId, &serverTaskId, &sourceAgent, &targetAgent, &t.AgentName, &contextId, &t.State, &t.CreatedAt, &t.UpdatedAt); err != nil {
+		var serverTaskId, sourceAgent, targetAgent, contextId, rootContextId, parentTaskId, parentToolCallId sql.NullString
+		if err := rows.Scan(&t.Id, &t.LocalTaskId, &serverTaskId, &sourceAgent, &targetAgent, &t.AgentName, &contextId, &rootContextId, &parentTaskId, &parentToolCallId, &t.State, &t.CreatedAt, &t.UpdatedAt); err != nil {
 			return nil, 0, err
 		}
 		if serverTaskId.Valid {
@@ -265,6 +278,15 @@ func (s *TaskStore) ListByFilter(agentName, state, search, contextId string, con
 		if contextId.Valid {
 			t.ContextId = &contextId.String
 		}
+		if rootContextId.Valid {
+			t.RootContextId = &rootContextId.String
+		}
+		if parentTaskId.Valid {
+			t.ParentTaskId = &parentTaskId.String
+		}
+		if parentToolCallId.Valid {
+			t.ParentToolCallId = &parentToolCallId.String
+		}
 		result = append(result, &t)
 	}
 	return result, total, nil
@@ -272,11 +294,11 @@ func (s *TaskStore) ListByFilter(agentName, state, search, contextId string, con
 
 func (s *TaskStore) GetByContext(contextId string) (*model.Task, error) {
 	var t model.Task
-	var serverTaskId, sourceAgent, targetAgent, ctxId sql.NullString
+	var serverTaskId, sourceAgent, targetAgent, ctxId, rootContextId, parentTaskId, parentToolCallId sql.NullString
 	err := s.db.QueryRow(
-		"SELECT id, local_task_id, server_task_id, source_agent, target_agent, agent_name, context_id, state, created_at, updated_at FROM tasks WHERE context_id=? ORDER BY updated_at DESC LIMIT 1",
+		"SELECT id, local_task_id, server_task_id, source_agent, target_agent, agent_name, context_id, root_context_id, parent_task_id, parent_tool_call_id, state, created_at, updated_at FROM tasks WHERE context_id=? ORDER BY updated_at DESC LIMIT 1",
 		contextId,
-	).Scan(&t.Id, &t.LocalTaskId, &serverTaskId, &sourceAgent, &targetAgent, &t.AgentName, &ctxId, &t.State, &t.CreatedAt, &t.UpdatedAt)
+	).Scan(&t.Id, &t.LocalTaskId, &serverTaskId, &sourceAgent, &targetAgent, &t.AgentName, &ctxId, &rootContextId, &parentTaskId, &parentToolCallId, &t.State, &t.CreatedAt, &t.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -297,7 +319,61 @@ func (s *TaskStore) GetByContext(contextId string) (*model.Task, error) {
 	if ctxId.Valid {
 		t.ContextId = &ctxId.String
 	}
+	if rootContextId.Valid {
+		t.RootContextId = &rootContextId.String
+	}
+	if parentTaskId.Valid {
+		t.ParentTaskId = &parentTaskId.String
+	}
+	if parentToolCallId.Valid {
+		t.ParentToolCallId = &parentToolCallId.String
+	}
 	return &t, nil
+}
+
+func (s *TaskStore) ListByRootContext(rootContextId string) ([]*model.Task, error) {
+	rows, err := s.db.Query(
+		"SELECT id, local_task_id, server_task_id, source_agent, target_agent, agent_name, context_id, root_context_id, parent_task_id, parent_tool_call_id, state, created_at, updated_at FROM tasks WHERE root_context_id=? ORDER BY created_at",
+		rootContextId,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []*model.Task
+	for rows.Next() {
+		var t model.Task
+		var serverTaskId, sourceAgent, targetAgent, contextId, rootCtxId, parentTaskId, parentToolCallId sql.NullString
+		if err := rows.Scan(&t.Id, &t.LocalTaskId, &serverTaskId, &sourceAgent, &targetAgent, &t.AgentName, &contextId, &rootCtxId, &parentTaskId, &parentToolCallId, &t.State, &t.CreatedAt, &t.UpdatedAt); err != nil {
+			return nil, err
+		}
+		if serverTaskId.Valid {
+			t.ServerTaskId = &serverTaskId.String
+		}
+		if sourceAgent.Valid {
+			t.SourceAgent = &sourceAgent.String
+		}
+		if targetAgent.Valid && targetAgent.String != "" {
+			t.TargetAgent = targetAgent.String
+		} else {
+			t.TargetAgent = t.AgentName
+		}
+		if contextId.Valid {
+			t.ContextId = &contextId.String
+		}
+		if rootCtxId.Valid {
+			t.RootContextId = &rootCtxId.String
+		}
+		if parentTaskId.Valid {
+			t.ParentTaskId = &parentTaskId.String
+		}
+		if parentToolCallId.Valid {
+			t.ParentToolCallId = &parentToolCallId.String
+		}
+		result = append(result, &t)
+	}
+	return result, rows.Err()
 }
 
 // NewTaskId generates a new UUID task ID.
@@ -447,14 +523,14 @@ func NewTraceStore(db *sql.DB) *TraceStore {
 
 func (s *TraceStore) Append(e *model.TraceEvent) error {
 	_, err := s.db.Exec(
-		"INSERT INTO traces (task_id, context_id, event_type, agent_name, target_agent, data_json, duration_ms) VALUES (?, ?, ?, ?, ?, ?, ?)",
-		e.TaskId, e.ContextId, e.EventType, e.AgentName, e.TargetAgent, e.DataJson, e.DurationMs,
+		"INSERT INTO traces (task_id, context_id, root_context_id, parent_task_id, event_type, agent_name, target_agent, data_json, duration_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		e.TaskId, e.ContextId, e.RootContextId, e.ParentTaskId, e.EventType, e.AgentName, e.TargetAgent, e.DataJson, e.DurationMs,
 	)
 	return err
 }
 
 func (s *TraceStore) GetByTask(taskId string) ([]*model.TraceEvent, error) {
-	rows, err := s.db.Query("SELECT id, task_id, context_id, timestamp, event_type, agent_name, target_agent, data_json, duration_ms FROM traces WHERE task_id=? ORDER BY timestamp", taskId)
+	rows, err := s.db.Query("SELECT id, task_id, context_id, root_context_id, parent_task_id, timestamp, event_type, agent_name, target_agent, data_json, duration_ms FROM traces WHERE task_id=? ORDER BY timestamp", taskId)
 	if err != nil {
 		return nil, err
 	}
@@ -462,13 +538,19 @@ func (s *TraceStore) GetByTask(taskId string) ([]*model.TraceEvent, error) {
 	var result []*model.TraceEvent
 	for rows.Next() {
 		var e model.TraceEvent
-		var contextId, targetAgent sql.NullString
+		var contextId, rootContextId, parentTaskId, targetAgent sql.NullString
 		var durationMs sql.NullInt64
-		if err := rows.Scan(&e.Id, &e.TaskId, &contextId, &e.Timestamp, &e.EventType, &e.AgentName, &targetAgent, &e.DataJson, &durationMs); err != nil {
+		if err := rows.Scan(&e.Id, &e.TaskId, &contextId, &rootContextId, &parentTaskId, &e.Timestamp, &e.EventType, &e.AgentName, &targetAgent, &e.DataJson, &durationMs); err != nil {
 			return nil, err
 		}
 		if contextId.Valid {
 			e.ContextId = &contextId.String
+		}
+		if rootContextId.Valid {
+			e.RootContextId = &rootContextId.String
+		}
+		if parentTaskId.Valid {
+			e.ParentTaskId = &parentTaskId.String
 		}
 		if targetAgent.Valid {
 			e.TargetAgent = &targetAgent.String
@@ -482,7 +564,7 @@ func (s *TraceStore) GetByTask(taskId string) ([]*model.TraceEvent, error) {
 }
 
 func (s *TraceStore) GetByAgent(agentName string, limit int) ([]*model.TraceEvent, error) {
-	rows, err := s.db.Query("SELECT id, task_id, context_id, timestamp, event_type, agent_name, target_agent, data_json, duration_ms FROM traces WHERE agent_name=? ORDER BY timestamp DESC LIMIT ?", agentName, limit)
+	rows, err := s.db.Query("SELECT id, task_id, context_id, root_context_id, parent_task_id, timestamp, event_type, agent_name, target_agent, data_json, duration_ms FROM traces WHERE agent_name=? ORDER BY timestamp DESC LIMIT ?", agentName, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -494,9 +576,9 @@ func (s *TraceStore) GetByContext(contextId string) ([]*model.TraceEvent, error)
 	var rows *sql.Rows
 	var err error
 	if contextId == "" {
-		rows, err = s.db.Query("SELECT id, task_id, context_id, timestamp, event_type, agent_name, target_agent, data_json, duration_ms FROM traces WHERE context_id IS NULL ORDER BY timestamp")
+		rows, err = s.db.Query("SELECT id, task_id, context_id, root_context_id, parent_task_id, timestamp, event_type, agent_name, target_agent, data_json, duration_ms FROM traces WHERE context_id IS NULL ORDER BY timestamp")
 	} else {
-		rows, err = s.db.Query("SELECT id, task_id, context_id, timestamp, event_type, agent_name, target_agent, data_json, duration_ms FROM traces WHERE context_id=? ORDER BY timestamp", contextId)
+		rows, err = s.db.Query("SELECT id, task_id, context_id, root_context_id, parent_task_id, timestamp, event_type, agent_name, target_agent, data_json, duration_ms FROM traces WHERE context_id=? ORDER BY timestamp", contextId)
 	}
 	if err != nil {
 		return nil, err
@@ -507,9 +589,18 @@ func (s *TraceStore) GetByContext(contextId string) ([]*model.TraceEvent, error)
 
 func (s *TraceStore) ListRecent(limit int) ([]*model.TraceEvent, error) {
 	rows, err := s.db.Query(
-		"SELECT id, task_id, context_id, timestamp, event_type, agent_name, target_agent, data_json, duration_ms FROM traces ORDER BY timestamp DESC LIMIT ?",
+		"SELECT id, task_id, context_id, root_context_id, parent_task_id, timestamp, event_type, agent_name, target_agent, data_json, duration_ms FROM traces ORDER BY timestamp DESC LIMIT ?",
 		limit,
 	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanTraces(rows)
+}
+
+func (s *TraceStore) GetByRootContext(rootContextId string) ([]*model.TraceEvent, error) {
+	rows, err := s.db.Query("SELECT id, task_id, context_id, root_context_id, parent_task_id, timestamp, event_type, agent_name, target_agent, data_json, duration_ms FROM traces WHERE root_context_id=? ORDER BY timestamp", rootContextId)
 	if err != nil {
 		return nil, err
 	}
@@ -520,12 +611,12 @@ func (s *TraceStore) ListRecent(limit int) ([]*model.TraceEvent, error) {
 func (s *TraceStore) ListContexts(limit int) ([]*model.TraceContextSummary, error) {
 	rows, err := s.db.Query(
 		`SELECT 
-			COALESCE(context_id, '') as context_id,
+			COALESCE(root_context_id, context_id, '') as context_id,
 			COUNT(*) as trace_count,
 			MAX(timestamp) as last_active,
 			GROUP_CONCAT(DISTINCT agent_name) as agents
 		FROM traces
-		GROUP BY COALESCE(context_id, '')
+		GROUP BY COALESCE(root_context_id, context_id, '')
 		ORDER BY last_active DESC
 		LIMIT ?`,
 		limit,
@@ -589,13 +680,19 @@ func scanTraces(rows *sql.Rows) ([]*model.TraceEvent, error) {
 	var result []*model.TraceEvent
 	for rows.Next() {
 		var e model.TraceEvent
-		var contextId, targetAgent sql.NullString
+		var contextId, rootContextId, parentTaskId, targetAgent sql.NullString
 		var durationMs sql.NullInt64
-		if err := rows.Scan(&e.Id, &e.TaskId, &contextId, &e.Timestamp, &e.EventType, &e.AgentName, &targetAgent, &e.DataJson, &durationMs); err != nil {
+		if err := rows.Scan(&e.Id, &e.TaskId, &contextId, &rootContextId, &parentTaskId, &e.Timestamp, &e.EventType, &e.AgentName, &targetAgent, &e.DataJson, &durationMs); err != nil {
 			return nil, err
 		}
 		if contextId.Valid {
 			e.ContextId = &contextId.String
+		}
+		if rootContextId.Valid {
+			e.RootContextId = &rootContextId.String
+		}
+		if parentTaskId.Valid {
+			e.ParentTaskId = &parentTaskId.String
 		}
 		if targetAgent.Valid {
 			e.TargetAgent = &targetAgent.String

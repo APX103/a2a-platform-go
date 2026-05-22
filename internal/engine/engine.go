@@ -44,10 +44,17 @@ type BuiltinAgent struct {
 	Tools      []llm.ToolDef
 }
 
+type ToolExecutionContext struct {
+	SourceAgent      string
+	RootContextId    string
+	ParentTaskId     string
+	ParentToolCallId string
+}
+
 type Engine struct {
 	agents         map[string]*BuiltinAgent
 	mu             sync.RWMutex
-	callTool       func(agent *BuiltinAgent, name string, arguments string) (string, error)
+	callTool       func(agent *BuiltinAgent, name string, arguments string, execCtx ToolExecutionContext) (string, error)
 	subagentEngine *tools.SubagentEngine
 }
 
@@ -195,6 +202,7 @@ func (e *Engine) HandleRequest(
 	agentName string,
 	userText string,
 	contextId string,
+	rootContextId string,
 	taskId string,
 	deps *Deps,
 ) {
@@ -234,7 +242,7 @@ func (e *Engine) HandleRequest(
 	})
 
 	// Run the LLM + tool loop
-	finalText, err := e.runLoop(ctx, agent, history, w, flusher, taskId, contextId, deps)
+	finalText, err := e.runLoop(ctx, agent, history, w, flusher, taskId, contextId, rootContextId, deps)
 	if err != nil {
 		slog.Error("Builtin agent error", "agent", agentName, "error", err)
 		writeSSE(w, flusher, "task.status", map[string]interface{}{
@@ -297,7 +305,7 @@ func (e *Engine) runLoop(
 	messages []llm.ChatMessage,
 	w http.ResponseWriter,
 	flusher http.Flusher,
-	taskId, contextId string,
+	taskId, contextId, rootContextId string,
 	deps *Deps,
 ) (string, error) {
 	cfg := agent.Config
@@ -427,7 +435,13 @@ func (e *Engine) runLoop(
 			roWg.Add(1)
 			go func(tcall llm.ToolCall) {
 				defer roWg.Done()
-				res, err := e.callToolWithTimeout(ctx, agent, tcall.Name, tcall.Arguments)
+				execCtx := ToolExecutionContext{
+					SourceAgent:      agent.Config.Name,
+					RootContextId:    rootContextId,
+					ParentTaskId:     taskId,
+					ParentToolCallId: tcall.ID,
+				}
+				res, err := e.callToolWithTimeout(ctx, agent, tcall.Name, tcall.Arguments, execCtx)
 				if err != nil {
 					res = fmt.Sprintf("Error: %s", err)
 				}
@@ -458,11 +472,12 @@ func (e *Engine) runLoop(
 
 			traceData, _ := json.Marshal(map[string]string{"tool": tc.Name, "arguments": tc.Arguments})
 			deps.RecordTrace(&model.TraceEvent{
-				TaskId:    taskId,
-				ContextId: &contextId,
-				EventType: "tool_call",
-				AgentName: agent.Config.Name,
-				DataJson:  string(traceData),
+				TaskId:        taskId,
+				ContextId:     &contextId,
+				RootContextId: stringPtr(rootContextId),
+				EventType:     "tool_call",
+				AgentName:     agent.Config.Name,
+				DataJson:      string(traceData),
 			})
 
 			var result string
@@ -505,7 +520,13 @@ func (e *Engine) runLoop(
 						})
 					}
 				} else {
-					result, err = e.callToolWithTimeout(ctx, agent, tc.Name, tc.Arguments)
+					execCtx := ToolExecutionContext{
+						SourceAgent:      agent.Config.Name,
+						RootContextId:    rootContextId,
+						ParentTaskId:     taskId,
+						ParentToolCallId: tc.ID,
+					}
+					result, err = e.callToolWithTimeout(ctx, agent, tc.Name, tc.Arguments, execCtx)
 					if err != nil {
 						result = fmt.Sprintf("Error: %s", err)
 					}
@@ -516,7 +537,13 @@ func (e *Engine) runLoop(
 				err = res.err
 			} else {
 				// Write tool: execute serially
-				result, err = e.callToolWithTimeout(ctx, agent, tc.Name, tc.Arguments)
+				execCtx := ToolExecutionContext{
+					SourceAgent:      agent.Config.Name,
+					RootContextId:    rootContextId,
+					ParentTaskId:     taskId,
+					ParentToolCallId: tc.ID,
+				}
+				result, err = e.callToolWithTimeout(ctx, agent, tc.Name, tc.Arguments, execCtx)
 				if err != nil {
 					result = fmt.Sprintf("Error: %s", err)
 				}
@@ -574,7 +601,7 @@ func (e *Engine) runLoop(
 	return "", fmt.Errorf("max tool rounds (%d) exceeded", maxRounds)
 }
 
-func (e *Engine) callToolWithTimeout(ctx context.Context, agent *BuiltinAgent, name string, arguments string) (string, error) {
+func (e *Engine) callToolWithTimeout(ctx context.Context, agent *BuiltinAgent, name string, arguments string, execCtx ToolExecutionContext) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, toolCallTimeout)
 	defer cancel()
 
@@ -584,7 +611,7 @@ func (e *Engine) callToolWithTimeout(ctx context.Context, agent *BuiltinAgent, n
 	}
 	done := make(chan result, 1)
 	go func() {
-		text, err := e.callTool(agent, name, arguments)
+		text, err := e.callTool(agent, name, arguments, execCtx)
 		done <- result{text: text, err: err}
 	}()
 
@@ -596,7 +623,7 @@ func (e *Engine) callToolWithTimeout(ctx context.Context, agent *BuiltinAgent, n
 	}
 }
 
-func (e *Engine) defaultCallTool(agent *BuiltinAgent, name string, arguments string) (string, error) {
+func (e *Engine) defaultCallTool(agent *BuiltinAgent, name string, arguments string, execCtx ToolExecutionContext) (string, error) {
 	// Check MCP tools first
 	for _, c := range agent.MCPClients {
 		for _, t := range c.Tools {
@@ -622,7 +649,19 @@ func (e *Engine) defaultCallTool(agent *BuiltinAgent, name string, arguments str
 			if args == nil {
 				args = map[string]any{}
 			}
-			args["_source_agent"] = agent.Config.Name
+			args["_source_agent"] = execCtx.SourceAgent
+			if args["_source_agent"] == "" {
+				args["_source_agent"] = agent.Config.Name
+			}
+			if execCtx.RootContextId != "" {
+				args["_root_context_id"] = execCtx.RootContextId
+			}
+			if execCtx.ParentTaskId != "" {
+				args["_parent_task_id"] = execCtx.ParentTaskId
+			}
+			if execCtx.ParentToolCallId != "" {
+				args["_parent_tool_call_id"] = execCtx.ParentToolCallId
+			}
 			result, err := tool.Execute(args)
 			if err != nil {
 				return fmt.Sprintf("Error: %v", err), err
@@ -632,6 +671,13 @@ func (e *Engine) defaultCallTool(agent *BuiltinAgent, name string, arguments str
 	}
 
 	return "", fmt.Errorf("tool %q not found", name)
+}
+
+func stringPtr(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
 }
 
 func writeSSE(w http.ResponseWriter, flusher http.Flusher, event string, data interface{}) {

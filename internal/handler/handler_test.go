@@ -69,3 +69,36 @@ func TestApplyContextModeToRPC_ContextInjectsContextId(t *testing.T) {
 		t.Fatalf("injected contextId = %q, want %q", got, *contextId)
 	}
 }
+
+func TestResolveRootContextId_HeaderWins(t *testing.T) {
+	rpcReq := map[string]interface{}{
+		"params": map[string]interface{}{
+			"rootContextId": "params-root",
+			"contextId":     "ctx-1",
+		},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/agent/test", nil)
+	req.Header.Set("X-A2A-Root-Context-Id", "header-root")
+	ctx := "ctx-1"
+
+	root := resolveRootContextId(req, rpcReq, &ctx, "")
+	if root == nil || *root != "header-root" {
+		t.Fatalf("root = %v, want header-root", root)
+	}
+}
+
+func TestResolveRootContextId_FallsBackToOriginalContextForStateless(t *testing.T) {
+	rpcReq := map[string]interface{}{
+		"params": map[string]interface{}{
+			"contextId": "ui-context",
+		},
+	}
+	originalContextId := getRPCStringParam(rpcReq, "contextId")
+	contextId := applyContextModeToRPC(rpcReq, model.ContextModeStateless)
+	req := httptest.NewRequest(http.MethodPost, "/agent/test", nil)
+
+	root := resolveRootContextId(req, rpcReq, contextId, originalContextId)
+	if root == nil || *root != "ui-context" {
+		t.Fatalf("root = %v, want ui-context", root)
+	}
+}

@@ -150,7 +150,9 @@ func migrate(db *sql.DB) {
 		}
 	}
 	ensureTaskDirectionColumns(db)
+	ensureContextLineageColumns(db)
 	repairLegacyTaskSourcesFromToolCalls(db)
+	repairLegacyContextLineageFromToolCalls(db)
 	ensureMessageDirectionColumns(db)
 	backfillMessageDirections(db)
 }
@@ -196,6 +198,42 @@ func ensureMessageDirectionColumns(db *sql.DB) {
 			"ALTER TABLE messages ADD COLUMN recipient_agent TEXT",
 			"CREATE INDEX IF NOT EXISTS idx_messages_sender_agent ON messages(sender_agent)",
 			"CREATE INDEX IF NOT EXISTS idx_messages_recipient_agent ON messages(recipient_agent)",
+		}
+	}
+	for _, stmt := range statements {
+		if _, err := db.Exec(stmt); err != nil {
+			slog.Debug("Migration note", "statement", stmt, "error", err)
+		}
+	}
+}
+
+func ensureContextLineageColumns(db *sql.DB) {
+	statements := []string{}
+	if DBDriver == "mysql" {
+		statements = []string{
+			"ALTER TABLE tasks ADD COLUMN root_context_id VARCHAR(64)",
+			"ALTER TABLE tasks ADD COLUMN parent_task_id VARCHAR(64)",
+			"ALTER TABLE tasks ADD COLUMN parent_tool_call_id VARCHAR(128)",
+			"UPDATE tasks SET root_context_id = context_id WHERE root_context_id IS NULL AND context_id IS NOT NULL",
+			"CREATE INDEX idx_tasks_root_context_id ON tasks(root_context_id)",
+			"CREATE INDEX idx_tasks_parent_task_id ON tasks(parent_task_id)",
+			"ALTER TABLE traces ADD COLUMN root_context_id VARCHAR(64)",
+			"ALTER TABLE traces ADD COLUMN parent_task_id VARCHAR(64)",
+			"UPDATE traces SET root_context_id = context_id WHERE root_context_id IS NULL AND context_id IS NOT NULL",
+			"CREATE INDEX idx_traces_root_context_id ON traces(root_context_id)",
+		}
+	} else {
+		statements = []string{
+			"ALTER TABLE tasks ADD COLUMN root_context_id TEXT",
+			"ALTER TABLE tasks ADD COLUMN parent_task_id TEXT",
+			"ALTER TABLE tasks ADD COLUMN parent_tool_call_id TEXT",
+			"UPDATE tasks SET root_context_id = context_id WHERE root_context_id IS NULL AND context_id IS NOT NULL",
+			"CREATE INDEX IF NOT EXISTS idx_tasks_root_context_id ON tasks(root_context_id)",
+			"CREATE INDEX IF NOT EXISTS idx_tasks_parent_task_id ON tasks(parent_task_id)",
+			"ALTER TABLE traces ADD COLUMN root_context_id TEXT",
+			"ALTER TABLE traces ADD COLUMN parent_task_id TEXT",
+			"UPDATE traces SET root_context_id = context_id WHERE root_context_id IS NULL AND context_id IS NOT NULL",
+			"CREATE INDEX IF NOT EXISTS idx_traces_root_context_id ON traces(root_context_id)",
 		}
 	}
 	for _, stmt := range statements {
@@ -284,6 +322,144 @@ func repairLegacyTaskSourcesFromToolCalls(db *sql.DB) {
 			break
 		}
 	}
+}
+
+func repairLegacyContextLineageFromToolCalls(db *sql.DB) {
+	for i := 0; i < 10; i++ {
+		updated := repairLegacyContextLineagePass(db)
+		updated += propagateLegacyContextLineageRoots(db)
+		if updated == 0 {
+			return
+		}
+	}
+}
+
+func repairLegacyContextLineagePass(db *sql.DB) int {
+	rows, err := db.Query(`
+		SELECT task_id, COALESCE(root_context_id, context_id, ''), data_json, strftime('%Y-%m-%d %H:%M:%S', timestamp)
+		FROM traces
+		WHERE event_type='tool_call'
+		ORDER BY timestamp`)
+	if err != nil {
+		slog.Debug("Legacy context lineage repair trace query skipped", "error", err)
+		return 0
+	}
+	defer rows.Close()
+
+	type call struct {
+		parentTaskId  string
+		rootContextId string
+		targetAgent   string
+		message       string
+		timestamp     string
+	}
+	var calls []call
+	for rows.Next() {
+		var c call
+		var dataJSON sql.NullString
+		if err := rows.Scan(&c.parentTaskId, &c.rootContextId, &dataJSON, &c.timestamp); err != nil {
+			slog.Debug("Legacy context lineage repair trace row skipped", "error", err)
+			continue
+		}
+		if !dataJSON.Valid {
+			continue
+		}
+		targetAgent, message, ok := parseSendToAgentTrace(dataJSON.String)
+		if !ok || c.parentTaskId == "" || c.rootContextId == "" || targetAgent == "" || message == "" {
+			continue
+		}
+		c.targetAgent = targetAgent
+		c.message = message
+		calls = append(calls, c)
+	}
+
+	updated := 0
+	for _, call := range calls {
+		var childTaskId string
+		err := db.QueryRow(`
+			SELECT t.local_task_id
+			FROM tasks t
+			JOIN messages m ON m.task_id = t.local_task_id AND m.role='user'
+			WHERE COALESCE(NULLIF(t.target_agent, ''), t.agent_name)=?
+			  AND m.content=?
+			  AND (t.parent_task_id IS NULL OR t.parent_task_id='')
+			  AND t.local_task_id <> ?
+			  AND datetime(t.created_at) >= datetime(?)
+			ORDER BY t.created_at
+			LIMIT 1`,
+			call.targetAgent, call.message, call.parentTaskId, call.timestamp,
+		).Scan(&childTaskId)
+		if err == sql.ErrNoRows {
+			continue
+		}
+		if err != nil {
+			slog.Debug("Legacy context lineage repair child lookup skipped", "error", err)
+			continue
+		}
+
+		res, err := db.Exec(
+			"UPDATE tasks SET parent_task_id=?, root_context_id=? WHERE local_task_id=? AND (parent_task_id IS NULL OR parent_task_id='')",
+			call.parentTaskId, call.rootContextId, childTaskId,
+		)
+		if err != nil {
+			slog.Debug("Legacy context lineage repair task update skipped", "task", childTaskId, "error", err)
+			continue
+		}
+		affected, _ := res.RowsAffected()
+		if affected == 0 {
+			continue
+		}
+		_, _ = db.Exec(
+			"UPDATE traces SET parent_task_id=?, root_context_id=? WHERE task_id=?",
+			call.parentTaskId, call.rootContextId, childTaskId,
+		)
+		updated++
+	}
+	return updated
+}
+
+func propagateLegacyContextLineageRoots(db *sql.DB) int {
+	res, err := db.Exec(`
+		UPDATE tasks
+		SET root_context_id = (
+			SELECT p.root_context_id
+			FROM tasks p
+			WHERE p.local_task_id = tasks.parent_task_id
+		)
+		WHERE parent_task_id IS NOT NULL
+		  AND parent_task_id <> ''
+		  AND EXISTS (
+			SELECT 1
+			FROM tasks p
+			WHERE p.local_task_id = tasks.parent_task_id
+			  AND p.root_context_id IS NOT NULL
+			  AND p.root_context_id <> ''
+			  AND COALESCE(tasks.root_context_id, '') <> p.root_context_id
+		  )`)
+	if err != nil {
+		slog.Debug("Legacy context lineage root propagation skipped", "error", err)
+		return 0
+	}
+	affected, _ := res.RowsAffected()
+	if affected == 0 {
+		return 0
+	}
+	_, _ = db.Exec(`
+		UPDATE traces
+		SET root_context_id = (
+			SELECT t.root_context_id
+			FROM tasks t
+			WHERE t.local_task_id = traces.task_id
+		)
+		WHERE EXISTS (
+			SELECT 1
+			FROM tasks t
+			WHERE t.local_task_id = traces.task_id
+			  AND t.root_context_id IS NOT NULL
+			  AND t.root_context_id <> ''
+			  AND COALESCE(traces.root_context_id, '') <> t.root_context_id
+		)`)
+	return int(affected)
 }
 
 func parseSendToAgentTrace(dataJSON string) (string, string, bool) {
@@ -399,6 +575,9 @@ CREATE TABLE IF NOT EXISTS tasks (
 	target_agent VARCHAR(255),
 	agent_name VARCHAR(255) NOT NULL,
 	context_id VARCHAR(64),
+	root_context_id VARCHAR(64),
+	parent_task_id VARCHAR(64),
+	parent_tool_call_id VARCHAR(128),
 	state VARCHAR(32) NOT NULL DEFAULT 'PENDING',
 	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 	updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -406,6 +585,8 @@ CREATE TABLE IF NOT EXISTS tasks (
 	INDEX idx_tasks_source_agent (source_agent),
 	INDEX idx_tasks_target_agent (target_agent),
 	INDEX idx_context_id (context_id),
+	INDEX idx_tasks_root_context_id (root_context_id),
+	INDEX idx_tasks_parent_task_id (parent_task_id),
 	INDEX idx_state (state)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -432,6 +613,8 @@ CREATE TABLE IF NOT EXISTS traces (
 	id BIGINT AUTO_INCREMENT PRIMARY KEY,
 	task_id VARCHAR(64) NOT NULL,
 	context_id VARCHAR(64),
+	root_context_id VARCHAR(64),
+	parent_task_id VARCHAR(64),
 	timestamp TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP(3),
 	event_type VARCHAR(32) NOT NULL,
 	agent_name VARCHAR(255) NOT NULL,
@@ -439,6 +622,7 @@ CREATE TABLE IF NOT EXISTS traces (
 	data_json TEXT,
 	duration_ms BIGINT,
 	INDEX idx_task_id (task_id),
+	INDEX idx_traces_root_context_id (root_context_id),
 	INDEX idx_agent_name (agent_name)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -526,6 +710,9 @@ CREATE TABLE IF NOT EXISTS tasks (
 	target_agent TEXT,
 	agent_name TEXT NOT NULL,
 	context_id TEXT,
+	root_context_id TEXT,
+	parent_task_id TEXT,
+	parent_tool_call_id TEXT,
 	state TEXT NOT NULL DEFAULT 'PENDING',
 	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 	updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -535,6 +722,8 @@ CREATE INDEX IF NOT EXISTS idx_tasks_agent_name ON tasks(agent_name);
 CREATE INDEX IF NOT EXISTS idx_tasks_source_agent ON tasks(source_agent);
 CREATE INDEX IF NOT EXISTS idx_tasks_target_agent ON tasks(target_agent);
 CREATE INDEX IF NOT EXISTS idx_tasks_context_id ON tasks(context_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_root_context_id ON tasks(root_context_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_parent_task_id ON tasks(parent_task_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_state ON tasks(state);
 
 CREATE TABLE IF NOT EXISTS messages (
@@ -561,6 +750,8 @@ CREATE TABLE IF NOT EXISTS traces (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	task_id TEXT NOT NULL,
 	context_id TEXT,
+	root_context_id TEXT,
+	parent_task_id TEXT,
 	timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 	event_type TEXT NOT NULL,
 	agent_name TEXT NOT NULL,
@@ -570,6 +761,7 @@ CREATE TABLE IF NOT EXISTS traces (
 );
 
 CREATE INDEX IF NOT EXISTS idx_traces_task_id ON traces(task_id);
+CREATE INDEX IF NOT EXISTS idx_traces_root_context_id ON traces(root_context_id);
 CREATE INDEX IF NOT EXISTS idx_traces_agent_name ON traces(agent_name);
 
 CREATE TABLE IF NOT EXISTS contexts (

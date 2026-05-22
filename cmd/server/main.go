@@ -93,11 +93,13 @@ func main() {
 
 	// Task management
 	mux.HandleFunc("/api/tasks", handler.NewListTasksHandler(svcCtx).ServeHTTP)
+	mux.HandleFunc("/api/tasks/root/", makeTaskRootHandler(svcCtx))
 	mux.HandleFunc("/api/tasks/", makeTaskDetailHandler(svcCtx))
 
 	// Traces
 	mux.HandleFunc("/api/traces", handler.NewTraceHandler(svcCtx).ServeHTTP)
 	mux.HandleFunc("/api/traces/contexts", handler.NewTraceContextHandler(svcCtx).ServeHTTP)
+	mux.HandleFunc("/api/traces/root/", makeTraceRootHandler(svcCtx))
 	mux.HandleFunc("/api/traces/task/", makeTraceTaskHandler(svcCtx))
 	mux.HandleFunc("/api/traces/context/", makeTraceContextHandler(svcCtx))
 
@@ -281,11 +283,27 @@ func makeTaskDetailHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	}
 }
 
+func makeTaskRootHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		rootContextId := pathTail(r.URL.Path, "/api/tasks/root/")
+		r.Header.Set("X-Path-Param-RootContextId", rootContextId)
+		handler.NewListTasksByRootHandler(svcCtx).ServeHTTP(w, r)
+	}
+}
+
 func makeTraceTaskHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		taskId := pathTail(r.URL.Path, "/api/traces/task/")
 		r.Header.Set("X-Path-Param-TaskId", taskId)
 		handler.NewTraceHandler(svcCtx).ServeHTTP(w, r)
+	}
+}
+
+func makeTraceRootHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		rootContextId := pathTail(r.URL.Path, "/api/traces/root/")
+		r.Header.Set("X-Path-Param-RootContextId", rootContextId)
+		handler.NewTraceRootHandler(svcCtx).ServeHTTP(w, r)
 	}
 }
 

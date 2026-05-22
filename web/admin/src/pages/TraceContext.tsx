@@ -35,10 +35,11 @@ export default function TraceContext() {
   const load = (p = page) => {
     setLoading(true)
     setError('')
-    api.listTasks({ context_id: actualContextId, page: p, size: 20 })
+    api.listTasksByRoot(actualContextId)
       .then(data => {
-        setTasks(data.items || [])
-        setTotal(data.total || 0)
+        const items = Array.isArray(data) ? data : []
+        setTasks(items.slice((p - 1) * 20, p * 20))
+        setTotal(items.length)
       })
       .catch(err => setError(err instanceof Error ? err.message : 'Failed to load tasks'))
       .finally(() => setLoading(false))
@@ -56,7 +57,7 @@ export default function TraceContext() {
         </Link>
         <div className="flex items-center justify-between mt-2">
           <div>
-            <h2 className="text-lg font-semibold">Trace Session</h2>
+            <h2 className="text-lg font-semibold">Root Context</h2>
             <p className="mt-1 font-mono text-xs text-[var(--text-tertiary)]">{actualContextId || 'None'}</p>
           </div>
           <span className="text-xs text-[var(--text-tertiary)]">{total} tasks</span>

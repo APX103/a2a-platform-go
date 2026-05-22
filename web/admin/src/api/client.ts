@@ -50,6 +50,9 @@ export interface Task {
   agent_name: string;
   state: string;
   context_id?: string;
+  root_context_id?: string | null;
+  parent_task_id?: string | null;
+  parent_tool_call_id?: string | null;
   created_at: string;
   updated_at?: string;
 }
@@ -68,6 +71,8 @@ export interface Trace {
   id?: number;
   task_id?: string;
   context_id?: string;
+  root_context_id?: string | null;
+  parent_task_id?: string | null;
   agent_name?: string;
   target_agent?: string;
   event_type?: string;
@@ -155,8 +160,10 @@ export const api = {
     return request<TaskListResponse>(`/api/tasks${qs ? '?' + qs : ''}`);
   },
   getTask: (id: string) => request<TaskDetail>(`/api/tasks/${id}`),
+  listTasksByRoot: (rootContextId: string) => request<Task[]>(`/api/tasks/root/${rootContextId}`),
   listTraceContexts: () => request<TraceContextSummary[]>('/api/traces/contexts'),
   listTracesByContext: (contextId: string) => request<Trace[]>(`/api/traces/context/${contextId}`),
+  listTracesByRoot: (rootContextId: string) => request<Trace[]>(`/api/traces/root/${rootContextId}`),
 
   listBuiltinAgents: () => request<BuiltinAgent[]>('/api/builtin-agents'),
   createBuiltinAgent: (agent: CreateBuiltinAgentReq, token: string) =>

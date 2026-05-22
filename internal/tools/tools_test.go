@@ -1,7 +1,10 @@
 package tools
 
 import (
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -138,6 +141,55 @@ func TestToolSearch(t *testing.T) {
 	}
 	if !strings.Contains(result, "No tools found") {
 		t.Error("Should report no tools found")
+	}
+}
+
+func TestExecuteSendToAgentPropagatesRootAndParentHeaders(t *testing.T) {
+	var gotRoot, gotParentTask, gotParentTool, gotSource string
+	var forwardedContextId any
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotRoot = r.Header.Get("X-A2A-Root-Context-Id")
+		gotParentTask = r.Header.Get("X-A2A-Parent-Task-Id")
+		gotParentTool = r.Header.Get("X-A2A-Parent-Tool-Call-Id")
+		gotSource = r.Header.Get("X-A2A-Source-Agent")
+
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if params, ok := body["params"].(map[string]any); ok {
+			forwardedContextId = params["contextId"]
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintln(w, `data: {"type":"text.delta","text":"ok"}`)
+	}))
+	defer server.Close()
+
+	oldBaseURL := platformBaseURL
+	platformBaseURL = server.URL
+	t.Cleanup(func() { platformBaseURL = oldBaseURL })
+
+	result, err := executeSendToAgent(map[string]any{
+		"agent":                "mi-2",
+		"message":              "hello",
+		"_source_agent":        "mi-1",
+		"_root_context_id":     "root-1",
+		"_parent_task_id":      "task-1",
+		"_parent_tool_call_id": "tool-1",
+	})
+	if err != nil {
+		t.Fatalf("executeSendToAgent failed: %v", err)
+	}
+	if result != "ok" {
+		t.Fatalf("result = %q, want ok", result)
+	}
+	if gotSource != "mi-1" || gotRoot != "root-1" || gotParentTask != "task-1" || gotParentTool != "tool-1" {
+		t.Fatalf("headers source/root/parent/tool = %q/%q/%q/%q", gotSource, gotRoot, gotParentTask, gotParentTool)
+	}
+	if forwardedContextId != nil {
+		t.Fatalf("contextId was forwarded to child agent body: %#v", forwardedContextId)
 	}
 }
 

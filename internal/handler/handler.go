@@ -181,6 +181,7 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "invalid JSON", 400)
 		return
 	}
+	originalContextId := getRPCStringParam(rpcReq, "contextId")
 
 	contextMode := model.ContextModeContext
 	if h.svcCtx != nil && h.svcCtx.Registry != nil {
@@ -188,6 +189,9 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	contextId := applyContextModeToRPC(rpcReq, contextMode)
+	rootContextId := resolveRootContextId(r, rpcReq, contextId, originalContextId)
+	parentTaskId := resolveHeaderString(r, "X-A2A-Parent-Task-Id")
+	parentToolCallId := resolveHeaderString(r, "X-A2A-Parent-Tool-Call-Id")
 
 	// Re-marshal body with injected contextId for forwarding
 	newBody, err := json.Marshal(rpcReq)
@@ -204,12 +208,15 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		sourceAgent = "host"
 	}
 	task := &model.Task{
-		LocalTaskId: taskId,
-		SourceAgent: &sourceAgent,
-		TargetAgent: name,
-		AgentName:   name,
-		State:       "PENDING",
-		ContextId:   contextId,
+		LocalTaskId:      taskId,
+		SourceAgent:      &sourceAgent,
+		TargetAgent:      name,
+		AgentName:        name,
+		State:            "PENDING",
+		ContextId:        contextId,
+		RootContextId:    rootContextId,
+		ParentTaskId:     parentTaskId,
+		ParentToolCallId: parentToolCallId,
 	}
 	if err := h.svcCtx.Tasks.Create(task); err != nil {
 		jsonError(w, fmt.Sprintf("task create failed: %s", err), 500)
@@ -237,12 +244,14 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Record trace
 	sendTrace := &model.TraceEvent{
-		TaskId:      taskId,
-		ContextId:   contextId,
-		EventType:   "send",
-		AgentName:   sourceAgent,
-		TargetAgent: &name,
-		DataJson:    string(body),
+		TaskId:        taskId,
+		ContextId:     contextId,
+		RootContextId: rootContextId,
+		ParentTaskId:  parentTaskId,
+		EventType:     "send",
+		AgentName:     sourceAgent,
+		TargetAgent:   &name,
+		DataJson:      string(body),
 	}
 	h.svcCtx.Traces.Append(sendTrace)
 	if h.svcCtx.EventBus != nil {
@@ -264,7 +273,7 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return h.svcCtx.Messages.Append(m)
 			},
 		}
-		h.svcCtx.Engine.HandleRequest(r.Context(), w, name, userText, *contextId, taskId, deps)
+		h.svcCtx.Engine.HandleRequest(r.Context(), w, name, userText, stringValue(contextId), stringValue(rootContextId), taskId, deps)
 
 		// Record final agent response from the engine
 		// The engine already streamed SSE to the client; now record the final message
@@ -278,7 +287,7 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Check if this is a bridge agent
 	if bridgeAgent := h.svcCtx.BridgeRegistry.Get(name); bridgeAgent != nil {
 		h.svcCtx.Tasks.Update(taskId, map[string]interface{}{"state": "WORKING"})
-		bridgeAgent.HandleRequest(r.Context(), w, userText, taskId, *contextId)
+		bridgeAgent.HandleRequest(r.Context(), w, userText, taskId, stringValue(contextId))
 		h.svcCtx.Tasks.Update(taskId, map[string]interface{}{"state": "RESPONDED"})
 		if h.svcCtx.EventBus != nil {
 			h.svcCtx.EventBus.Task("update", taskId, name, "RESPONDED")
@@ -306,6 +315,15 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	proxyReq.Header.Set("Content-Type", "application/json")
 	proxyReq.Header.Set("A2A-Version", "1.0")
 	proxyReq.Header.Set("Accept", "text/event-stream")
+	if rootContextId != nil && *rootContextId != "" {
+		proxyReq.Header.Set("X-A2A-Root-Context-Id", *rootContextId)
+	}
+	if parentTaskId != nil && *parentTaskId != "" {
+		proxyReq.Header.Set("X-A2A-Parent-Task-Id", *parentTaskId)
+	}
+	if parentToolCallId != nil && *parentToolCallId != "" {
+		proxyReq.Header.Set("X-A2A-Parent-Tool-Call-Id", *parentToolCallId)
+	}
 
 	proxyResp, err := client.Do(proxyReq)
 	if err != nil {
@@ -352,12 +370,14 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 					// Record every SSE data frame as a stream trace
 					streamTrace := &model.TraceEvent{
-						TaskId:      taskId,
-						ContextId:   contextId,
-						EventType:   "stream",
-						AgentName:   name,
-						TargetAgent: &sourceAgent,
-						DataJson:    truncateString(data, 500),
+						TaskId:        taskId,
+						ContextId:     contextId,
+						RootContextId: rootContextId,
+						ParentTaskId:  parentTaskId,
+						EventType:     "stream",
+						AgentName:     name,
+						TargetAgent:   &sourceAgent,
+						DataJson:      truncateString(data, 500),
 					}
 					h.svcCtx.Traces.Append(streamTrace)
 					if h.svcCtx.EventBus != nil {
@@ -394,12 +414,14 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		respTrace := &model.TraceEvent{
-			TaskId:      taskId,
-			ContextId:   contextId,
-			EventType:   "response",
-			AgentName:   name,
-			TargetAgent: &sourceAgent,
-			DataJson:    finalText,
+			TaskId:        taskId,
+			ContextId:     contextId,
+			RootContextId: rootContextId,
+			ParentTaskId:  parentTaskId,
+			EventType:     "response",
+			AgentName:     name,
+			TargetAgent:   &sourceAgent,
+			DataJson:      finalText,
 		}
 		if finalText == "" {
 			respTrace.DataJson = `{"text_length":0}`
@@ -428,12 +450,14 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.svcCtx.Tasks.Update(taskId, map[string]interface{}{"state": "RESPONDED"})
 		}
 		respTrace := &model.TraceEvent{
-			TaskId:      taskId,
-			ContextId:   contextId,
-			EventType:   "response",
-			AgentName:   name,
-			TargetAgent: &sourceAgent,
-			DataJson:    truncateString(string(respBody), 1000),
+			TaskId:        taskId,
+			ContextId:     contextId,
+			RootContextId: rootContextId,
+			ParentTaskId:  parentTaskId,
+			EventType:     "response",
+			AgentName:     name,
+			TargetAgent:   &sourceAgent,
+			DataJson:      truncateString(string(respBody), 1000),
 		}
 		h.svcCtx.Traces.Append(respTrace)
 		if h.svcCtx.EventBus != nil {
@@ -481,15 +505,18 @@ func (h *ListTasksHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			displayId = *t.ServerTaskId
 		}
 		items = append(items, model.TaskListItem{
-			LocalTaskId: t.LocalTaskId,
-			DisplayId:   displayId,
-			SourceAgent: t.SourceAgent,
-			TargetAgent: t.TargetAgent,
-			AgentName:   t.AgentName,
-			State:       t.State,
-			ContextId:   t.ContextId,
-			CreatedAt:   t.CreatedAt.Format("2006-01-02T15:04:05Z"),
-			UpdatedAt:   t.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+			LocalTaskId:      t.LocalTaskId,
+			DisplayId:        displayId,
+			SourceAgent:      t.SourceAgent,
+			TargetAgent:      t.TargetAgent,
+			AgentName:        t.AgentName,
+			State:            t.State,
+			ContextId:        t.ContextId,
+			RootContextId:    t.RootContextId,
+			ParentTaskId:     t.ParentTaskId,
+			ParentToolCallId: t.ParentToolCallId,
+			CreatedAt:        t.CreatedAt.Format("2006-01-02T15:04:05Z"),
+			UpdatedAt:        t.UpdatedAt.Format("2006-01-02T15:04:05Z"),
 		})
 	}
 
@@ -499,6 +526,28 @@ func (h *ListTasksHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Page:  page,
 		Size:  size,
 	})
+}
+
+type ListTasksByRootHandler struct {
+	svcCtx *svc.ServiceContext
+}
+
+func NewListTasksByRootHandler(svcCtx *svc.ServiceContext) *ListTasksByRootHandler {
+	return &ListTasksByRootHandler{svcCtx: svcCtx}
+}
+
+func (h *ListTasksByRootHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	rootContextId := getPathParam(r, "rootContextId")
+	if rootContextId == "" {
+		jsonError(w, "missing root context id", 400)
+		return
+	}
+	tasks, err := h.svcCtx.Tasks.ListByRootContext(rootContextId)
+	if err != nil {
+		errHTTP(w, err)
+		return
+	}
+	okJSON(w, tasks)
 }
 
 // ===== Task Detail =====
@@ -593,6 +642,28 @@ func (h *TraceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	jsonError(w, "missing context_id or task_id", 400)
 }
 
+type TraceRootHandler struct {
+	svcCtx *svc.ServiceContext
+}
+
+func NewTraceRootHandler(svcCtx *svc.ServiceContext) *TraceRootHandler {
+	return &TraceRootHandler{svcCtx: svcCtx}
+}
+
+func (h *TraceRootHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	rootContextId := getPathParam(r, "rootContextId")
+	if rootContextId == "" {
+		jsonError(w, "missing root context id", 400)
+		return
+	}
+	traces, err := h.svcCtx.Traces.GetByRootContext(rootContextId)
+	if err != nil {
+		errHTTP(w, err)
+		return
+	}
+	okJSON(w, traces)
+}
+
 // ===== Helper functions =====
 
 func getPathParam(r *http.Request, key string) string {
@@ -605,6 +676,8 @@ func getPathParam(r *http.Request, key string) string {
 		headerName = "X-Path-Param-TaskId"
 	case "contextId":
 		headerName = "X-Path-Param-ContextId"
+	case "rootContextId":
+		headerName = "X-Path-Param-RootContextId"
 	default:
 		headerName = "X-Path-Param-" + key
 	}
@@ -642,6 +715,48 @@ func applyContextModeToRPC(rpcReq map[string]interface{}, contextMode string) *s
 		rpcReq["params"] = map[string]interface{}{"contextId": *contextId}
 	}
 	return contextId
+}
+
+func resolveRootContextId(r *http.Request, rpcReq map[string]interface{}, contextId *string, originalContextId string) *string {
+	if root := r.Header.Get("X-A2A-Root-Context-Id"); root != "" {
+		return &root
+	}
+	if root := getRPCStringParam(rpcReq, "rootContextId"); root != "" {
+		return &root
+	}
+	if contextId != nil && *contextId != "" {
+		root := *contextId
+		return &root
+	}
+	if originalContextId != "" {
+		root := originalContextId
+		return &root
+	}
+	return nil
+}
+
+func resolveHeaderString(r *http.Request, name string) *string {
+	value := r.Header.Get(name)
+	if value == "" {
+		return nil
+	}
+	return &value
+}
+
+func getRPCStringParam(rpcReq map[string]interface{}, key string) string {
+	if params, ok := rpcReq["params"].(map[string]interface{}); ok {
+		if value, ok := params[key].(string); ok {
+			return value
+		}
+	}
+	return ""
+}
+
+func stringValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 func applyMessageDirection(m *model.Message, sourceAgent, targetAgent string) {

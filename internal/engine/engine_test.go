@@ -134,7 +134,7 @@ func TestHandleRequest_LoadsToolHistoryForNextTurn(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	eng.HandleRequest(context.Background(), rec, "test-agent", "next question", ctxId, "task-2", deps)
+	eng.HandleRequest(context.Background(), rec, "test-agent", "next question", ctxId, ctxId, "task-2", deps)
 
 	if len(provider.requests) != 1 {
 		t.Fatalf("provider requests len = %d, want 1", len(provider.requests))
@@ -191,7 +191,7 @@ func TestRunLoop_MaxRoundsExceeded_ToolExecuted(t *testing.T) {
 
 	// Override callTool to count executions
 	originalCallTool := eng.callTool
-	eng.callTool = func(a *BuiltinAgent, name string, arguments string) (string, error) {
+	eng.callTool = func(a *BuiltinAgent, name string, arguments string, execCtx ToolExecutionContext) (string, error) {
 		callCount++
 		return "tool result", nil
 	}
@@ -200,7 +200,7 @@ func TestRunLoop_MaxRoundsExceeded_ToolExecuted(t *testing.T) {
 	rec := httptest.NewRecorder()
 	flusher := &mockFlusher{recorder: rec}
 
-	_, err := eng.runLoop(context.Background(), agent, []llm.ChatMessage{{Role: "user", Content: "hello"}}, rec, flusher, "task-1", "ctx-1", deps)
+	_, err := eng.runLoop(context.Background(), agent, []llm.ChatMessage{{Role: "user", Content: "hello"}}, rec, flusher, "task-1", "ctx-1", "ctx-1", deps)
 
 	// With maxRounds=1:
 	// - round=0: LLM returns tool call -> tool IS executed (callCount becomes 1)
@@ -244,7 +244,7 @@ func TestRunLoop_NoToolCalls_ReturnsText(t *testing.T) {
 	rec := httptest.NewRecorder()
 	flusher := &mockFlusher{recorder: rec}
 
-	result, err := eng.runLoop(context.Background(), agent, []llm.ChatMessage{{Role: "user", Content: "hi"}}, rec, flusher, "task-1", "ctx-1", deps)
+	result, err := eng.runLoop(context.Background(), agent, []llm.ChatMessage{{Role: "user", Content: "hi"}}, rec, flusher, "task-1", "ctx-1", "ctx-1", deps)
 	if err != nil {
 		t.Fatalf("runLoop failed: %v", err)
 	}
@@ -281,7 +281,7 @@ func TestRunLoop_ToolCallsWithinLimit(t *testing.T) {
 	}
 
 	var toolExecuted bool
-	eng.callTool = func(a *BuiltinAgent, name string, arguments string) (string, error) {
+	eng.callTool = func(a *BuiltinAgent, name string, arguments string, execCtx ToolExecutionContext) (string, error) {
 		toolExecuted = true
 		return "tool result", nil
 	}
@@ -295,7 +295,7 @@ func TestRunLoop_ToolCallsWithinLimit(t *testing.T) {
 	rec := httptest.NewRecorder()
 	flusher := &mockFlusher{recorder: rec}
 
-	result, err := eng.runLoop(context.Background(), agent, []llm.ChatMessage{{Role: "user", Content: "hi"}}, rec, flusher, "task-1", "ctx-1", deps)
+	result, err := eng.runLoop(context.Background(), agent, []llm.ChatMessage{{Role: "user", Content: "hi"}}, rec, flusher, "task-1", "ctx-1", "ctx-1", deps)
 	if err != nil {
 		t.Fatalf("runLoop failed: %v", err)
 	}
@@ -305,6 +305,50 @@ func TestRunLoop_ToolCallsWithinLimit(t *testing.T) {
 	}
 	if result != "Here is the answer." {
 		t.Errorf("Expected 'Here is the answer.', got %q", result)
+	}
+}
+
+func TestRunLoop_PassesRootAndParentToTool(t *testing.T) {
+	eng := New()
+	agent := &BuiltinAgent{
+		Config: config.BuiltinAgent{
+			Name:          "mi-1",
+			Provider:      "openai",
+			Model:         "gpt-4",
+			MaxToolRounds: 5,
+		},
+		Provider: &mockProvider{
+			events: []llm.StreamEvent{
+				{Type: "tool_call", ToolCall: &llm.ToolCall{ID: "tool-1", Name: "send_to_agent", Arguments: `{}`}},
+				{Type: "done"},
+				{Type: "text", Text: "done"},
+				{Type: "done"},
+			},
+		},
+		Tools: []llm.ToolDef{
+			{Name: "send_to_agent", Description: "Send", InputSchema: map[string]interface{}{"type": "object"}},
+		},
+	}
+
+	var got ToolExecutionContext
+	eng.callTool = func(a *BuiltinAgent, name string, arguments string, execCtx ToolExecutionContext) (string, error) {
+		got = execCtx
+		return "ok", nil
+	}
+
+	deps := &Deps{
+		LoadHistory: func(cid string) ([]*model.Message, error) { return nil, nil },
+		RecordTrace: func(e *model.TraceEvent) error { return nil },
+		SaveMessage: func(m *model.Message) error { return nil },
+	}
+	rec := httptest.NewRecorder()
+	flusher := &mockFlusher{recorder: rec}
+
+	if _, err := eng.runLoop(context.Background(), agent, []llm.ChatMessage{{Role: "user", Content: "hi"}}, rec, flusher, "task-1", "ctx-1", "root-1", deps); err != nil {
+		t.Fatalf("runLoop failed: %v", err)
+	}
+	if got.SourceAgent != "mi-1" || got.RootContextId != "root-1" || got.ParentTaskId != "task-1" || got.ParentToolCallId != "tool-1" {
+		t.Fatalf("tool exec context = %#v", got)
 	}
 }
 
@@ -340,7 +384,7 @@ func TestHandleRequest_RecordsAgentResponse(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 
-	eng.HandleRequest(context.Background(), rec, "test-agent", "hello", "ctx-1", "task-1", deps)
+	eng.HandleRequest(context.Background(), rec, "test-agent", "hello", "ctx-1", "ctx-1", "task-1", deps)
 
 	// Verify that the assistant message was persisted
 	if len(recordedMessages) != 1 {
@@ -444,7 +488,7 @@ func TestRunLoop_ReasoningEvents_EmitsThinkingDelta(t *testing.T) {
 	rec := httptest.NewRecorder()
 	flusher := &mockFlusher{recorder: rec}
 
-	result, err := eng.runLoop(context.Background(), agent, []llm.ChatMessage{{Role: "user", Content: "hi"}}, rec, flusher, "task-1", "ctx-1", deps)
+	result, err := eng.runLoop(context.Background(), agent, []llm.ChatMessage{{Role: "user", Content: "hi"}}, rec, flusher, "task-1", "ctx-1", "ctx-1", deps)
 	if err != nil {
 		t.Fatalf("runLoop failed: %v", err)
 	}
