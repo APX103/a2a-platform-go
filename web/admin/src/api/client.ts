@@ -22,7 +22,6 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
 import type {
   Context,
-  ContextListItem,
   ContextDetail,
   ListContextsResponse,
   CreateContextRequest,
@@ -161,6 +160,7 @@ export const api = {
   },
   getTask: (id: string) => request<TaskDetail>(`/api/tasks/${id}`),
   listTasksByRoot: (rootContextId: string) => request<Task[]>(`/api/tasks/root/${rootContextId}`),
+  listRecentTraces: () => request<Trace[]>('/api/traces'),
   listTraceContexts: () => request<TraceContextSummary[]>('/api/traces/contexts'),
   listTracesByContext: (contextId: string) => request<Trace[]>(`/api/traces/context/${contextId}`),
   listTracesByRoot: (rootContextId: string) => request<Trace[]>(`/api/traces/root/${rootContextId}`),

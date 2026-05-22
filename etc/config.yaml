@@ -3,8 +3,8 @@ host: 0.0.0.0
 port: 18090
 
 mysql:
-  host: ""
-  port: 13306
+  host: "mysql"
+  port: 3306
   user: a2a
   password: a2a_secret_2024
   database: a2a_platform

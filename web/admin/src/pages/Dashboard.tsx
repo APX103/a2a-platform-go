@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
-import { Bot, ListTodo, Activity, Clock } from 'lucide-react'
-import { api, Agent, Task, HealthResponse } from '../api/client'
+import { Bot, Activity, Clock, GitBranch } from 'lucide-react'
+import { api, Agent, Trace, HealthResponse } from '../api/client'
 
 function StatCard({ icon: Icon, label, value, sub }: { icon: typeof Bot; label: string; value: string | number; sub?: string }) {
   return (
@@ -19,21 +19,20 @@ function StatCard({ icon: Icon, label, value, sub }: { icon: typeof Bot; label: 
 export default function Dashboard() {
   const [health, setHealth] = useState<HealthResponse | null>(null)
   const [agents, setAgents] = useState<Agent[]>([])
-  const [tasks, setTasks] = useState<Task[]>([])
+  const [traces, setTraces] = useState<Trace[]>([])
   const [error, setError] = useState('')
   const location = useLocation()
 
   useEffect(() => {
-    setError('')
     Promise.all([
       api.getHealth().catch(() => null),
       api.listAgents().catch(() => []),
-      api.listTasks({ size: 5 }).catch(() => ({ items: [] })),
-    ]).then(([h, a, t]) => {
+      api.listRecentTraces().catch(() => []),
+    ]).then(([h, a, recentTraces]) => {
       if (h) setHealth(h)
-      else setError('Cannot connect to API')
+      setError(h ? '' : 'Cannot connect to API')
       setAgents(Array.isArray(a) ? a : [])
-      setTasks((t as { items: Task[] }).items || [])
+      setTraces(Array.isArray(recentTraces) ? recentTraces : [])
     })
   }, [location.key])
 
@@ -49,14 +48,22 @@ export default function Dashboard() {
   }
 
   const connectedCount = agents.filter(a => a.status === 'connected').length
+  const formatTraceAgents = (trace: Trace) => {
+    const from = trace.agent_name || 'unknown'
+    return trace.target_agent ? `${from} → ${trace.target_agent}` : from
+  }
+  const formatTraceTime = (timestamp?: string) => {
+    if (!timestamp) return 'unknown time'
+    const date = new Date(timestamp)
+    return Number.isNaN(date.getTime()) ? timestamp : date.toLocaleString()
+  }
 
   return (
     <div className="p-8 max-w-5xl">
       <h2 className="text-lg font-semibold mb-6">Overview</h2>
 
-      <div className="grid grid-cols-4 gap-4 mb-8">
+      <div className="grid grid-cols-3 gap-4 mb-8">
         <StatCard icon={Bot} label="Agents" value={health?.agents_total ?? agents.length} sub={`${connectedCount} connected`} />
-        <StatCard icon={ListTodo} label="Tasks" value={tasks.length > 0 ? `${tasks.length}+` : '0'} sub="recent" />
         <StatCard icon={Activity} label="Status" value={health?.status === 'ok' ? 'Healthy' : 'Unknown'} sub={`DB: ${health?.db || '-'}`} />
         <StatCard icon={Clock} label="Connected" value={health?.agents_connected ?? 0} sub="agents online" />
       </div>
@@ -88,25 +95,28 @@ export default function Dashboard() {
 
         <div>
           <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-medium text-[var(--text-secondary)]">Recent Tasks</h3>
-            <Link to="/tasks" className="text-xs text-[var(--accent)] hover:text-[var(--accent-hover)] no-underline">View all</Link>
+            <h3 className="text-sm font-medium text-[var(--text-secondary)]">Recent Traces</h3>
+            <Link to="/traces" className="text-xs text-[var(--accent)] hover:text-[var(--accent-hover)] no-underline">View all</Link>
           </div>
           <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg divide-y divide-[var(--border)]">
-            {tasks.length === 0 ? (
-              <div className="p-4 text-sm text-[var(--text-tertiary)]">No tasks yet</div>
+            {traces.length === 0 ? (
+              <div className="p-4 text-sm text-[var(--text-tertiary)]">No traces yet</div>
             ) : (
-              tasks.slice(0, 5).map(t => (
-                <Link key={t.local_task_id} to={`/tasks/${t.local_task_id}`} className="flex items-center justify-between p-3 hover:bg-[var(--bg-tertiary)]/50 transition-colors no-underline">
-                  <div>
-                    <div className="text-sm text-[var(--text-primary)] font-mono">{t.display_id || t.local_task_id.slice(0, 8)}</div>
-                    <div className="text-xs text-[var(--text-tertiary)]">{t.source_agent || 'unknown'} → {t.target_agent || t.agent_name}</div>
+              traces.slice(0, 5).map((trace, index) => (
+                <Link
+                  key={`${trace.timestamp || 'trace'}-${index}`}
+                  to={`/traces/context/${encodeURIComponent(trace.root_context_id || trace.context_id || 'none')}`}
+                  className="flex items-center justify-between gap-3 p-3 hover:bg-[var(--bg-tertiary)]/50 transition-colors no-underline"
+                >
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 text-sm text-[var(--text-primary)]">
+                      <GitBranch size={14} className="shrink-0 text-[var(--text-tertiary)]" />
+                      <span className="truncate">{formatTraceAgents(trace)}</span>
+                    </div>
+                    <div className="text-xs text-[var(--text-tertiary)] mt-0.5">{formatTraceTime(trace.timestamp)}</div>
                   </div>
-                  <span className={`text-xs px-2 py-0.5 rounded-full ${
-                    t.state === 'RESPONDED' ? 'bg-[var(--success)]/10 text-[var(--success)]' :
-                    t.state === 'FAILED' ? 'bg-[var(--error)]/10 text-[var(--error)]' :
-                    'bg-[var(--warning)]/10 text-[var(--warning)]'
-                  }`}>
-                    {t.state}
+                  <span className="shrink-0 text-xs px-2 py-0.5 rounded-full bg-[var(--accent)]/10 text-[var(--accent)]">
+                    {trace.event_type || 'trace'}
                   </span>
                 </Link>
               ))
