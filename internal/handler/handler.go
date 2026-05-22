@@ -105,7 +105,7 @@ func (h *RegisterAgentHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	conn, err := h.svcCtx.Registry.RegisterAgent(
-		req.Name, req.Type, req.Url, req.Port, req.Skills, req.Secret,
+		req.Name, req.Type, req.Url, req.Port, req.Skills, req.Secret, req.ContextMode, req.AgentCard,
 	)
 	if err != nil {
 		jsonError(w, err.Error(), 400)
@@ -182,23 +182,12 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extract or auto-generate contextId
-	var contextId *string
-	if params, ok := rpcReq["params"].(map[string]interface{}); ok {
-		if cid, ok := params["contextId"].(string); ok && cid != "" {
-			contextId = &cid
-		}
+	contextMode := model.ContextModeContext
+	if h.svcCtx != nil && h.svcCtx.Registry != nil {
+		contextMode = h.svcCtx.Registry.GetContextMode(name)
 	}
-	if contextId == nil {
-		cid := svc.NewTaskId() // use UUID
-		contextId = &cid
-		// Inject contextId into request so bridge/agent can see it
-		if params, ok := rpcReq["params"].(map[string]interface{}); ok {
-			params["contextId"] = *contextId
-		} else {
-			rpcReq["params"] = map[string]interface{}{"contextId": *contextId}
-		}
-	}
+
+	contextId := applyContextModeToRPC(rpcReq, contextMode)
 
 	// Re-marshal body with injected contextId for forwarding
 	newBody, err := json.Marshal(rpcReq)
@@ -592,6 +581,36 @@ func getPathParam(r *http.Request, key string) string {
 		return v
 	}
 	return ""
+}
+
+func applyContextModeToRPC(rpcReq map[string]interface{}, contextMode string) *string {
+	// Stateless agents intentionally do not receive a platform contextId, so
+	// each request behaves as a fresh turn from the target's perspective.
+	if contextMode == model.ContextModeStateless {
+		if params, ok := rpcReq["params"].(map[string]interface{}); ok {
+			delete(params, "contextId")
+		}
+		return nil
+	}
+
+	var contextId *string
+	if params, ok := rpcReq["params"].(map[string]interface{}); ok {
+		if cid, ok := params["contextId"].(string); ok && cid != "" {
+			contextId = &cid
+		}
+	}
+	if contextId != nil {
+		return contextId
+	}
+
+	cid := svc.NewTaskId()
+	contextId = &cid
+	if params, ok := rpcReq["params"].(map[string]interface{}); ok {
+		params["contextId"] = *contextId
+	} else {
+		rpcReq["params"] = map[string]interface{}{"contextId": *contextId}
+	}
+	return contextId
 }
 
 func extractUserText(rpcReq map[string]interface{}) string {

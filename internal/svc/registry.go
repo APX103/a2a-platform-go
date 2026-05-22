@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -12,23 +13,8 @@ import (
 	"a2a-platform/internal/model"
 )
 
-// AgentCard represents the A2A AgentCard fetched from /.well-known/agent.json
-type AgentCard struct {
-	Name        string      `json:"name"`
-	Description string      `json:"description"`
-	Version     string      `json:"version"`
-	Url         string      `json:"url"`
-	Skills      []CardSkill `json:"skills"`
-	HealthUrl   string      `json:"health_url,omitempty"`
-}
-
-type CardSkill struct {
-	Id          string   `json:"id"`
-	Name        string   `json:"name"`
-	Description string   `json:"description"`
-	Tags        []string `json:"tags"`
-	Examples    []string `json:"examples"`
-}
+type AgentCard = model.AgentCard
+type CardSkill = model.CardSkill
 
 // AgentConnection wraps an agent's card and URL in memory.
 type AgentConnection struct {
@@ -97,6 +83,7 @@ func (r *AgentRegistry) ListAgents() ([]model.AgentInfo, error) {
 			Url:          "/agent/" + rec.Name,
 			Status:       rec.Status,
 			Type:         rec.Type,
+			ContextMode:  contextModeFromCardJson(rec.AgentCardJson),
 			Skills:       ParseSkillsJson(rec.SkillsJson),
 			ErrorMessage: rec.ErrorMessage,
 		}
@@ -105,6 +92,7 @@ func (r *AgentRegistry) ListAgents() ([]model.AgentInfo, error) {
 			ci := conn.Info()
 			info.Description = ci.Description
 			info.Version = ci.Version
+			info.ContextMode = normalizeContextMode(conn.Card.ContextMode)
 		}
 		// If DB says connected but no live connection, fix status
 		if rec.Status == "connected" && conn == nil {
@@ -115,8 +103,8 @@ func (r *AgentRegistry) ListAgents() ([]model.AgentInfo, error) {
 	return result, nil
 }
 
-// RegisterAgent performs full self-registration: validate → discover → ping → persist → connect.
-func (r *AgentRegistry) RegisterAgent(name, agentType, url string, port int, skills []model.Skill, secret string) (*AgentConnection, error) {
+// RegisterAgent performs full self-registration: validate → discover/static card → persist → connect.
+func (r *AgentRegistry) RegisterAgent(name, agentType, url string, port int, skills []model.Skill, secret string, contextMode string, providedCard *model.AgentCard) (*AgentConnection, error) {
 	// 1. Check uniqueness / idempotency
 	existing, err := r.store.Get(name)
 	if err != nil {
@@ -129,26 +117,49 @@ func (r *AgentRegistry) RegisterAgent(name, agentType, url string, port int, ski
 			return nil, fmt.Errorf("Agent '%s' already registered", name)
 		}
 	}
-
-	// 2. Fetch AgentCard
-	card, err := fetchAgentCard(url)
-	if err != nil {
-		return nil, fmt.Errorf("Cannot fetch agent card: %w", err)
+	if url == "" {
+		return nil, fmt.Errorf("missing url")
+	}
+	if agentType == "" {
+		agentType = "external"
 	}
 
-	// 3. Ping validation — send a lightweight A2A message
-	if err := pingAgent(url); err != nil {
-		return nil, fmt.Errorf("Agent unreachable: %w", err)
+	// 2. Discover AgentCard unless the caller supplied one to be hosted by the platform.
+	var card *model.AgentCard
+	if providedCard != nil {
+		c := *providedCard
+		card = &c
+		card.Static = true
+		card.ContextMode = mergeContextMode(contextMode, card.ContextMode)
+		normalizeAgentCard(card, name, url, skills)
+		if card.HealthUrl != "" {
+			if err := checkHealthURL(card.HealthUrl); err != nil {
+				return nil, fmt.Errorf("health check failed: %w", err)
+			}
+		}
+	} else {
+		card, err = fetchAgentCard(url)
+		if err != nil {
+			return nil, fmt.Errorf("Cannot fetch agent card: %w", err)
+		}
+		card.ContextMode = mergeContextMode(contextMode, card.ContextMode)
+		normalizeAgentCard(card, name, url, skills)
+		if err := pingAgent(url); err != nil {
+			return nil, fmt.Errorf("Agent unreachable: %w", err)
+		}
 	}
 
-	// 4. Update in-memory connection
+	// 3. Update in-memory connection
 	conn := &AgentConnection{Card: *card, Url: url}
 	r.mu.Lock()
 	r.connections[name] = conn
 	r.mu.Unlock()
 
-	// 5. Persist to DB
+	// 4. Persist to DB
 	now := time.Now().UTC().Format(time.RFC3339)
+	if len(skills) == 0 {
+		skills = skillsFromCard(card.Skills)
+	}
 	skillsJson, _ := json.Marshal(skills)
 	cardJson, _ := json.Marshal(card)
 	dbRecord := &model.Agent{
@@ -181,7 +192,7 @@ func (r *AgentRegistry) RegisterAgent(name, agentType, url string, port int, ski
 func (r *AgentRegistry) RegisterBuiltinAgent(name, description string, skills []model.Skill) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	skillsJson, _ := json.Marshal(skills)
-	card := AgentCard{Name: name, Description: description}
+	card := AgentCard{Name: name, Description: description, ContextMode: model.ContextModeContext}
 	cardJson, _ := json.Marshal(card)
 
 	dbRecord := &model.Agent{
@@ -205,6 +216,20 @@ func (r *AgentRegistry) RegisterBuiltinAgent(name, description string, skills []
 		r.EventBus.AgentRegistered(name, "connected", "builtin")
 	}
 	return nil
+}
+
+func (r *AgentRegistry) GetContextMode(name string) string {
+	if conn := r.GetClient(name); conn != nil {
+		return normalizeContextMode(conn.Card.ContextMode)
+	}
+	if r.store == nil {
+		return model.ContextModeContext
+	}
+	rec, err := r.store.Get(name)
+	if err != nil || rec == nil {
+		return model.ContextModeContext
+	}
+	return contextModeFromCardJson(rec.AgentCardJson)
 }
 
 // DisconnectAgent removes agent from connections and marks DB.
@@ -232,12 +257,27 @@ func (r *AgentRegistry) RestoreConnections() {
 		if rec.Type == "builtin" || rec.Url == "" {
 			continue
 		}
+		if storedCard, ok := parseStoredStaticCard(rec.AgentCardJson); ok {
+			if storedCard.HealthUrl != "" {
+				if healthErr := checkHealthURL(storedCard.HealthUrl); healthErr != nil {
+					slog.Warn("Failed to restore static agent health check", "name", rec.Name, "error", healthErr)
+					r.store.UpdateStatus(rec.Name, "disconnected", nil)
+					continue
+				}
+			}
+			r.mu.Lock()
+			r.connections[rec.Name] = &AgentConnection{Card: *storedCard, Url: rec.Url}
+			r.mu.Unlock()
+			slog.Info("Restored static connection to agent", "name", rec.Name, "url", rec.Url)
+			continue
+		}
 		card, err := fetchAgentCard(rec.Url)
 		if err != nil {
 			slog.Warn("Failed to restore agent", "name", rec.Name, "error", err)
 			r.store.UpdateStatus(rec.Name, "disconnected", nil)
 			continue
 		}
+		normalizeAgentCard(card, rec.Name, rec.Url, nil)
 		r.mu.Lock()
 		r.connections[rec.Name] = &AgentConnection{Card: *card, Url: rec.Url}
 		r.mu.Unlock()
@@ -279,8 +319,23 @@ func (r *AgentRegistry) runHealthCheck() {
 		if a.url == "" {
 			continue
 		}
+		if a.card.Static {
+			if a.card.HealthUrl != "" {
+				if err := checkHealthURL(a.card.HealthUrl); err != nil {
+					r.recordFailure(a.name, "unreachable", fmt.Sprintf("health check unreachable: %v", err))
+					continue
+				}
+			}
+			r.failMu.Lock()
+			if r.failCounts[a.name] > 0 {
+				slog.Info("Agent health check recovered", "name", a.name)
+			}
+			delete(r.failCounts, a.name)
+			r.failMu.Unlock()
+			continue
+		}
 		// Phase 1: check if bridge HTTP is reachable (agent card endpoint)
-		cardURL := a.url + "/.well-known/agent.json"
+		cardURL := strings.TrimRight(a.url, "/") + "/.well-known/agent.json"
 		resp, err := client.Get(cardURL)
 		if err != nil {
 			r.recordFailure(a.name, "offline", fmt.Sprintf("bridge unreachable: %v", err))
@@ -328,10 +383,30 @@ func (r *AgentRegistry) runHealthCheck() {
 		if rec.Type == "builtin" {
 			continue
 		}
+		if storedCard, ok := parseStoredStaticCard(rec.AgentCardJson); ok {
+			if storedCard.HealthUrl != "" {
+				if healthErr := checkHealthURL(storedCard.HealthUrl); healthErr != nil {
+					continue
+				}
+			}
+			r.mu.Lock()
+			r.connections[rec.Name] = &AgentConnection{Card: *storedCard, Url: rec.Url}
+			r.mu.Unlock()
+			r.failMu.Lock()
+			delete(r.failCounts, rec.Name)
+			r.failMu.Unlock()
+			r.store.UpdateStatus(rec.Name, "connected", nil)
+			if r.EventBus != nil {
+				r.EventBus.AgentStatus(rec.Name, "connected", rec.Type)
+			}
+			slog.Info("Static agent reconnected after recovery", "name", rec.Name, "url", rec.Url)
+			continue
+		}
 		card, err := fetchAgentCard(rec.Url)
 		if err != nil {
 			continue // still unreachable
 		}
+		normalizeAgentCard(card, rec.Name, rec.Url, nil)
 		// Reconnected — add back to in-memory map and update DB
 		r.mu.Lock()
 		r.connections[rec.Name] = &AgentConnection{Card: *card, Url: rec.Url}
@@ -385,7 +460,7 @@ func (r *AgentRegistry) CountTotal() (int, error) {
 // ===== HTTP helpers =====
 
 func fetchAgentCard(url string) (*AgentCard, error) {
-	cardURL := url + "/.well-known/agent.json"
+	cardURL := strings.TrimRight(url, "/") + "/.well-known/agent.json"
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Get(cardURL)
 	if err != nil {
@@ -404,7 +479,7 @@ func fetchAgentCard(url string) (*AgentCard, error) {
 
 func pingAgent(url string) error {
 	// Lightweight check: just verify the agent card endpoint is reachable
-	cardURL := url + "/.well-known/agent.json"
+	cardURL := strings.TrimRight(url, "/") + "/.well-known/agent.json"
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Get(cardURL)
 	if err != nil {
@@ -415,4 +490,99 @@ func pingAgent(url string) error {
 		return fmt.Errorf("ping returned status %d", resp.StatusCode)
 	}
 	return nil
+}
+
+func checkHealthURL(url string) error {
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("health returned status %d", resp.StatusCode)
+	}
+	return nil
+}
+
+func normalizeAgentCard(card *model.AgentCard, name, url string, skills []model.Skill) {
+	if card.Name == "" {
+		card.Name = name
+	}
+	if card.Url == "" {
+		card.Url = url
+	}
+	if card.Version == "" {
+		card.Version = "1.0.0"
+	}
+	card.ContextMode = normalizeContextMode(card.ContextMode)
+	if len(card.Skills) == 0 && len(skills) > 0 {
+		card.Skills = cardSkillsFromSkills(skills)
+	}
+}
+
+func normalizeContextMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case model.ContextModeStateless:
+		return model.ContextModeStateless
+	default:
+		return model.ContextModeContext
+	}
+}
+
+func mergeContextMode(primary, fallback string) string {
+	if strings.TrimSpace(primary) != "" {
+		return normalizeContextMode(primary)
+	}
+	return normalizeContextMode(fallback)
+}
+
+func contextModeFromCardJson(cardJson string) string {
+	if cardJson == "" {
+		return model.ContextModeContext
+	}
+	var card model.AgentCard
+	if err := json.Unmarshal([]byte(cardJson), &card); err != nil {
+		return model.ContextModeContext
+	}
+	return normalizeContextMode(card.ContextMode)
+}
+
+func parseStoredStaticCard(cardJson string) (*model.AgentCard, bool) {
+	if cardJson == "" {
+		return nil, false
+	}
+	var card model.AgentCard
+	if err := json.Unmarshal([]byte(cardJson), &card); err != nil || !card.Static {
+		return nil, false
+	}
+	return &card, true
+}
+
+func cardSkillsFromSkills(skills []model.Skill) []model.CardSkill {
+	result := make([]model.CardSkill, 0, len(skills))
+	for _, s := range skills {
+		result = append(result, model.CardSkill{
+			Id:          s.Id,
+			Name:        s.Name,
+			Description: s.Description,
+			Tags:        s.Tags,
+			Examples:    s.Examples,
+		})
+	}
+	return result
+}
+
+func skillsFromCard(skills []model.CardSkill) []model.Skill {
+	result := make([]model.Skill, 0, len(skills))
+	for _, s := range skills {
+		result = append(result, model.Skill{
+			Id:          s.Id,
+			Name:        s.Name,
+			Description: s.Description,
+			Tags:        s.Tags,
+			Examples:    s.Examples,
+		})
+	}
+	return result
 }

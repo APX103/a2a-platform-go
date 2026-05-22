@@ -2,6 +2,11 @@ package model
 
 import "time"
 
+const (
+	ContextModeContext   = "context"
+	ContextModeStateless = "stateless"
+)
+
 // Agent represents a registered A2A agent.
 type Agent struct {
 	Id            int64     `db:"id" json:"-"`
@@ -33,16 +38,16 @@ type Task struct {
 
 // Message represents a chat message in a task.
 type Message struct {
-	Id               int64      `db:"id" json:"id"`
-	TaskId           string     `db:"task_id" json:"task_id"`
-	ContextId        *string    `db:"context_id" json:"context_id,omitempty"`
-	Role             string     `db:"role" json:"role"`
-	Content          string     `db:"content" json:"content"`
-	ReasoningContent *string    `db:"reasoning_content" json:"reasoning_content,omitempty"`
-	ToolCalls        string     `db:"tool_calls" json:"tool_calls,omitempty"`
-	ToolCallId       *string    `db:"tool_call_id" json:"tool_call_id,omitempty"`
-	ThinkingBlocks   string     `db:"thinking_blocks" json:"thinking_blocks,omitempty"`
-	Timestamp        time.Time  `db:"timestamp" json:"timestamp"`
+	Id               int64     `db:"id" json:"id"`
+	TaskId           string    `db:"task_id" json:"task_id"`
+	ContextId        *string   `db:"context_id" json:"context_id,omitempty"`
+	Role             string    `db:"role" json:"role"`
+	Content          string    `db:"content" json:"content"`
+	ReasoningContent *string   `db:"reasoning_content" json:"reasoning_content,omitempty"`
+	ToolCalls        string    `db:"tool_calls" json:"tool_calls,omitempty"`
+	ToolCallId       *string   `db:"tool_call_id" json:"tool_call_id,omitempty"`
+	ThinkingBlocks   string    `db:"thinking_blocks" json:"thinking_blocks,omitempty"`
+	Timestamp        time.Time `db:"timestamp" json:"timestamp"`
 }
 
 // ToolCall represents a single tool invocation.
@@ -77,17 +82,17 @@ type Context struct {
 
 // SubagentSession represents a spawned subagent execution.
 type SubagentSession struct {
-	ID                string     `db:"id" json:"id"`
-	ParentContextId   string     `db:"parent_context_id" json:"parent_context_id"`
-	ParentToolCallId  string     `db:"parent_tool_call_id" json:"parent_tool_call_id"`
-	Task              string     `db:"task" json:"task"`
-	Context           string     `db:"context" json:"context"`
-	Status            string     `db:"status" json:"status"` // "running", "completed", "failed", "timeout"
-	Messages          string     `db:"messages" json:"messages"` // JSON array
-	Result            string     `db:"result" json:"result,omitempty"`
-	Error             string     `db:"error" json:"error,omitempty"`
-	CreatedAt         time.Time  `db:"created_at" json:"created_at"`
-	CompletedAt       *time.Time `db:"completed_at" json:"completed_at,omitempty"`
+	ID               string     `db:"id" json:"id"`
+	ParentContextId  string     `db:"parent_context_id" json:"parent_context_id"`
+	ParentToolCallId string     `db:"parent_tool_call_id" json:"parent_tool_call_id"`
+	Task             string     `db:"task" json:"task"`
+	Context          string     `db:"context" json:"context"`
+	Status           string     `db:"status" json:"status"`     // "running", "completed", "failed", "timeout"
+	Messages         string     `db:"messages" json:"messages"` // JSON array
+	Result           string     `db:"result" json:"result,omitempty"`
+	Error            string     `db:"error" json:"error,omitempty"`
+	CreatedAt        time.Time  `db:"created_at" json:"created_at"`
+	CompletedAt      *time.Time `db:"completed_at" json:"completed_at,omitempty"`
 }
 
 // TraceEvent represents a trace event for observability.
@@ -106,15 +111,36 @@ type TraceEvent struct {
 // ===== API Request/Response types =====
 
 type AgentInfo struct {
-	Name          string   `json:"name"`
-	Description   string   `json:"description"`
-	Url           string   `json:"url"`
-	Status        string   `json:"status"`
-	Type          string   `json:"type"`
-	Version       string   `json:"version"`
-	Skills        []Skill  `json:"skills"`
-	ErrorMessage  *string  `json:"error_message,omitempty"`
-	AgentCardJson string   `json:"agent_card_json,omitempty"`
+	Name          string  `json:"name"`
+	Description   string  `json:"description"`
+	Url           string  `json:"url"`
+	Status        string  `json:"status"`
+	Type          string  `json:"type"`
+	Version       string  `json:"version"`
+	ContextMode   string  `json:"context_mode,omitempty"`
+	Skills        []Skill `json:"skills"`
+	ErrorMessage  *string `json:"error_message,omitempty"`
+	AgentCardJson string  `json:"agent_card_json,omitempty"`
+}
+
+// AgentCard describes an external A2A agent's identity and capabilities.
+type AgentCard struct {
+	Name        string      `json:"name"`
+	Description string      `json:"description"`
+	Version     string      `json:"version"`
+	Url         string      `json:"url"`
+	Skills      []CardSkill `json:"skills"`
+	HealthUrl   string      `json:"health_url,omitempty"`
+	Static      bool        `json:"x_static,omitempty"`
+	ContextMode string      `json:"x_context_mode,omitempty"`
+}
+
+type CardSkill struct {
+	Id          string   `json:"id"`
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	Tags        []string `json:"tags"`
+	Examples    []string `json:"examples"`
 }
 
 type Skill struct {
@@ -126,20 +152,22 @@ type Skill struct {
 }
 
 type RegisterAgentReq struct {
-	Name   string   `json:"name"`
-	Type   string   `json:"type"`
-	Port   int      `json:"port"`
-	Url    string   `json:"url"`
-	Skills []Skill  `json:"skills"`
-	Secret string   `json:"secret"`
+	Name        string     `json:"name"`
+	Type        string     `json:"type"`
+	Port        int        `json:"port"`
+	Url         string     `json:"url"`
+	Skills      []Skill    `json:"skills"`
+	Secret      string     `json:"secret"`
+	ContextMode string     `json:"context_mode,omitempty"`
+	AgentCard   *AgentCard `json:"agent_card,omitempty"`
 }
 
 type RegisterAgentResp struct {
-	Ok            bool   `json:"ok"`
-	Name          string `json:"name"`
-	Url           string `json:"url"`
-	Status        string `json:"status"`
-	ReRegistered  bool   `json:"re_registered"`
+	Ok           bool   `json:"ok"`
+	Name         string `json:"name"`
+	Url          string `json:"url"`
+	Status       string `json:"status"`
+	ReRegistered bool   `json:"re_registered"`
 }
 
 type ListTasksResp struct {

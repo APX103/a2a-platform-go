@@ -11,6 +11,7 @@
 - [内建 LLM Agent](#内建-llm-agent)
 - [Bridge Agent（API 桥接）](#bridge-agentapi-桥接)
 - [外部 Agent（独立进程）](#外部-agent独立进程)
+- [Bridge 实现指导手册](BRIDGE_GUIDE.md)
 - [Admin Web UI](#admin-web-ui)
 - [MCP 集成](#mcp-集成)
 - [配置参考](#配置参考)
@@ -353,9 +354,25 @@ Agent: [调用 list_directory 工具]
 
 ## 外部 Agent（独立进程）
 
-如果你已经有 A2A 兼容的 Agent 进程（如 a2a-bridge Node.js 版），可以通过 API 注册：
+如果你已经有独立运行的 Agent 进程，可以通过平台的 `POST /api/agents` 注册。注册后，客户端只访问平台的 `/agent/{name}`、`/api/agents`、`/api/tasks` 等接口；消息由平台代理转发给外部 Agent，AgentCard 信息由平台数据库托管并对外展示。
 
-### 注册
+外部 Agent 有两种注册方式：
+
+| 方式 | 适用场景 | 外部 Agent 需要提供 |
+|------|----------|---------------------|
+| **发现式注册** | Agent 已按 A2A 规范提供 AgentCard，或你希望平台每次恢复连接时重新发现能力 | `GET /.well-known/agent.json` 和消息入口 |
+| **静态注册** | 已有 Agent 不方便新增 AgentCard 端点，只想把能力描述注册进平台 | 消息入口；可选 `health_url` |
+
+外部 Agent 也有两种会话模式，通过 `context_mode` 声明：
+
+| 模式 | 说明 | 适用场景 |
+|------|------|----------|
+| `context` | 默认模式。平台会读取请求中的 `contextId`；如果没有，则自动生成并注入到转发请求中。task、message、trace 都会挂到该 context 下 | Claude Code、Kimi Code 这类可 resume 的交互式 agent；A/B 两个 agent 的多轮协作 |
+| `stateless` | 纯 proxy 模式。平台不生成、不转发 `contextId`；即使请求带了 `contextId` 也会在转发前移除。每次消息都是目标侧的新对话，平台只记录无上下文 task/trace | OpenAI-compatible completion API、无 session 能力的 HTTP agent、每次调用都应独立的工具型 agent |
+
+### 发现式注册
+
+发现式注册只提交 `name`、`type`、`url`。平台会访问 `url/.well-known/agent.json` 获取 AgentCard，然后把 AgentCard 持久化到数据库。
 
 ```bash
 curl -X POST http://localhost:18090/api/agents \
@@ -363,16 +380,85 @@ curl -X POST http://localhost:18090/api/agents \
   -H "X-Admin-Token: your-token" \
   -d '{
     "name": "my-external-agent",
-    "type": "bridge",
-    "url": "http://10.1.52.70:10004"
+    "type": "external",
+    "url": "http://10.1.52.70:10004",
+    "context_mode": "context"
   }'
 ```
 
 平台会自动：
 1. 访问 `url/.well-known/agent.json` 获取 AgentCard
-2. 做健康检测
+2. 做可达性检测
 3. 持久化到数据库
-4. 每 30 秒心跳检查
+4. 每 30 秒检查 AgentCard 端点；如果 AgentCard 中有 `health_url`，也会检查该健康地址
+
+外部 AgentCard 示例：
+
+```json
+{
+  "name": "my-external-agent",
+  "description": "Existing A2A agent",
+  "version": "1.0.0",
+  "url": "http://10.1.52.70:10004",
+  "health_url": "http://10.1.52.70:10004/health",
+  "skills": [
+    {
+      "id": "chat",
+      "name": "Chat",
+      "description": "General conversation",
+      "tags": ["chat"],
+      "examples": ["Hello"]
+    }
+  ]
+}
+```
+
+### 静态注册
+
+静态注册直接在请求体里提交 `agent_card`，平台不会要求外部 Agent 暴露 `/.well-known/agent.json`。平台会自动补齐 `agent_card.name`、`agent_card.url`、`agent_card.version` 的默认值，并把 AgentCard 存入数据库。
+
+```bash
+curl -X POST http://localhost:18090/api/agents \
+  -H "Content-Type: application/json" \
+  -H "X-Admin-Token: your-token" \
+  -d '{
+    "name": "my-existing-agent",
+    "type": "external",
+    "url": "http://10.1.52.70:10004/run",
+    "context_mode": "stateless",
+    "agent_card": {
+      "description": "Existing agent behind a custom message endpoint",
+      "version": "1.0.0",
+      "health_url": "http://10.1.52.70:10004/health",
+      "skills": [
+        {
+          "id": "chat",
+          "name": "Chat",
+          "description": "General conversation",
+          "tags": ["chat"],
+          "examples": ["你好"]
+        }
+      ]
+    }
+  }'
+```
+
+静态注册的行为：
+1. `url` 仍然是平台转发消息的目标地址，平台会向该地址发送 A2A JSON-RPC 请求
+2. `agent_card` 只用于平台展示、发现和持久化，不要求外部 Agent 自己托管
+3. 如果提供 `agent_card.health_url`，平台注册时和后续每 30 秒会检查该地址
+4. 如果不提供 `health_url`，平台不会主动探测静态 Agent 的健康状态；调用失败会在消息转发时返回错误
+5. 静态 Agent 重启平台后会从数据库中的 AgentCard 恢复，不依赖外部 `/.well-known/agent.json`
+
+`context_mode` 会被写入平台托管的 AgentCard。发现式注册时，请求体里的 `context_mode` 优先于 AgentCard 内的 `x_context_mode`；静态注册时同理。未设置时默认为 `context`。
+
+### 消息入口要求
+
+不管采用哪种注册方式，外部 Agent 都需要能处理平台代理过来的消息请求：
+
+- 平台向注册的 `url` 发送 `POST` 请求
+- 请求体是 A2A JSON-RPC，例如 `method: "SendStreamingMessage"`
+- 推荐返回 `Content-Type: text/event-stream` 的 SSE 流；非流式 JSON 也会被平台代理返回
 
 ### 发送消息
 
@@ -612,7 +698,8 @@ GET /api/agents/{name}
 
 # 注册外部 Agent
 POST /api/agents
-# Body: {"name":"x","type":"bridge","url":"http://...","port":10004}
+# 发现式注册 Body: {"name":"x","type":"external","url":"http://...","context_mode":"context","port":10004}
+# 静态注册 Body: {"name":"x","type":"external","url":"http://.../run","context_mode":"stateless","agent_card":{"description":"...","skills":[...]}}
 
 # 删除 Agent
 DELETE /api/agents/{name}
@@ -780,7 +867,8 @@ server {
 
 - 确认 Agent URL 从平台容器可达
 - Docker 中使用宿主机 IP 而非 localhost
-- 检查 Agent 的 `/.well-known/agent.json` 是否可访问
+- 发现式注册：检查 Agent 的 `/.well-known/agent.json` 是否可访问
+- 静态注册：如果配置了 `agent_card.health_url`，检查该地址是否返回 200；如果没有配置健康地址，平台不会主动探测健康状态
 
 ### Bridge Agent 返回错误
 

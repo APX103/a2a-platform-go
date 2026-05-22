@@ -43,7 +43,7 @@ Go 实现的 [Agent-to-Agent (A2A)](https://github.com/google/A2A) 协议平台�
 |------|------|
 | **内建 LLM Agent** | 直接配置 OpenAI/Anthropic API，无需外部 Bridge，支持多轮对话 + MCP 工具调用 |
 | **Bridge Agent** | 配置式 HTTP/CLI 桥接，将任意 API 包装为 A2A Agent，无需编写代码 |
-| **Agent 注册/发现** | 注册外部 Agent → 自动抓取 AgentCard → 心跳检测 → 持久化 |
+| **Agent 注册/发现** | 支持发现式注册（自动抓取 AgentCard）和静态注册（提交 AgentCard 由平台托管） |
 | **A2A 消息代理** | `POST /agent/{name}` 透明转发 JSON-RPC，支持 SSE 流式 |
 | **MCP 端点** | `POST /mcp/messages` 暴露 `list_agents` / `send_to_agent` / `get_agent_info` 工具 |
 | **任务追踪** | 每条消息自动创建 Task，记录状态流转 |
@@ -177,12 +177,48 @@ bridge_agents:
 
 ### 注册外部 Agent（独立进程）
 
+外部 Agent 有两种注册方式：
+
+- **发现式注册**：外部 Agent 暴露 `GET /.well-known/agent.json`，平台注册时自动抓取 AgentCard，后续健康检查也会访问该端点。
+- **静态注册**：注册请求直接提交 `agent_card`，平台把 AgentCard 存入数据库并对外提供查询；外部 Agent 只需要保留可被平台代理调用的消息入口。若需要健康状态，请在 `agent_card.health_url` 中提供健康检查地址。
+
+外部 Agent 还可以通过 `context_mode` 声明会话模式：
+
+- `context`（默认）：平台会为未带 `contextId` 的请求自动生成 context，并把同一个 context 下的 task/message/trace 串起来，适合多轮 agent 交互。
+- `stateless`：平台不生成、不转发 `contextId`，每条消息都是一次无上下文 proxy 调用；平台只记录无上下文 task/trace，适合 completion API 或每次都新开会话的目标。
+
+发现式注册：
+
 ```bash
 curl -X POST http://localhost:18090/api/agents \
   -H "Content-Type: application/json" \
   -H "X-Admin-Token: a2a-admin-token" \
-  -d '{"name": "my-agent", "type": "bridge", "url": "http://10.1.52.70:10004"}'
+  -d '{"name": "my-agent", "type": "external", "url": "http://10.1.52.70:10004", "context_mode": "context"}'
 ```
+
+静态注册：
+
+```bash
+curl -X POST http://localhost:18090/api/agents \
+  -H "Content-Type: application/json" \
+  -H "X-Admin-Token: a2a-admin-token" \
+  -d '{
+    "name": "my-agent",
+    "type": "external",
+    "url": "http://10.1.52.70:10004/run",
+    "context_mode": "stateless",
+    "agent_card": {
+      "description": "Existing agent behind a custom endpoint",
+      "version": "1.0.0",
+      "health_url": "http://10.1.52.70:10004/health",
+      "skills": [
+        {"id": "chat", "name": "Chat", "description": "General conversation"}
+      ]
+    }
+  }'
+```
+
+更完整的 Bridge 设计与实现约定见 [Bridge 实现指导手册](docs/BRIDGE_GUIDE.md)。
 
 ## API 参考
 
