@@ -78,7 +78,7 @@ export default function TraceContext() {
               <thead>
                 <tr className="border-b border-[var(--border)]">
                   <th className="text-left px-4 py-3 text-xs font-medium text-[var(--text-tertiary)] uppercase tracking-wider">Task</th>
-                  <th className="text-left px-4 py-3 text-xs font-medium text-[var(--text-tertiary)] uppercase tracking-wider">Agent</th>
+                  <th className="text-left px-4 py-3 text-xs font-medium text-[var(--text-tertiary)] uppercase tracking-wider">Route</th>
                   <th className="text-left px-4 py-3 text-xs font-medium text-[var(--text-tertiary)] uppercase tracking-wider">State</th>
                   <th className="text-left px-4 py-3 text-xs font-medium text-[var(--text-tertiary)] uppercase tracking-wider">Created</th>
                 </tr>
@@ -96,7 +96,11 @@ export default function TraceContext() {
                           {task.display_id || task.local_task_id.slice(0, 8)}
                         </Link>
                       </td>
-                      <td className="px-4 py-3 text-[var(--text-primary)]">{task.agent_name}</td>
+                      <td className="px-4 py-3 text-[var(--text-primary)]">
+                        <span className="text-[var(--text-tertiary)]">{task.source_agent || 'host'}</span>
+                        <span className="mx-1 text-[var(--text-tertiary)]">→</span>
+                        <span>{task.target_agent || task.agent_name}</span>
+                      </td>
                       <td className="px-4 py-3">
                         <span className={`text-xs px-2 py-0.5 rounded-full ${stateColor(task.state)}`}>{task.state}</span>
                       </td>

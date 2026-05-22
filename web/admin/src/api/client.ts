@@ -45,6 +45,8 @@ export interface Task {
   local_task_id: string;
   display_id?: string;
   server_task_id?: string | null;
+  source_agent?: string | null;
+  target_agent?: string;
   agent_name: string;
   state: string;
   context_id?: string;

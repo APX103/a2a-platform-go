@@ -752,6 +752,14 @@ GET /api/tasks/{local_task_id}
 # → {"task":{...},"messages":[...],"traces":[...]}
 ```
 
+Task 中的方向字段：
+
+- `source_agent`：发起方；普通用户或平台发起时默认为 `host`
+- `target_agent`：执行该 task 的目标 Agent
+- `agent_name`：兼容旧字段，当前等价于 `target_agent`
+
+Agent 或 Bridge 代替某个 Agent 调用平台时，可以在请求 `/agent/{target}` 时带 `X-A2A-Source-Agent: <source>`，平台会据此记录 `source_agent -> target_agent`。
+
 #### 追踪
 
 ```bash

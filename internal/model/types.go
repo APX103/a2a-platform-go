@@ -29,6 +29,8 @@ type Task struct {
 	Id           int64     `db:"id" json:"-"`
 	LocalTaskId  string    `db:"local_task_id" json:"local_task_id"`
 	ServerTaskId *string   `db:"server_task_id" json:"server_task_id"`
+	SourceAgent  *string   `db:"source_agent" json:"source_agent,omitempty"`
+	TargetAgent  string    `db:"target_agent" json:"target_agent"`
 	AgentName    string    `db:"agent_name" json:"agent_name"`
 	ContextId    *string   `db:"context_id" json:"context_id"`
 	State        string    `db:"state" json:"state"`
@@ -180,6 +182,8 @@ type ListTasksResp struct {
 type TaskListItem struct {
 	LocalTaskId string  `json:"local_task_id"`
 	DisplayId   string  `json:"display_id"`
+	SourceAgent *string `json:"source_agent,omitempty"`
+	TargetAgent string  `json:"target_agent"`
 	AgentName   string  `json:"agent_name"`
 	State       string  `json:"state"`
 	ContextId   *string `json:"context_id"`

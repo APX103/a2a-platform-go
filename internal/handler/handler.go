@@ -199,8 +199,14 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Create a task for tracking
 	taskId := svc.NewTaskId()
+	sourceAgent := r.Header.Get("X-A2A-Source-Agent")
+	if sourceAgent == "" {
+		sourceAgent = "host"
+	}
 	task := &model.Task{
 		LocalTaskId: taskId,
+		SourceAgent: &sourceAgent,
+		TargetAgent: name,
 		AgentName:   name,
 		State:       "PENDING",
 		ContextId:   contextId,
@@ -232,7 +238,7 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		TaskId:      taskId,
 		ContextId:   contextId,
 		EventType:   "send",
-		AgentName:   "host",
+		AgentName:   sourceAgent,
 		TargetAgent: &name,
 		DataJson:    string(body),
 	}
@@ -343,11 +349,12 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 					// Record every SSE data frame as a stream trace
 					streamTrace := &model.TraceEvent{
-						TaskId:    taskId,
-						ContextId: contextId,
-						EventType: "stream",
-						AgentName: name,
-						DataJson:  truncateString(data, 500),
+						TaskId:      taskId,
+						ContextId:   contextId,
+						EventType:   "stream",
+						AgentName:   name,
+						TargetAgent: &sourceAgent,
+						DataJson:    truncateString(data, 500),
 					}
 					h.svcCtx.Traces.Append(streamTrace)
 					if h.svcCtx.EventBus != nil {
@@ -382,11 +389,12 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		respTrace := &model.TraceEvent{
-			TaskId:    taskId,
-			ContextId: contextId,
-			EventType: "response",
-			AgentName: name,
-			DataJson:  finalText,
+			TaskId:      taskId,
+			ContextId:   contextId,
+			EventType:   "response",
+			AgentName:   name,
+			TargetAgent: &sourceAgent,
+			DataJson:    finalText,
 		}
 		if finalText == "" {
 			respTrace.DataJson = `{"text_length":0}`
@@ -411,6 +419,18 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				Content:   respText,
 			})
 			h.svcCtx.Tasks.Update(taskId, map[string]interface{}{"state": "RESPONDED"})
+		}
+		respTrace := &model.TraceEvent{
+			TaskId:      taskId,
+			ContextId:   contextId,
+			EventType:   "response",
+			AgentName:   name,
+			TargetAgent: &sourceAgent,
+			DataJson:    truncateString(string(respBody), 1000),
+		}
+		h.svcCtx.Traces.Append(respTrace)
+		if h.svcCtx.EventBus != nil {
+			h.svcCtx.EventBus.TraceEvent(respTrace)
 		}
 	}
 }
@@ -456,6 +476,8 @@ func (h *ListTasksHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		items = append(items, model.TaskListItem{
 			LocalTaskId: t.LocalTaskId,
 			DisplayId:   displayId,
+			SourceAgent: t.SourceAgent,
+			TargetAgent: t.TargetAgent,
 			AgentName:   t.AgentName,
 			State:       t.State,
 			ContextId:   t.ContextId,

@@ -50,7 +50,7 @@ export default function Tasks() {
           />
         </div>
         <input
-          placeholder="Agent name"
+          placeholder="Target agent"
           value={filters.agent_name}
           onChange={e => setFilters(f => ({ ...f, agent_name: e.target.value }))}
           className="w-36 px-3 py-2 bg-[var(--bg-secondary)] border border-[var(--border)] rounded-md text-sm text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] outline-none focus:border-[var(--accent)]"
@@ -82,7 +82,7 @@ export default function Tasks() {
               <thead>
                 <tr className="border-b border-[var(--border)]">
                   <th className="text-left px-4 py-3 text-xs font-medium text-[var(--text-tertiary)] uppercase tracking-wider">ID</th>
-                  <th className="text-left px-4 py-3 text-xs font-medium text-[var(--text-tertiary)] uppercase tracking-wider">Agent</th>
+                  <th className="text-left px-4 py-3 text-xs font-medium text-[var(--text-tertiary)] uppercase tracking-wider">Route</th>
                   <th className="text-left px-4 py-3 text-xs font-medium text-[var(--text-tertiary)] uppercase tracking-wider">State</th>
                   <th className="text-left px-4 py-3 text-xs font-medium text-[var(--text-tertiary)] uppercase tracking-wider">Created</th>
                 </tr>
@@ -98,7 +98,11 @@ export default function Tasks() {
                           {t.display_id || t.local_task_id.slice(0, 8)}
                         </Link>
                       </td>
-                      <td className="px-4 py-3 text-[var(--text-primary)]">{t.agent_name}</td>
+                      <td className="px-4 py-3 text-[var(--text-primary)]">
+                        <span className="text-[var(--text-tertiary)]">{t.source_agent || 'host'}</span>
+                        <span className="mx-1 text-[var(--text-tertiary)]">→</span>
+                        <span>{t.target_agent || t.agent_name}</span>
+                      </td>
                       <td className="px-4 py-3">
                         <span className={`text-xs px-2 py-0.5 rounded-full ${stateColor(t.state)}`}>{t.state}</span>
                       </td>

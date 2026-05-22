@@ -108,6 +108,7 @@ func executeSendToAgent(args map[string]any) (string, error) {
 	if !ok || message == "" {
 		return "", fmt.Errorf("message is required")
 	}
+	sourceAgent, _ := args["_source_agent"].(string)
 
 	reqBody := map[string]interface{}{
 		"jsonrpc": "2.0",
@@ -127,7 +128,15 @@ func executeSendToAgent(args map[string]any) (string, error) {
 	}
 
 	client := &http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Post(platformBaseURL+"/agent/"+agent, "application/json", bytes.NewReader(jsonBody))
+	req, err := http.NewRequest("POST", platformBaseURL+"/agent/"+agent, bytes.NewReader(jsonBody))
+	if err != nil {
+		return "", fmt.Errorf("failed to build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if sourceAgent != "" {
+		req.Header.Set("X-A2A-Source-Agent", sourceAgent)
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("failed to send message: %w", err)
 	}

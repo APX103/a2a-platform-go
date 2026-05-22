@@ -159,6 +159,14 @@ Bridge 应该提取：
 - `id`：可原样透传或用于日志关联
 - `method`：当前主路径是 `SendStreamingMessage`，也要兼容 `message/send`
 
+如果 Bridge 代表某个已知 Agent 再调用平台上的另一个 Agent，请在请求平台 `/agent/{target}` 时加：
+
+```http
+X-A2A-Source-Agent: <source-agent-name>
+```
+
+平台会把 task 记录成 `source_agent -> target_agent`。没有该 header 时，平台默认发起方是 `host`。旧字段 `agent_name` 仍然保留，语义等价于 `target_agent`，用于兼容旧客户端。
+
 ## 响应格式
 
 推荐返回 SSE：
@@ -399,6 +407,7 @@ Bridge 应把错误转换成明确的失败事件：
 每个 Bridge 日志至少包含：
 
 - platform agent name
+- source agent / target agent
 - platform contextId
 - platform task/id 或 JSON-RPC id
 - target session id
@@ -451,4 +460,3 @@ CLI/code agent bridge 尤其要小心：
 3. 给 Stateful Bridge 增加持久化和锁。
 4. 增加健康检查和错误分类。
 5. 做 e2e：分别验证 `stateless` 不转发 context、`context` 复用同一 session。
-

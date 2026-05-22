@@ -51,11 +51,15 @@ export default function TaskDetailPage() {
           <span className={`text-sm font-medium ${stateColor(task.state)}`}>{task.state}</span>
         </div>
 
-        <div className="grid grid-cols-3 gap-4 text-sm">
+        <div className="grid grid-cols-4 gap-4 text-sm">
           <div>
-            <span className="text-xs text-[var(--text-tertiary)] uppercase tracking-wider">Agent</span>
+            <span className="text-xs text-[var(--text-tertiary)] uppercase tracking-wider">Source</span>
+            <p className="text-[var(--text-primary)] mt-1">{task.source_agent || 'host'}</p>
+          </div>
+          <div>
+            <span className="text-xs text-[var(--text-tertiary)] uppercase tracking-wider">Target</span>
             <p className="text-[var(--text-primary)] mt-1">
-              <Link to={`/agents/${task.agent_name}`} className="text-[var(--accent)] hover:text-[var(--accent-hover)] no-underline">{task.agent_name}</Link>
+              <Link to={`/agents/${task.target_agent || task.agent_name}`} className="text-[var(--accent)] hover:text-[var(--accent-hover)] no-underline">{task.target_agent || task.agent_name}</Link>
             </p>
           </div>
           <div>

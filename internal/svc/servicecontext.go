@@ -148,6 +148,33 @@ func migrate(db *sql.DB) {
 			slog.Warn("Migration note", "error", err)
 		}
 	}
+	ensureTaskDirectionColumns(db)
+}
+
+func ensureTaskDirectionColumns(db *sql.DB) {
+	statements := []string{}
+	if DBDriver == "mysql" {
+		statements = []string{
+			"ALTER TABLE tasks ADD COLUMN source_agent VARCHAR(255)",
+			"ALTER TABLE tasks ADD COLUMN target_agent VARCHAR(255)",
+			"UPDATE tasks SET target_agent = agent_name WHERE target_agent IS NULL OR target_agent = ''",
+			"CREATE INDEX idx_tasks_source_agent ON tasks(source_agent)",
+			"CREATE INDEX idx_tasks_target_agent ON tasks(target_agent)",
+		}
+	} else {
+		statements = []string{
+			"ALTER TABLE tasks ADD COLUMN source_agent TEXT",
+			"ALTER TABLE tasks ADD COLUMN target_agent TEXT",
+			"UPDATE tasks SET target_agent = agent_name WHERE target_agent IS NULL OR target_agent = ''",
+			"CREATE INDEX IF NOT EXISTS idx_tasks_source_agent ON tasks(source_agent)",
+			"CREATE INDEX IF NOT EXISTS idx_tasks_target_agent ON tasks(target_agent)",
+		}
+	}
+	for _, stmt := range statements {
+		if _, err := db.Exec(stmt); err != nil {
+			slog.Debug("Migration note", "statement", stmt, "error", err)
+		}
+	}
 }
 
 const mysqlSchema = `
@@ -171,12 +198,16 @@ CREATE TABLE IF NOT EXISTS tasks (
 	id BIGINT AUTO_INCREMENT PRIMARY KEY,
 	local_task_id VARCHAR(64) NOT NULL UNIQUE,
 	server_task_id VARCHAR(64),
+	source_agent VARCHAR(255),
+	target_agent VARCHAR(255),
 	agent_name VARCHAR(255) NOT NULL,
 	context_id VARCHAR(64),
 	state VARCHAR(32) NOT NULL DEFAULT 'PENDING',
 	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 	updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 	INDEX idx_agent_name (agent_name),
+	INDEX idx_tasks_source_agent (source_agent),
+	INDEX idx_tasks_target_agent (target_agent),
 	INDEX idx_context_id (context_id),
 	INDEX idx_state (state)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -290,6 +321,8 @@ CREATE TABLE IF NOT EXISTS tasks (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	local_task_id TEXT NOT NULL UNIQUE,
 	server_task_id TEXT,
+	source_agent TEXT,
+	target_agent TEXT,
 	agent_name TEXT NOT NULL,
 	context_id TEXT,
 	state TEXT NOT NULL DEFAULT 'PENDING',
@@ -298,6 +331,8 @@ CREATE TABLE IF NOT EXISTS tasks (
 );
 
 CREATE INDEX IF NOT EXISTS idx_tasks_agent_name ON tasks(agent_name);
+CREATE INDEX IF NOT EXISTS idx_tasks_source_agent ON tasks(source_agent);
+CREATE INDEX IF NOT EXISTS idx_tasks_target_agent ON tasks(target_agent);
 CREATE INDEX IF NOT EXISTS idx_tasks_context_id ON tasks(context_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_state ON tasks(state);
 

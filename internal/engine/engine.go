@@ -619,6 +619,10 @@ func (e *Engine) defaultCallTool(agent *BuiltinAgent, name string, arguments str
 					return "", fmt.Errorf("error parsing arguments: %w", err)
 				}
 			}
+			if args == nil {
+				args = map[string]any{}
+			}
+			args["_source_agent"] = agent.Config.Name
 			result, err := tool.Execute(args)
 			if err != nil {
 				return fmt.Sprintf("Error: %v", err), err

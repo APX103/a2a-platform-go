@@ -130,9 +130,17 @@ func NewTaskStore(db *sql.DB) *TaskStore {
 }
 
 func (s *TaskStore) Create(t *model.Task) error {
+	targetAgent := t.TargetAgent
+	if targetAgent == "" {
+		targetAgent = t.AgentName
+	}
+	agentName := t.AgentName
+	if agentName == "" {
+		agentName = targetAgent
+	}
 	_, err := s.db.Exec(
-		"INSERT INTO tasks (local_task_id, server_task_id, agent_name, context_id, state) VALUES (?, ?, ?, ?, ?)",
-		t.LocalTaskId, t.ServerTaskId, t.AgentName, t.ContextId, t.State,
+		"INSERT INTO tasks (local_task_id, server_task_id, source_agent, target_agent, agent_name, context_id, state) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		t.LocalTaskId, t.ServerTaskId, t.SourceAgent, targetAgent, agentName, t.ContextId, t.State,
 	)
 	return err
 }
@@ -157,11 +165,11 @@ func (s *TaskStore) Update(localTaskId string, fields map[string]interface{}) er
 
 func (s *TaskStore) Get(localTaskId string) (*model.Task, error) {
 	var t model.Task
-	var serverTaskId, contextId sql.NullString
+	var serverTaskId, sourceAgent, targetAgent, contextId sql.NullString
 	err := s.db.QueryRow(
-		"SELECT id, local_task_id, server_task_id, agent_name, context_id, state, created_at, updated_at FROM tasks WHERE local_task_id=?",
+		"SELECT id, local_task_id, server_task_id, source_agent, target_agent, agent_name, context_id, state, created_at, updated_at FROM tasks WHERE local_task_id=?",
 		localTaskId,
-	).Scan(&t.Id, &t.LocalTaskId, &serverTaskId, &t.AgentName, &contextId, &t.State, &t.CreatedAt, &t.UpdatedAt)
+	).Scan(&t.Id, &t.LocalTaskId, &serverTaskId, &sourceAgent, &targetAgent, &t.AgentName, &contextId, &t.State, &t.CreatedAt, &t.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -170,6 +178,14 @@ func (s *TaskStore) Get(localTaskId string) (*model.Task, error) {
 	}
 	if serverTaskId.Valid {
 		t.ServerTaskId = &serverTaskId.String
+	}
+	if sourceAgent.Valid {
+		t.SourceAgent = &sourceAgent.String
+	}
+	if targetAgent.Valid && targetAgent.String != "" {
+		t.TargetAgent = targetAgent.String
+	} else {
+		t.TargetAgent = t.AgentName
 	}
 	if contextId.Valid {
 		t.ContextId = &contextId.String
@@ -203,8 +219,8 @@ func (s *TaskStore) ListByFilter(agentName, state, search, contextId string, con
 	}
 	if search != "" {
 		like := "%" + search + "%"
-		conditions = append(conditions, "(local_task_id LIKE ? OR server_task_id LIKE ? OR context_id LIKE ?)")
-		args = append(args, like, like, like)
+		conditions = append(conditions, "(local_task_id LIKE ? OR server_task_id LIKE ? OR context_id LIKE ? OR source_agent LIKE ? OR target_agent LIKE ?)")
+		args = append(args, like, like, like, like, like)
 	}
 	if len(conditions) > 0 {
 		where = " WHERE " + joinStrings(conditions, " AND ")
@@ -219,7 +235,7 @@ func (s *TaskStore) ListByFilter(agentName, state, search, contextId string, con
 
 	// Query
 	offset := (page - 1) * size
-	querySQL := "SELECT id, local_task_id, server_task_id, agent_name, context_id, state, created_at, updated_at FROM tasks" +
+	querySQL := "SELECT id, local_task_id, server_task_id, source_agent, target_agent, agent_name, context_id, state, created_at, updated_at FROM tasks" +
 		where + " ORDER BY created_at DESC LIMIT ? OFFSET ?"
 	queryArgs := append(args, size, offset)
 	rows, err := s.db.Query(querySQL, queryArgs...)
@@ -231,12 +247,20 @@ func (s *TaskStore) ListByFilter(agentName, state, search, contextId string, con
 	var result []*model.Task
 	for rows.Next() {
 		var t model.Task
-		var serverTaskId, contextId sql.NullString
-		if err := rows.Scan(&t.Id, &t.LocalTaskId, &serverTaskId, &t.AgentName, &contextId, &t.State, &t.CreatedAt, &t.UpdatedAt); err != nil {
+		var serverTaskId, sourceAgent, targetAgent, contextId sql.NullString
+		if err := rows.Scan(&t.Id, &t.LocalTaskId, &serverTaskId, &sourceAgent, &targetAgent, &t.AgentName, &contextId, &t.State, &t.CreatedAt, &t.UpdatedAt); err != nil {
 			return nil, 0, err
 		}
 		if serverTaskId.Valid {
 			t.ServerTaskId = &serverTaskId.String
+		}
+		if sourceAgent.Valid {
+			t.SourceAgent = &sourceAgent.String
+		}
+		if targetAgent.Valid && targetAgent.String != "" {
+			t.TargetAgent = targetAgent.String
+		} else {
+			t.TargetAgent = t.AgentName
 		}
 		if contextId.Valid {
 			t.ContextId = &contextId.String
@@ -248,11 +272,11 @@ func (s *TaskStore) ListByFilter(agentName, state, search, contextId string, con
 
 func (s *TaskStore) GetByContext(contextId string) (*model.Task, error) {
 	var t model.Task
-	var serverTaskId, ctxId sql.NullString
+	var serverTaskId, sourceAgent, targetAgent, ctxId sql.NullString
 	err := s.db.QueryRow(
-		"SELECT id, local_task_id, server_task_id, agent_name, context_id, state, created_at, updated_at FROM tasks WHERE context_id=? ORDER BY updated_at DESC LIMIT 1",
+		"SELECT id, local_task_id, server_task_id, source_agent, target_agent, agent_name, context_id, state, created_at, updated_at FROM tasks WHERE context_id=? ORDER BY updated_at DESC LIMIT 1",
 		contextId,
-	).Scan(&t.Id, &t.LocalTaskId, &serverTaskId, &t.AgentName, &ctxId, &t.State, &t.CreatedAt, &t.UpdatedAt)
+	).Scan(&t.Id, &t.LocalTaskId, &serverTaskId, &sourceAgent, &targetAgent, &t.AgentName, &ctxId, &t.State, &t.CreatedAt, &t.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -261,6 +285,14 @@ func (s *TaskStore) GetByContext(contextId string) (*model.Task, error) {
 	}
 	if serverTaskId.Valid {
 		t.ServerTaskId = &serverTaskId.String
+	}
+	if sourceAgent.Valid {
+		t.SourceAgent = &sourceAgent.String
+	}
+	if targetAgent.Valid && targetAgent.String != "" {
+		t.TargetAgent = targetAgent.String
+	} else {
+		t.TargetAgent = t.AgentName
 	}
 	if ctxId.Valid {
 		t.ContextId = &ctxId.String

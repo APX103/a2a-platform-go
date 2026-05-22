@@ -251,6 +251,8 @@ curl -X POST http://localhost:18090/api/agents \
 | `GET` | `/api/traces/context/{id}` | - | 按 Context 查追踪 |
 | `GET` | `/api/events` | - | SSE 实时事件流 |
 
+Task 会记录 `source_agent -> target_agent`；旧字段 `agent_name` 仍保留，语义等价于 `target_agent`。Bridge 或 Agent 代发平台消息时可设置 `X-A2A-Source-Agent` header 来标记真实发起方。
+
 认证：需要 `X-Admin-Token` header 或 `Authorization: Bearer <token>`。
 
 ### MCP Tools
