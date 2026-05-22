@@ -9,6 +9,8 @@ import TaskDetail from './pages/TaskDetail'
 import Traces from './pages/Traces'
 import TraceContext from './pages/TraceContext'
 import Chat from './pages/Chat'
+import Groups from './pages/Groups'
+import GroupDetail from './pages/GroupDetail'
 
 export default function App() {
   return (
@@ -18,6 +20,8 @@ export default function App() {
         <Route path="/agents" element={<Agents />} />
         <Route path="/agents/:name" element={<AgentDetail />} />
         <Route path="/builtin-agents" element={<BuiltinAgents />} />
+        <Route path="/groups" element={<Groups />} />
+        <Route path="/groups/:id" element={<GroupDetail />} />
         <Route path="/tasks" element={<Tasks />} />
         <Route path="/tasks/:id" element={<TaskDetail />} />
         <Route path="/traces" element={<Traces />} />

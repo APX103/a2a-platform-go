@@ -189,6 +189,87 @@ func TestAuth(t *testing.T) {
 	})
 }
 
+// ===== 3b. Native Group Orchestration =====
+
+func TestGroupOrchestrationLifecycle(t *testing.T) {
+	body := `{
+		"name": "e2e proposal room",
+		"description": "Group orchestration e2e test",
+		"orchestration_mode": "roundtable",
+		"rules": {"required_votes": 2, "max_rounds": 4},
+		"memory_policy": {"hot_messages": 12, "summary": true}
+	}`
+	code, data := req(t, "POST", "/api/groups", body, auth())
+	expect(t, code, 200)
+	group := obj(t, data)
+	groupID, _ := group["id"].(string)
+	if groupID == "" {
+		t.Fatalf("group id missing: %s", string(data))
+	}
+	if group["orchestration_mode"] != "roundtable" {
+		t.Fatalf("mode = %v, want roundtable", group["orchestration_mode"])
+	}
+
+	t.Cleanup(func() {
+		req(t, "DELETE", "/api/groups/"+groupID, "", auth())
+	})
+
+	code, _ = req(t, "POST", "/api/groups/"+groupID+"/members",
+		`{"actor_type":"agent","actor_id":"planner","role":"leader","capabilities":{"skills":["plan"]}}`, auth())
+	expect(t, code, 200)
+
+	code, data = req(t, "POST", "/api/groups/"+groupID+"/join",
+		`{"client_id":"human-e2e","capabilities":{"ui":"browser"}}`, nil)
+	expect(t, code, 200)
+	joined := obj(t, data)
+	if joined["actor_type"] != "human" || joined["actor_id"] != "human-e2e" {
+		t.Fatalf("unexpected join response: %s", string(data))
+	}
+
+	code, data = req(t, "GET", "/api/groups/"+groupID+"/members", "", nil)
+	expect(t, code, 200)
+	members := arr(t, data)
+	if len(members) < 2 {
+		t.Fatalf("members len = %d, want at least 2", len(members))
+	}
+
+	code, data = req(t, "POST", "/api/groups/"+groupID+"/events",
+		`{"event_type":"message","sender_type":"human","sender_id":"human-e2e","content":"please review the proposal"}`, nil)
+	expect(t, code, 200)
+	eventResp := obj(t, data)
+	orch, ok := eventResp["orchestration"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("missing orchestration response: %s", string(data))
+	}
+	if orch["next_action"] != "collect_member_intents" {
+		t.Fatalf("next_action = %v, want collect_member_intents", orch["next_action"])
+	}
+
+	code, data = req(t, "POST", "/api/groups/"+groupID+"/artifacts",
+		`{"name":"proposal.md","artifact_type":"document","content":"# Proposal\n\nInitial draft","created_by":"human-e2e"}`, nil)
+	expect(t, code, 200)
+	artifact := obj(t, data)
+	artifactID, _ := artifact["id"].(string)
+	if artifactID == "" {
+		t.Fatalf("artifact id missing: %s", string(data))
+	}
+
+	code, data = req(t, "PUT", "/api/groups/"+groupID+"/artifacts/"+artifactID,
+		`{"content":"# Proposal\n\nReviewed draft","status":"reviewing"}`, auth())
+	expect(t, code, 200)
+	updatedArtifact := obj(t, data)
+	if updatedArtifact["version"] != float64(2) {
+		t.Fatalf("artifact version = %v, want 2", updatedArtifact["version"])
+	}
+
+	code, data = req(t, "GET", "/api/groups/"+groupID+"/orchestration", "", nil)
+	expect(t, code, 200)
+	state := obj(t, data)
+	if state["mode"] != "roundtable" {
+		t.Fatalf("orchestration mode = %v, want roundtable", state["mode"])
+	}
+}
+
 // ===== 4. Agent List & Detail =====
 
 func TestAgentList(t *testing.T) {

@@ -1,11 +1,12 @@
 import { NavLink, Outlet } from 'react-router-dom'
-import { LayoutDashboard, Bot, ListTodo, Activity, Cpu, Sun, Moon } from 'lucide-react'
+import { LayoutDashboard, Bot, ListTodo, Activity, Cpu, Sun, Moon, Users } from 'lucide-react'
 import { useTheme } from '../hooks/useTheme'
 
 const navItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/agents', icon: Bot, label: 'Agents' },
   { to: '/builtin-agents', icon: Cpu, label: 'Builtin Agents' },
+  { to: '/groups', icon: Users, label: 'Groups' },
   { to: '/tasks', icon: ListTodo, label: 'Tasks' },
   { to: '/traces', icon: Activity, label: 'Traces' },
 ]

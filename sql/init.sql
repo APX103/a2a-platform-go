@@ -136,3 +136,58 @@ CREATE TABLE IF NOT EXISTS builtin_agents (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS a2a_groups (
+    id VARCHAR(36) PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    orchestration_mode VARCHAR(64) NOT NULL DEFAULT 'leader_led',
+    rules_json TEXT,
+    memory_policy_json TEXT,
+    status VARCHAR(32) NOT NULL DEFAULT 'active',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_groups_status (status),
+    INDEX idx_groups_mode (orchestration_mode)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS group_members (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    group_id VARCHAR(36) NOT NULL,
+    actor_type VARCHAR(32) NOT NULL,
+    actor_id VARCHAR(255) NOT NULL,
+    role VARCHAR(64) NOT NULL DEFAULT 'member',
+    capabilities_json TEXT,
+    joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uniq_group_actor (group_id, actor_type, actor_id),
+    INDEX idx_group_members_group (group_id),
+    INDEX idx_group_members_actor (actor_type, actor_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS group_events (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    group_id VARCHAR(36) NOT NULL,
+    event_type VARCHAR(64) NOT NULL,
+    sender_type VARCHAR(32) NOT NULL,
+    sender_id VARCHAR(255) NOT NULL,
+    content TEXT,
+    metadata_json TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_group_events_group (group_id, created_at),
+    INDEX idx_group_events_type (event_type)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS group_artifacts (
+    id VARCHAR(36) PRIMARY KEY,
+    group_id VARCHAR(36) NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    artifact_type VARCHAR(64) NOT NULL DEFAULT 'document',
+    version INT NOT NULL DEFAULT 1,
+    content MEDIUMTEXT,
+    status VARCHAR(32) NOT NULL DEFAULT 'draft',
+    created_by VARCHAR(255),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_group_artifacts_group (group_id),
+    INDEX idx_group_artifacts_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

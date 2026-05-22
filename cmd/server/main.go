@@ -111,6 +111,10 @@ func main() {
 	mux.HandleFunc("/api/contexts/", makeContextRouteHandler(svcCtx))
 	mux.HandleFunc("/api/subagents/", makeSubagentRouteHandler(svcCtx))
 
+	// Native A2A group orchestration API
+	mux.HandleFunc("/api/groups", handler.NewGroupListHandler(svcCtx).ServeHTTP)
+	mux.HandleFunc("/api/groups/", makeGroupRouteHandler(svcCtx))
+
 	// Events SSE stream (for TUI real-time monitoring)
 	mux.HandleFunc("/api/events", handler.NewEventsHandler(svcCtx.EventBus).ServeHTTP)
 
@@ -433,6 +437,59 @@ func makeSubagentRouteHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	}
 }
 
+func makeGroupRouteHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		tail := pathTail(r.URL.Path, "/api/groups/")
+		if tail == "" {
+			jsonError(w, "missing group id", 400)
+			return
+		}
+		parts := strings.Split(tail, "/")
+		groupID := parts[0]
+		r.Header.Set("X-Path-Param-GroupId", groupID)
+
+		if len(parts) == 1 {
+			handler.NewGroupDetailHandler(svcCtx).ServeHTTP(w, r)
+			return
+		}
+
+		switch parts[1] {
+		case "members":
+			if len(parts) == 2 {
+				handler.NewGroupMemberHandler(svcCtx).ServeHTTP(w, r)
+				return
+			}
+		case "join":
+			if len(parts) == 2 {
+				handler.NewGroupJoinHandler(svcCtx).ServeHTTP(w, r)
+				return
+			}
+		case "events":
+			if len(parts) == 2 {
+				handler.NewGroupEventHandler(svcCtx).ServeHTTP(w, r)
+				return
+			}
+		case "artifacts":
+			if len(parts) == 2 {
+				handler.NewGroupArtifactHandler(svcCtx).ServeHTTP(w, r)
+				return
+			}
+			if len(parts) == 3 {
+				r.Header.Set("X-Path-Param-ArtifactId", parts[2])
+				handler.NewGroupArtifactDetailHandler(svcCtx).ServeHTTP(w, r)
+				return
+			}
+		case "orchestration":
+			if len(parts) == 2 {
+				handler.NewGroupOrchestrationHandler(svcCtx).ServeHTTP(w, r)
+				return
+			}
+		}
+
+		jsonError(w, "not found", 404)
+	}
+}
+
 // ===== Middleware =====
 
 func corsMiddleware(next http.Handler, cfg *config.Config) http.Handler {
@@ -484,6 +541,15 @@ func authMiddleware(next http.Handler, svcCtx *svc.ServiceContext) http.Handler 
 			needsAuth = true
 		}
 		if (method == http.MethodPut || method == http.MethodDelete) && strings.HasPrefix(path, "/api/builtin-agents/") {
+			needsAuth = true
+		}
+		if method == http.MethodPost && path == "/api/groups" {
+			needsAuth = true
+		}
+		if (method == http.MethodPut || method == http.MethodDelete) && strings.HasPrefix(path, "/api/groups/") {
+			needsAuth = true
+		}
+		if method == http.MethodPost && strings.HasPrefix(path, "/api/groups/") && strings.HasSuffix(path, "/members") {
 			needsAuth = true
 		}
 

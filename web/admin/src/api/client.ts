@@ -131,6 +131,74 @@ export interface CreateBuiltinAgentReq {
   max_tool_rounds?: number;
 }
 
+export interface Group {
+  id: string;
+  name: string;
+  description?: string;
+  orchestration_mode: 'leader_led' | 'roundtable' | 'stateflow' | 'research_long_horizon' | string;
+  rules_json?: string;
+  memory_policy_json?: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateGroupReq {
+  name: string;
+  description?: string;
+  orchestration_mode?: string;
+  rules?: unknown;
+  memory_policy?: unknown;
+}
+
+export interface GroupMember {
+  id: number;
+  group_id: string;
+  actor_type: 'agent' | 'human' | 'system' | string;
+  actor_id: string;
+  role: string;
+  capabilities_json?: string;
+  joined_at: string;
+}
+
+export interface GroupEvent {
+  id: number;
+  group_id: string;
+  event_type: string;
+  sender_type: 'agent' | 'human' | 'system' | string;
+  sender_id: string;
+  content: string;
+  metadata_json?: string;
+  created_at: string;
+}
+
+export interface GroupArtifact {
+  id: string;
+  group_id: string;
+  name: string;
+  artifact_type: string;
+  version: number;
+  content: string;
+  status: string;
+  created_by?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GroupOrchestrationState {
+  group_id: string;
+  mode: string;
+  next_action: string;
+  eligible_speakers: string[];
+  context_policy: string;
+  termination_policy: string;
+}
+
+export interface GroupEventResponse {
+  event: GroupEvent;
+  orchestration: GroupOrchestrationState;
+}
+
 export const api = {
   getHealth: () => request<HealthResponse>('/health'),
 
@@ -215,4 +283,57 @@ export const api = {
   listSubagents: (contextId: string) => request<{ context_id: string; subagents: TaskSession[] }>(`/api/subagents/${contextId}`),
 
   getSubagent: (id: string) => request<TaskSession>(`/api/subagents/${id}`),
+
+  // Group orchestration API
+  listGroups: (status?: string) => request<Group[]>(`/api/groups${status ? `?status=${encodeURIComponent(status)}` : ''}`),
+  createGroup: (group: CreateGroupReq, token: string) =>
+    request<Group>('/api/groups', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Token': token },
+      body: JSON.stringify(group),
+    }),
+  getGroup: (id: string) => request<Group>(`/api/groups/${id}`),
+  updateGroup: (id: string, group: Partial<CreateGroupReq> & { status?: string }, token: string) =>
+    request<Group>(`/api/groups/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Token': token },
+      body: JSON.stringify(group),
+    }),
+  archiveGroup: (id: string, token: string) =>
+    request<void>(`/api/groups/${id}`, {
+      method: 'DELETE',
+      headers: { 'X-Admin-Token': token },
+    }),
+  listGroupMembers: (id: string) => request<GroupMember[]>(`/api/groups/${id}/members`),
+  addGroupMember: (id: string, member: { actor_type: string; actor_id: string; role?: string; capabilities?: unknown }, token: string) =>
+    request<GroupMember[]>(`/api/groups/${id}/members`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Token': token },
+      body: JSON.stringify(member),
+    }),
+  joinGroup: (id: string, client: { client_id: string; capabilities?: unknown }) =>
+    request<GroupMember>(`/api/groups/${id}/join`, {
+      method: 'POST',
+      body: JSON.stringify(client),
+    }),
+  listGroupEvents: (id: string, limit?: number) =>
+    request<GroupEvent[]>(`/api/groups/${id}/events${limit ? `?limit=${limit}` : ''}`),
+  appendGroupEvent: (id: string, event: { event_type?: string; sender_type: string; sender_id: string; content: string; metadata?: unknown }) =>
+    request<GroupEventResponse>(`/api/groups/${id}/events`, {
+      method: 'POST',
+      body: JSON.stringify(event),
+    }),
+  listGroupArtifacts: (id: string) => request<GroupArtifact[]>(`/api/groups/${id}/artifacts`),
+  createGroupArtifact: (id: string, artifact: { name: string; artifact_type?: string; content: string; status?: string; created_by?: string }) =>
+    request<GroupArtifact>(`/api/groups/${id}/artifacts`, {
+      method: 'POST',
+      body: JSON.stringify(artifact),
+    }),
+  updateGroupArtifact: (groupId: string, artifactId: string, artifact: Partial<GroupArtifact>, token: string) =>
+    request<GroupArtifact>(`/api/groups/${groupId}/artifacts/${artifactId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Token': token },
+      body: JSON.stringify(artifact),
+    }),
+  getGroupOrchestration: (id: string) => request<GroupOrchestrationState>(`/api/groups/${id}/orchestration`),
 };

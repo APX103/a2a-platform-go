@@ -160,6 +160,76 @@ type Skill struct {
 	Examples    []string `json:"examples"`
 }
 
+const (
+	GroupModeLeaderLed       = "leader_led"
+	GroupModeRoundtable      = "roundtable"
+	GroupModeStateflow       = "stateflow"
+	GroupModeResearchLongRun = "research_long_horizon"
+
+	GroupStatusActive   = "active"
+	GroupStatusArchived = "archived"
+
+	GroupActorAgent  = "agent"
+	GroupActorHuman  = "human"
+	GroupActorSystem = "system"
+)
+
+// Group is the native A2A collaboration boundary for discovery, context, permissions, and orchestration.
+type Group struct {
+	ID                string    `db:"id" json:"id"`
+	Name              string    `db:"name" json:"name"`
+	Description       string    `db:"description" json:"description,omitempty"`
+	OrchestrationMode string    `db:"orchestration_mode" json:"orchestration_mode"`
+	RulesJson         string    `db:"rules_json" json:"rules_json,omitempty"`
+	MemoryPolicyJson  string    `db:"memory_policy_json" json:"memory_policy_json,omitempty"`
+	Status            string    `db:"status" json:"status"`
+	CreatedAt         time.Time `db:"created_at" json:"created_at"`
+	UpdatedAt         time.Time `db:"updated_at" json:"updated_at"`
+}
+
+type GroupMember struct {
+	ID               int64     `db:"id" json:"id"`
+	GroupID          string    `db:"group_id" json:"group_id"`
+	ActorType        string    `db:"actor_type" json:"actor_type"`
+	ActorID          string    `db:"actor_id" json:"actor_id"`
+	Role             string    `db:"role" json:"role"`
+	CapabilitiesJson string    `db:"capabilities_json" json:"capabilities_json,omitempty"`
+	JoinedAt         time.Time `db:"joined_at" json:"joined_at"`
+}
+
+type GroupEvent struct {
+	ID           int64     `db:"id" json:"id"`
+	GroupID      string    `db:"group_id" json:"group_id"`
+	EventType    string    `db:"event_type" json:"event_type"`
+	SenderType   string    `db:"sender_type" json:"sender_type"`
+	SenderID     string    `db:"sender_id" json:"sender_id"`
+	Content      string    `db:"content" json:"content"`
+	MetadataJson string    `db:"metadata_json" json:"metadata_json,omitempty"`
+	CreatedAt    time.Time `db:"created_at" json:"created_at"`
+}
+
+type GroupArtifact struct {
+	ID           string    `db:"id" json:"id"`
+	GroupID      string    `db:"group_id" json:"group_id"`
+	Name         string    `db:"name" json:"name"`
+	ArtifactType string    `db:"artifact_type" json:"artifact_type"`
+	Version      int       `db:"version" json:"version"`
+	Content      string    `db:"content" json:"content"`
+	Status       string    `db:"status" json:"status"`
+	CreatedBy    string    `db:"created_by" json:"created_by,omitempty"`
+	CreatedAt    time.Time `db:"created_at" json:"created_at"`
+	UpdatedAt    time.Time `db:"updated_at" json:"updated_at"`
+}
+
+type GroupOrchestrationState struct {
+	GroupID           string   `json:"group_id"`
+	Mode              string   `json:"mode"`
+	NextAction        string   `json:"next_action"`
+	EligibleSpeakers  []string `json:"eligible_speakers"`
+	ContextPolicy     string   `json:"context_policy"`
+	TerminationPolicy string   `json:"termination_policy"`
+}
+
 type RegisterAgentReq struct {
 	Name        string     `json:"name"`
 	Type        string     `json:"type"`
