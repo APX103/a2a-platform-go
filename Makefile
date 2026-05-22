@@ -1,4 +1,4 @@
-.PHONY: build build-web build-go build-backend build-embedded dev test clean
+.PHONY: build build-web build-go build-backend build-embedded dev human-dev human-server human-build test clean
 
 WITH_FRONTEND ?= 1
 SERVER_BIN ?= server
@@ -27,6 +27,15 @@ build-embedded:
 
 dev:
 	cd web/admin && npm run dev
+
+human-dev:
+	cd apps/human-client && npm run dev
+
+human-server:
+	cd apps/human-client && npm run server
+
+human-build:
+	cd apps/human-client && npm run build
 
 test:
 	go test ./internal/... ./cmd/server

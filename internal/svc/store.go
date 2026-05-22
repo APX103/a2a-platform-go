@@ -455,19 +455,28 @@ func (s *MessageStore) GetByContext(contextId string) ([]*model.Message, error) 
 
 // AppendWithContext appends a message with context tracking.
 func (s *MessageStore) AppendWithContext(m *model.Message) error {
+	toolCalls := nullableJSONText(m.ToolCalls)
+	thinkingBlocks := nullableJSONText(m.ThinkingBlocks)
 	var err error
 	if m.Timestamp.IsZero() {
 		query := `INSERT INTO messages (task_id, context_id, role, sender_agent, recipient_agent, content, reasoning_content, tool_calls, tool_call_id, thinking_blocks)
 				  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		_, err = s.db.Exec(query, m.TaskId, m.ContextId, m.Role, m.SenderAgent, m.RecipientAgent, m.Content,
-			m.ReasoningContent, m.ToolCalls, m.ToolCallId, m.ThinkingBlocks)
+			m.ReasoningContent, toolCalls, m.ToolCallId, thinkingBlocks)
 	} else {
 		query := `INSERT INTO messages (task_id, context_id, role, sender_agent, recipient_agent, content, reasoning_content, tool_calls, tool_call_id, thinking_blocks, timestamp)
 				  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		_, err = s.db.Exec(query, m.TaskId, m.ContextId, m.Role, m.SenderAgent, m.RecipientAgent, m.Content,
-			m.ReasoningContent, m.ToolCalls, m.ToolCallId, m.ThinkingBlocks, m.Timestamp)
+			m.ReasoningContent, toolCalls, m.ToolCallId, thinkingBlocks, m.Timestamp)
 	}
 	return err
+}
+
+func nullableJSONText(value string) interface{} {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	return value
 }
 
 type messageRowScanner interface {

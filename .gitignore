@@ -32,6 +32,8 @@ bridges/*-bridge.yaml
 # Frontend
 web/admin/node_modules/
 web/dist/
+apps/human-client/node_modules/
+apps/human-client/dist/
 
 # SQLite data
 data/
