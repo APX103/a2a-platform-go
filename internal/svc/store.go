@@ -178,6 +178,10 @@ func (s *TaskStore) Get(localTaskId string) (*model.Task, error) {
 }
 
 func (s *TaskStore) List(agentName, state, search string, page, size int) ([]*model.Task, int64, error) {
+	return s.ListByFilter(agentName, state, search, "", false, page, size)
+}
+
+func (s *TaskStore) ListByFilter(agentName, state, search, contextId string, contextFilterSet bool, page, size int) ([]*model.Task, int64, error) {
 	where := ""
 	args := []interface{}{}
 	conditions := []string{}
@@ -188,6 +192,14 @@ func (s *TaskStore) List(agentName, state, search string, page, size int) ([]*mo
 	if state != "" {
 		conditions = append(conditions, "state=?")
 		args = append(args, state)
+	}
+	if contextFilterSet {
+		if contextId == "" {
+			conditions = append(conditions, "context_id IS NULL")
+		} else {
+			conditions = append(conditions, "context_id=?")
+			args = append(args, contextId)
+		}
 	}
 	if search != "" {
 		like := "%" + search + "%"

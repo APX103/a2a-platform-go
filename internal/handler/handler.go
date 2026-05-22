@@ -430,6 +430,8 @@ func (h *ListTasksHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	agentName := q.Get("agent_name")
 	state := q.Get("state")
 	search := q.Get("search")
+	contextId := q.Get("context_id")
+	_, contextFilterSet := q["context_id"]
 	page, _ := strconv.Atoi(q.Get("page"))
 	size, _ := strconv.Atoi(q.Get("size"))
 	if page <= 0 {
@@ -439,7 +441,7 @@ func (h *ListTasksHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		size = 20
 	}
 
-	tasks, total, err := h.svcCtx.Tasks.List(agentName, state, search, page, size)
+	tasks, total, err := h.svcCtx.Tasks.ListByFilter(agentName, state, search, contextId, contextFilterSet, page, size)
 	if err != nil {
 		errHTTP(w, err)
 		return

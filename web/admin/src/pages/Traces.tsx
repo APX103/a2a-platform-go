@@ -1,72 +1,78 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { api, Task, Trace } from '../api/client'
+import { api, TraceContextSummary } from '../api/client'
+
+const NONE_CONTEXT = 'none'
+
+function contextLabel(contextId: string) {
+  return contextId || 'None'
+}
+
+function contextPath(contextId: string) {
+  return `/traces/context/${contextId ? encodeURIComponent(contextId) : NONE_CONTEXT}`
+}
 
 export default function Traces() {
-  const [traces, setTraces] = useState<(Trace & { _taskId?: string })[]>([])
+  const [contexts, setContexts] = useState<TraceContextSummary[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
 
   useEffect(() => {
-    api.listTasks({ size: 10 })
-      .then(async (res) => {
-        const allTraces: (Trace & { _taskId?: string })[] = []
-        const taskIds = (res.items || []).slice(0, 10).map(t => t.local_task_id)
-        const details = await Promise.all(taskIds.map(id => api.getTask(id).catch(() => null)))
-        for (const d of details) {
-          if (d && d.traces) {
-            for (const tr of d.traces) {
-              allTraces.push({ ...tr, _taskId: d.task.local_task_id })
-            }
-          }
-        }
-        allTraces.sort((a, b) => {
-          const ta = a.timestamp ? new Date(a.timestamp).getTime() : 0
-          const tb = b.timestamp ? new Date(b.timestamp).getTime() : 0
-          return tb - ta
-        })
-        setTraces(allTraces)
-      })
-      .catch(() => {})
+    api.listTraceContexts()
+      .then(data => setContexts(Array.isArray(data) ? data : []))
+      .catch(err => setError(err instanceof Error ? err.message : 'Failed to load traces'))
       .finally(() => setLoading(false))
   }, [])
 
   return (
     <div className="p-8 max-w-5xl">
-      <h2 className="text-lg font-semibold mb-6">Traces</h2>
+      <div className="flex items-center justify-between mb-6">
+        <h2 className="text-lg font-semibold">Traces</h2>
+        <span className="text-xs text-[var(--text-tertiary)]">{contexts.length} sessions</span>
+      </div>
+
+      {error && (
+        <div className="mb-4 p-3 bg-[var(--error)]/10 border border-[var(--error)]/30 rounded-md text-sm text-[var(--error)]">
+          {error}
+        </div>
+      )}
 
       {loading ? (
-        <div className="text-sm text-[var(--text-tertiary)]">Loading traces from recent tasks...</div>
+        <div className="text-sm text-[var(--text-tertiary)]">Loading trace sessions...</div>
       ) : (
         <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg overflow-hidden">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-[var(--border)]">
-                <th className="text-left px-4 py-3 text-xs font-medium text-[var(--text-tertiary)] uppercase tracking-wider">Event</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-[var(--text-tertiary)] uppercase tracking-wider">Agent</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-[var(--text-tertiary)] uppercase tracking-wider">Target</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-[var(--text-tertiary)] uppercase tracking-wider">Task</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-[var(--text-tertiary)] uppercase tracking-wider">Duration</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-[var(--text-tertiary)] uppercase tracking-wider">Time</th>
+                <th className="text-left px-4 py-3 text-xs font-medium text-[var(--text-tertiary)] uppercase tracking-wider">Context</th>
+                <th className="text-left px-4 py-3 text-xs font-medium text-[var(--text-tertiary)] uppercase tracking-wider">Events</th>
+                <th className="text-left px-4 py-3 text-xs font-medium text-[var(--text-tertiary)] uppercase tracking-wider">Agents</th>
+                <th className="text-left px-4 py-3 text-xs font-medium text-[var(--text-tertiary)] uppercase tracking-wider">Last Active</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--border)]">
-              {traces.length === 0 ? (
-                <tr><td colSpan={6} className="px-4 py-6 text-center text-[var(--text-tertiary)]">No traces found</td></tr>
+              {contexts.length === 0 ? (
+                <tr>
+                  <td colSpan={4} className="px-4 py-6 text-center text-[var(--text-tertiary)]">No trace sessions found</td>
+                </tr>
               ) : (
-                traces.map((tr, i) => (
-                  <tr key={i} className="hover:bg-[var(--bg-tertiary)]/30 transition-colors">
-                    <td className="px-4 py-3 font-mono text-xs text-[var(--text-primary)]">{tr.event_type}</td>
-                    <td className="px-4 py-3 text-[var(--text-secondary)]">{tr.agent_name || '-'}</td>
-                    <td className="px-4 py-3 text-[var(--text-secondary)]">{tr.target_agent || '-'}</td>
+                contexts.map(ctx => (
+                  <tr key={ctx.context_id || NONE_CONTEXT} className="hover:bg-[var(--bg-tertiary)]/30 transition-colors">
                     <td className="px-4 py-3">
-                      {tr._taskId ? (
-                        <Link to={`/tasks/${tr._taskId}`} className="font-mono text-xs text-[var(--accent)] hover:text-[var(--accent-hover)] no-underline">
-                          {tr._taskId.slice(0, 8)}
-                        </Link>
-                      ) : '-'}
+                      <Link
+                        to={contextPath(ctx.context_id)}
+                        className="font-mono text-xs text-[var(--accent)] hover:text-[var(--accent-hover)] no-underline"
+                      >
+                        {contextLabel(ctx.context_id)}
+                      </Link>
                     </td>
-                    <td className="px-4 py-3 text-[var(--text-tertiary)]">{tr.duration_ms != null ? `${tr.duration_ms}ms` : '-'}</td>
-                    <td className="px-4 py-3 text-[var(--text-tertiary)] text-xs">{tr.timestamp ? new Date(tr.timestamp).toLocaleTimeString() : '-'}</td>
+                    <td className="px-4 py-3 text-[var(--text-secondary)]">{ctx.trace_count}</td>
+                    <td className="px-4 py-3 text-[var(--text-secondary)]">
+                      {ctx.agents?.length ? ctx.agents.join(', ') : '-'}
+                    </td>
+                    <td className="px-4 py-3 text-[var(--text-tertiary)] text-xs">
+                      {ctx.last_active ? new Date(ctx.last_active).toLocaleString() : '-'}
+                    </td>
                   </tr>
                 ))
               )}

@@ -7,6 +7,7 @@ import BuiltinAgents from './pages/BuiltinAgents'
 import Tasks from './pages/Tasks'
 import TaskDetail from './pages/TaskDetail'
 import Traces from './pages/Traces'
+import TraceContext from './pages/TraceContext'
 import Chat from './pages/Chat'
 
 export default function App() {
@@ -20,6 +21,7 @@ export default function App() {
         <Route path="/tasks" element={<Tasks />} />
         <Route path="/tasks/:id" element={<TaskDetail />} />
         <Route path="/traces" element={<Traces />} />
+        <Route path="/traces/context/:contextId" element={<TraceContext />} />
         <Route path="/chat/:agentName" element={<Chat />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

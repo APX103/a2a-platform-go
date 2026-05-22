@@ -85,6 +85,13 @@ export interface TaskListResponse {
   size?: number;
 }
 
+export interface TraceContextSummary {
+  context_id: string;
+  trace_count: number;
+  last_active: string;
+  agents?: string[];
+}
+
 export interface HealthResponse {
   status: string;
   db?: string;
@@ -132,17 +139,20 @@ export const api = {
       headers: { 'Content-Type': 'application/json', 'X-Admin-Token': token },
     }),
 
-  listTasks: (params?: { agent_name?: string; state?: string; search?: string; page?: number; size?: number }) => {
+  listTasks: (params?: { agent_name?: string; state?: string; search?: string; context_id?: string; page?: number; size?: number }) => {
     const searchParams = new URLSearchParams();
     if (params?.agent_name) searchParams.set('agent_name', params.agent_name);
     if (params?.state) searchParams.set('state', params.state);
     if (params?.search) searchParams.set('search', params.search);
+    if (params && Object.prototype.hasOwnProperty.call(params, 'context_id')) searchParams.set('context_id', params.context_id ?? '');
     if (params?.page) searchParams.set('page', String(params.page));
     if (params?.size) searchParams.set('size', String(params.size));
     const qs = searchParams.toString();
     return request<TaskListResponse>(`/api/tasks${qs ? '?' + qs : ''}`);
   },
   getTask: (id: string) => request<TaskDetail>(`/api/tasks/${id}`),
+  listTraceContexts: () => request<TraceContextSummary[]>('/api/traces/contexts'),
+  listTracesByContext: (contextId: string) => request<Trace[]>(`/api/traces/context/${contextId}`),
 
   listBuiltinAgents: () => request<BuiltinAgent[]>('/api/builtin-agents'),
   createBuiltinAgent: (agent: CreateBuiltinAgentReq, token: string) =>
