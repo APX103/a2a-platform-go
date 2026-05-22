@@ -758,6 +758,12 @@ Task 中的方向字段：
 - `target_agent`：执行该 task 的目标 Agent
 - `agent_name`：兼容旧字段，当前等价于 `target_agent`
 
+Message 中的方向字段：
+
+- `role`：协议/LLM 角色，仍然是 `user`、`agent`、`tool` 等，不代表真实说话人
+- `sender_agent`：真实发起消息的一方，例如 `host`、`mi-2`
+- `recipient_agent`：真实接收消息的一方，例如 `mi-3`
+
 Agent 或 Bridge 代替某个 Agent 调用平台时，可以在请求 `/agent/{target}` 时带 `X-A2A-Source-Agent: <source>`，平台会据此记录 `source_agent -> target_agent`。
 
 #### 追踪

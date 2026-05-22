@@ -2,6 +2,7 @@ package svc
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -149,6 +150,9 @@ func migrate(db *sql.DB) {
 		}
 	}
 	ensureTaskDirectionColumns(db)
+	repairLegacyTaskSourcesFromToolCalls(db)
+	ensureMessageDirectionColumns(db)
+	backfillMessageDirections(db)
 }
 
 func ensureTaskDirectionColumns(db *sql.DB) {
@@ -175,6 +179,199 @@ func ensureTaskDirectionColumns(db *sql.DB) {
 			slog.Debug("Migration note", "statement", stmt, "error", err)
 		}
 	}
+}
+
+func ensureMessageDirectionColumns(db *sql.DB) {
+	statements := []string{}
+	if DBDriver == "mysql" {
+		statements = []string{
+			"ALTER TABLE messages ADD COLUMN sender_agent VARCHAR(255)",
+			"ALTER TABLE messages ADD COLUMN recipient_agent VARCHAR(255)",
+			"CREATE INDEX idx_messages_sender_agent ON messages(sender_agent)",
+			"CREATE INDEX idx_messages_recipient_agent ON messages(recipient_agent)",
+		}
+	} else {
+		statements = []string{
+			"ALTER TABLE messages ADD COLUMN sender_agent TEXT",
+			"ALTER TABLE messages ADD COLUMN recipient_agent TEXT",
+			"CREATE INDEX IF NOT EXISTS idx_messages_sender_agent ON messages(sender_agent)",
+			"CREATE INDEX IF NOT EXISTS idx_messages_recipient_agent ON messages(recipient_agent)",
+		}
+	}
+	for _, stmt := range statements {
+		if _, err := db.Exec(stmt); err != nil {
+			slog.Debug("Migration note", "statement", stmt, "error", err)
+		}
+	}
+}
+
+func repairLegacyTaskSourcesFromToolCalls(db *sql.DB) {
+	type legacyTask struct {
+		id          string
+		targetAgent string
+		userText    string
+	}
+
+	rows, err := db.Query(`
+		SELECT t.local_task_id, COALESCE(NULLIF(t.target_agent, ''), t.agent_name), COALESCE(m.content, '')
+		FROM tasks t
+		LEFT JOIN messages m ON m.task_id = t.local_task_id AND m.role = 'user'
+		WHERE (t.source_agent IS NULL OR t.source_agent = '')
+		  AND COALESCE(NULLIF(t.target_agent, ''), t.agent_name) <> ''
+		ORDER BY t.created_at, m.id`)
+	if err != nil {
+		slog.Debug("Legacy task source repair skipped", "error", err)
+		return
+	}
+	defer rows.Close()
+
+	tasks := map[string]legacyTask{}
+	for rows.Next() {
+		var t legacyTask
+		if err := rows.Scan(&t.id, &t.targetAgent, &t.userText); err != nil {
+			slog.Debug("Legacy task source repair scan skipped", "error", err)
+			return
+		}
+		if _, exists := tasks[t.id]; !exists {
+			tasks[t.id] = t
+		}
+	}
+	if len(tasks) == 0 {
+		return
+	}
+
+	traceRows, err := db.Query("SELECT agent_name, data_json FROM traces WHERE event_type = 'tool_call' ORDER BY timestamp, id")
+	if err != nil {
+		slog.Debug("Legacy task source repair trace scan skipped", "error", err)
+		return
+	}
+	defer traceRows.Close()
+
+	type toolCall struct {
+		sourceAgent string
+		targetAgent string
+		message     string
+	}
+	var calls []toolCall
+	for traceRows.Next() {
+		var sourceAgent string
+		var dataJSON sql.NullString
+		if err := traceRows.Scan(&sourceAgent, &dataJSON); err != nil {
+			slog.Debug("Legacy task source repair trace row skipped", "error", err)
+			continue
+		}
+		if !dataJSON.Valid {
+			continue
+		}
+		targetAgent, message, ok := parseSendToAgentTrace(dataJSON.String)
+		if !ok || sourceAgent == "" || targetAgent == "" || message == "" {
+			continue
+		}
+		calls = append(calls, toolCall{sourceAgent: sourceAgent, targetAgent: targetAgent, message: message})
+	}
+
+	for _, task := range tasks {
+		for _, call := range calls {
+			if call.targetAgent != task.targetAgent || call.message != task.userText {
+				continue
+			}
+			_, err := db.Exec("UPDATE tasks SET source_agent=? WHERE local_task_id=? AND (source_agent IS NULL OR source_agent='')", call.sourceAgent, task.id)
+			if err != nil {
+				slog.Debug("Legacy task source repair update skipped", "task", task.id, "error", err)
+				break
+			}
+			_, _ = db.Exec("UPDATE traces SET agent_name=? WHERE task_id=? AND event_type='send' AND agent_name='host'", call.sourceAgent, task.id)
+			break
+		}
+	}
+}
+
+func parseSendToAgentTrace(dataJSON string) (string, string, bool) {
+	var outer struct {
+		Tool      string `json:"tool"`
+		Arguments string `json:"arguments"`
+	}
+	if err := json.Unmarshal([]byte(dataJSON), &outer); err != nil {
+		return "", "", false
+	}
+	if outer.Tool != "send_to_agent" || outer.Arguments == "" {
+		return "", "", false
+	}
+	var args struct {
+		Agent     string `json:"agent"`
+		AgentName string `json:"agent_name"`
+		Message   string `json:"message"`
+	}
+	if err := json.Unmarshal([]byte(outer.Arguments), &args); err != nil {
+		return "", "", false
+	}
+	target := args.Agent
+	if target == "" {
+		target = args.AgentName
+	}
+	return target, args.Message, target != "" && args.Message != ""
+}
+
+func backfillMessageDirections(db *sql.DB) {
+	rows, err := db.Query(`
+		SELECT m.id, m.role, t.source_agent, COALESCE(NULLIF(t.target_agent, ''), t.agent_name)
+		FROM messages m
+		LEFT JOIN tasks t ON t.local_task_id = m.task_id
+		WHERE m.sender_agent IS NULL OR m.sender_agent = '' OR m.recipient_agent IS NULL OR m.recipient_agent = ''`)
+	if err != nil {
+		slog.Debug("Message direction backfill skipped", "error", err)
+		return
+	}
+	defer rows.Close()
+
+	type update struct {
+		id        int64
+		sender    *string
+		recipient *string
+	}
+	var updates []update
+	for rows.Next() {
+		var id int64
+		var role string
+		var sourceAgent, targetAgent sql.NullString
+		if err := rows.Scan(&id, &role, &sourceAgent, &targetAgent); err != nil {
+			slog.Debug("Message direction backfill scan skipped", "error", err)
+			return
+		}
+
+		var sender, recipient *string
+		source := nullableString(sourceAgent)
+		target := nullableString(targetAgent)
+		switch role {
+		case "user":
+			sender = source
+			recipient = target
+		case "agent":
+			sender = target
+			recipient = source
+		case "tool":
+			sender = target
+			recipient = target
+		default:
+			sender = source
+			recipient = target
+		}
+		updates = append(updates, update{id: id, sender: sender, recipient: recipient})
+	}
+	for _, u := range updates {
+		_, err := db.Exec("UPDATE messages SET sender_agent=?, recipient_agent=? WHERE id=?", u.sender, u.recipient, u.id)
+		if err != nil {
+			slog.Debug("Message direction backfill update skipped", "message", u.id, "error", err)
+		}
+	}
+}
+
+func nullableString(ns sql.NullString) *string {
+	if !ns.Valid || ns.String == "" {
+		return nil
+	}
+	value := ns.String
+	return &value
 }
 
 const mysqlSchema = `
@@ -217,6 +414,8 @@ CREATE TABLE IF NOT EXISTS messages (
 	task_id VARCHAR(64) NOT NULL,
 	context_id VARCHAR(64),
 	role VARCHAR(16) NOT NULL,
+	sender_agent VARCHAR(255),
+	recipient_agent VARCHAR(255),
 	content TEXT,
 	reasoning_content TEXT,
 	tool_calls JSON,
@@ -224,7 +423,9 @@ CREATE TABLE IF NOT EXISTS messages (
 	thinking_blocks JSON,
 	timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 	INDEX idx_task_id (task_id),
-	INDEX idx_context_id (context_id)
+	INDEX idx_context_id (context_id),
+	INDEX idx_messages_sender_agent (sender_agent),
+	INDEX idx_messages_recipient_agent (recipient_agent)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS traces (
@@ -341,6 +542,8 @@ CREATE TABLE IF NOT EXISTS messages (
 	task_id TEXT NOT NULL,
 	context_id TEXT,
 	role TEXT NOT NULL,
+	sender_agent TEXT,
+	recipient_agent TEXT,
 	content TEXT,
 	reasoning_content TEXT,
 	tool_calls TEXT,
@@ -351,6 +554,8 @@ CREATE TABLE IF NOT EXISTS messages (
 
 CREATE INDEX IF NOT EXISTS idx_messages_task_id ON messages(task_id);
 CREATE INDEX IF NOT EXISTS idx_messages_context_id ON messages(context_id);
+CREATE INDEX IF NOT EXISTS idx_messages_sender_agent ON messages(sender_agent);
+CREATE INDEX IF NOT EXISTS idx_messages_recipient_agent ON messages(recipient_agent);
 
 CREATE TABLE IF NOT EXISTS traces (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,

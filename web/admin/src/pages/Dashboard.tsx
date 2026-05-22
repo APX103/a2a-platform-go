@@ -99,7 +99,7 @@ export default function Dashboard() {
                 <Link key={t.local_task_id} to={`/tasks/${t.local_task_id}`} className="flex items-center justify-between p-3 hover:bg-[var(--bg-tertiary)]/50 transition-colors no-underline">
                   <div>
                     <div className="text-sm text-[var(--text-primary)] font-mono">{t.display_id || t.local_task_id.slice(0, 8)}</div>
-                    <div className="text-xs text-[var(--text-tertiary)]">{t.source_agent || 'host'} → {t.target_agent || t.agent_name}</div>
+                    <div className="text-xs text-[var(--text-tertiary)]">{t.source_agent || 'unknown'} → {t.target_agent || t.agent_name}</div>
                   </div>
                   <span className={`text-xs px-2 py-0.5 rounded-full ${
                     t.state === 'RESPONDED' ? 'bg-[var(--success)]/10 text-[var(--success)]' :

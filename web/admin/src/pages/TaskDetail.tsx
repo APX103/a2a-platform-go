@@ -34,6 +34,8 @@ export default function TaskDetailPage() {
     if (!tr.data_json) return null
     try { return JSON.parse(tr.data_json) } catch { return tr.data_json }
   }
+  const messageSender = (m: { sender_agent?: string | null; role: string }) => m.sender_agent || (m.role === 'user' ? 'unknown' : (task.target_agent || task.agent_name))
+  const messageRecipient = (m: { recipient_agent?: string | null }) => m.recipient_agent || ''
 
   return (
     <div className="p-8 max-w-4xl">
@@ -54,7 +56,7 @@ export default function TaskDetailPage() {
         <div className="grid grid-cols-4 gap-4 text-sm">
           <div>
             <span className="text-xs text-[var(--text-tertiary)] uppercase tracking-wider">Source</span>
-            <p className="text-[var(--text-primary)] mt-1">{task.source_agent || 'host'}</p>
+            <p className="text-[var(--text-primary)] mt-1">{task.source_agent || 'unknown'}</p>
           </div>
           <div>
             <span className="text-xs text-[var(--text-tertiary)] uppercase tracking-wider">Target</span>
@@ -82,7 +84,9 @@ export default function TaskDetailPage() {
             {messages.map((m, i) => (
               <div key={i} className={`bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg p-4 ${m.role === 'user' ? 'border-l-2 border-l-[var(--info)]' : 'border-l-2 border-l-[var(--success)]'}`}>
                 <div className="flex items-center gap-2 mb-2">
-                  <span className={`text-xs font-medium uppercase ${m.role === 'user' ? 'text-[var(--info)]' : 'text-[var(--success)]'}`}>{m.role}</span>
+                  <span className={`text-xs font-medium ${m.role === 'user' ? 'text-[var(--info)]' : 'text-[var(--success)]'}`}>{messageSender(m)}</span>
+                  {messageRecipient(m) && <span className="text-xs text-[var(--text-tertiary)]">→ {messageRecipient(m)}</span>}
+                  <span className="text-xs text-[var(--text-tertiary)] uppercase">role:{m.role}</span>
                   {m.timestamp && <span className="text-xs text-[var(--text-tertiary)]">{new Date(m.timestamp).toLocaleTimeString()}</span>}
                 </div>
                 <p className="text-sm text-[var(--text-primary)] whitespace-pre-wrap">{m.content}</p>

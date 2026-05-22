@@ -223,10 +223,12 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	userText := extractUserText(rpcReq)
 	if userText != "" {
 		if err := h.svcCtx.Messages.Append(&model.Message{
-			TaskId:    taskId,
-			ContextId: contextId,
-			Role:      "user",
-			Content:   userText,
+			TaskId:         taskId,
+			ContextId:      contextId,
+			Role:           "user",
+			SenderAgent:    &sourceAgent,
+			RecipientAgent: &name,
+			Content:        userText,
 		}); err != nil {
 			jsonError(w, fmt.Sprintf("message save failed: %s", err), 500)
 			return
@@ -258,6 +260,7 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return h.svcCtx.Traces.Append(e)
 			},
 			SaveMessage: func(m *model.Message) error {
+				applyMessageDirection(m, sourceAgent, name)
 				return h.svcCtx.Messages.Append(m)
 			},
 		}
@@ -378,10 +381,12 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// Record agent response
 		if finalText != "" {
 			h.svcCtx.Messages.Append(&model.Message{
-				TaskId:    taskId,
-				ContextId: contextId,
-				Role:      "agent",
-				Content:   finalText,
+				TaskId:         taskId,
+				ContextId:      contextId,
+				Role:           "agent",
+				SenderAgent:    &name,
+				RecipientAgent: &sourceAgent,
+				Content:        finalText,
 			})
 			h.svcCtx.Tasks.Update(taskId, map[string]interface{}{"state": "RESPONDED"})
 			if h.svcCtx.EventBus != nil {
@@ -413,10 +418,12 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		respText := extractResponseText(respBody)
 		if respText != "" {
 			h.svcCtx.Messages.Append(&model.Message{
-				TaskId:    taskId,
-				ContextId: contextId,
-				Role:      "agent",
-				Content:   respText,
+				TaskId:         taskId,
+				ContextId:      contextId,
+				Role:           "agent",
+				SenderAgent:    &name,
+				RecipientAgent: &sourceAgent,
+				Content:        respText,
 			})
 			h.svcCtx.Tasks.Update(taskId, map[string]interface{}{"state": "RESPONDED"})
 		}
@@ -635,6 +642,43 @@ func applyContextModeToRPC(rpcReq map[string]interface{}, contextMode string) *s
 		rpcReq["params"] = map[string]interface{}{"contextId": *contextId}
 	}
 	return contextId
+}
+
+func applyMessageDirection(m *model.Message, sourceAgent, targetAgent string) {
+	if m == nil {
+		return
+	}
+	switch m.Role {
+	case "user":
+		if m.SenderAgent == nil && sourceAgent != "" {
+			m.SenderAgent = &sourceAgent
+		}
+		if m.RecipientAgent == nil && targetAgent != "" {
+			m.RecipientAgent = &targetAgent
+		}
+	case "agent":
+		if m.SenderAgent == nil && targetAgent != "" {
+			m.SenderAgent = &targetAgent
+		}
+		if m.RecipientAgent == nil && sourceAgent != "" {
+			m.RecipientAgent = &sourceAgent
+		}
+	case "tool":
+		toolSender := "tool"
+		if m.SenderAgent == nil {
+			m.SenderAgent = &toolSender
+		}
+		if m.RecipientAgent == nil && targetAgent != "" {
+			m.RecipientAgent = &targetAgent
+		}
+	default:
+		if m.SenderAgent == nil && sourceAgent != "" {
+			m.SenderAgent = &sourceAgent
+		}
+		if m.RecipientAgent == nil && targetAgent != "" {
+			m.RecipientAgent = &targetAgent
+		}
+	}
 }
 
 func extractUserText(rpcReq map[string]interface{}) string {

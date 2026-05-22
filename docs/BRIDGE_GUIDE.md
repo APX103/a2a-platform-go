@@ -167,6 +167,13 @@ X-A2A-Source-Agent: <source-agent-name>
 
 平台会把 task 记录成 `source_agent -> target_agent`。没有该 header 时，平台默认发起方是 `host`。旧字段 `agent_name` 仍然保留，语义等价于 `target_agent`，用于兼容旧客户端。
 
+消息记录会同时保留两套语义：
+
+- `role` 是目标 Agent/LLM 协议视角的角色，例如 `user` 或 `agent`
+- `sender_agent` / `recipient_agent` 是平台审计视角的真实通信方向
+
+因此 A 调 B 时，请求消息仍可能是 `role=user`，但平台应展示为 `sender_agent=A, recipient_agent=B`。
+
 ## 响应格式
 
 推荐返回 SSE：

@@ -320,15 +320,23 @@ func (s *MessageStore) Append(m *model.Message) error {
 	if m.ContextId != nil && *m.ContextId != "" {
 		return s.AppendWithContext(m)
 	}
-	_, err := s.db.Exec(
-		"INSERT INTO messages (task_id, role, content) VALUES (?, ?, ?)",
-		m.TaskId, m.Role, m.Content,
-	)
+	var err error
+	if m.Timestamp.IsZero() {
+		_, err = s.db.Exec(
+			"INSERT INTO messages (task_id, role, sender_agent, recipient_agent, content) VALUES (?, ?, ?, ?, ?)",
+			m.TaskId, m.Role, m.SenderAgent, m.RecipientAgent, m.Content,
+		)
+	} else {
+		_, err = s.db.Exec(
+			"INSERT INTO messages (task_id, role, sender_agent, recipient_agent, content, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
+			m.TaskId, m.Role, m.SenderAgent, m.RecipientAgent, m.Content, m.Timestamp,
+		)
+	}
 	return err
 }
 
 func (s *MessageStore) GetByTask(taskId string) ([]*model.Message, error) {
-	rows, err := s.db.Query(`SELECT id, task_id, context_id, role, content, reasoning_content, tool_calls,
+	rows, err := s.db.Query(`SELECT id, task_id, context_id, role, sender_agent, recipient_agent, content, reasoning_content, tool_calls,
 		tool_call_id, thinking_blocks, timestamp FROM messages WHERE task_id=? ORDER BY timestamp`, taskId)
 	if err != nil {
 		return nil, err
@@ -336,31 +344,17 @@ func (s *MessageStore) GetByTask(taskId string) ([]*model.Message, error) {
 	defer rows.Close()
 	var result []*model.Message
 	for rows.Next() {
-		var m model.Message
-		var reasoningContent, toolCalls, toolCallId, thinkingBlocks sql.NullString
-		if err := rows.Scan(&m.Id, &m.TaskId, &m.ContextId, &m.Role, &m.Content,
-			&reasoningContent, &toolCalls, &toolCallId, &thinkingBlocks, &m.Timestamp); err != nil {
+		m, err := scanMessage(rows)
+		if err != nil {
 			return nil, err
 		}
-		if reasoningContent.Valid {
-			m.ReasoningContent = &reasoningContent.String
-		}
-		if toolCalls.Valid {
-			m.ToolCalls = toolCalls.String
-		}
-		if toolCallId.Valid {
-			m.ToolCallId = &toolCallId.String
-		}
-		if thinkingBlocks.Valid {
-			m.ThinkingBlocks = thinkingBlocks.String
-		}
-		result = append(result, &m)
+		result = append(result, m)
 	}
 	return result, nil
 }
 
 func (s *MessageStore) GetByContext(contextId string) ([]*model.Message, error) {
-	query := `SELECT id, task_id, context_id, role, content, reasoning_content, tool_calls,
+	query := `SELECT id, task_id, context_id, role, sender_agent, recipient_agent, content, reasoning_content, tool_calls,
 			  tool_call_id, thinking_blocks, timestamp
 			  FROM messages WHERE context_id = ? ORDER BY timestamp`
 
@@ -372,28 +366,12 @@ func (s *MessageStore) GetByContext(contextId string) ([]*model.Message, error) 
 
 	var result []*model.Message
 	for rows.Next() {
-		var m model.Message
-		var reasoningContent, toolCalls, toolCallId, thinkingBlocks sql.NullString
-
-		if err := rows.Scan(&m.Id, &m.TaskId, &m.ContextId, &m.Role, &m.Content,
-			&reasoningContent, &toolCalls, &toolCallId, &thinkingBlocks, &m.Timestamp); err != nil {
+		m, err := scanMessage(rows)
+		if err != nil {
 			return nil, err
 		}
 
-		if reasoningContent.Valid {
-			m.ReasoningContent = &reasoningContent.String
-		}
-		if toolCalls.Valid {
-			m.ToolCalls = toolCalls.String
-		}
-		if toolCallId.Valid {
-			m.ToolCallId = &toolCallId.String
-		}
-		if thinkingBlocks.Valid {
-			m.ThinkingBlocks = thinkingBlocks.String
-		}
-
-		result = append(result, &m)
+		result = append(result, m)
 	}
 
 	return result, nil
@@ -401,11 +379,54 @@ func (s *MessageStore) GetByContext(contextId string) ([]*model.Message, error) 
 
 // AppendWithContext appends a message with context tracking.
 func (s *MessageStore) AppendWithContext(m *model.Message) error {
-	query := `INSERT INTO messages (task_id, context_id, role, content, reasoning_content, tool_calls, tool_call_id, thinking_blocks, timestamp)
-			  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-	_, err := s.db.Exec(query, m.TaskId, m.ContextId, m.Role, m.Content,
-		m.ReasoningContent, m.ToolCalls, m.ToolCallId, m.ThinkingBlocks, m.Timestamp)
+	var err error
+	if m.Timestamp.IsZero() {
+		query := `INSERT INTO messages (task_id, context_id, role, sender_agent, recipient_agent, content, reasoning_content, tool_calls, tool_call_id, thinking_blocks)
+				  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		_, err = s.db.Exec(query, m.TaskId, m.ContextId, m.Role, m.SenderAgent, m.RecipientAgent, m.Content,
+			m.ReasoningContent, m.ToolCalls, m.ToolCallId, m.ThinkingBlocks)
+	} else {
+		query := `INSERT INTO messages (task_id, context_id, role, sender_agent, recipient_agent, content, reasoning_content, tool_calls, tool_call_id, thinking_blocks, timestamp)
+				  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		_, err = s.db.Exec(query, m.TaskId, m.ContextId, m.Role, m.SenderAgent, m.RecipientAgent, m.Content,
+			m.ReasoningContent, m.ToolCalls, m.ToolCallId, m.ThinkingBlocks, m.Timestamp)
+	}
 	return err
+}
+
+type messageRowScanner interface {
+	Scan(dest ...interface{}) error
+}
+
+func scanMessage(row messageRowScanner) (*model.Message, error) {
+	var m model.Message
+	var contextId, senderAgent, recipientAgent, reasoningContent, toolCalls, toolCallId, thinkingBlocks sql.NullString
+	if err := row.Scan(&m.Id, &m.TaskId, &contextId, &m.Role, &senderAgent, &recipientAgent, &m.Content,
+		&reasoningContent, &toolCalls, &toolCallId, &thinkingBlocks, &m.Timestamp); err != nil {
+		return nil, err
+	}
+	if contextId.Valid {
+		m.ContextId = &contextId.String
+	}
+	if senderAgent.Valid {
+		m.SenderAgent = &senderAgent.String
+	}
+	if recipientAgent.Valid {
+		m.RecipientAgent = &recipientAgent.String
+	}
+	if reasoningContent.Valid {
+		m.ReasoningContent = &reasoningContent.String
+	}
+	if toolCalls.Valid {
+		m.ToolCalls = toolCalls.String
+	}
+	if toolCallId.Valid {
+		m.ToolCallId = &toolCallId.String
+	}
+	if thinkingBlocks.Valid {
+		m.ThinkingBlocks = thinkingBlocks.String
+	}
+	return &m, nil
 }
 
 // DeleteByContext removes all messages for a context.

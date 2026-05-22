@@ -44,6 +44,8 @@ type Message struct {
 	TaskId           string    `db:"task_id" json:"task_id"`
 	ContextId        *string   `db:"context_id" json:"context_id,omitempty"`
 	Role             string    `db:"role" json:"role"`
+	SenderAgent      *string   `db:"sender_agent" json:"sender_agent,omitempty"`
+	RecipientAgent   *string   `db:"recipient_agent" json:"recipient_agent,omitempty"`
 	Content          string    `db:"content" json:"content"`
 	ReasoningContent *string   `db:"reasoning_content" json:"reasoning_content,omitempty"`
 	ToolCalls        string    `db:"tool_calls" json:"tool_calls,omitempty"`

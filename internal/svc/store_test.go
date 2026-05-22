@@ -24,6 +24,8 @@ func setupTestDB(t *testing.T) *sql.DB {
 		task_id TEXT NOT NULL,
 		context_id TEXT,
 		role TEXT NOT NULL,
+		sender_agent TEXT,
+		recipient_agent TEXT,
 		content TEXT,
 		reasoning_content TEXT,
 		tool_calls TEXT,
@@ -40,9 +42,7 @@ func setupTestDB(t *testing.T) *sql.DB {
 	return db
 }
 
-// TestAppend_DoesNotSaveContextId verifies that Append() ignores context_id,
-// which is a bug causing messages to be lost when loading history by context.
-func TestAppend_DoesNotSaveContextId(t *testing.T) {
+func TestAppend_SavesContextAndDirection(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
 
@@ -55,6 +55,10 @@ func TestAppend_DoesNotSaveContextId(t *testing.T) {
 		Role:      "user",
 		Content:   "hello",
 	}
+	sender := "host"
+	recipient := "assistant"
+	msg.SenderAgent = &sender
+	msg.RecipientAgent = &recipient
 
 	err := store.Append(msg)
 	if err != nil {
@@ -74,6 +78,10 @@ func TestAppend_DoesNotSaveContextId(t *testing.T) {
 		t.Errorf("Expected 1 message, got %d", len(msgs))
 	} else if msgs[0].Content != "hello" {
 		t.Errorf("Expected content 'hello', got %q", msgs[0].Content)
+	} else if msgs[0].SenderAgent == nil || *msgs[0].SenderAgent != "host" {
+		t.Errorf("Expected sender_agent host, got %v", msgs[0].SenderAgent)
+	} else if msgs[0].RecipientAgent == nil || *msgs[0].RecipientAgent != "assistant" {
+		t.Errorf("Expected recipient_agent assistant, got %v", msgs[0].RecipientAgent)
 	}
 }
 

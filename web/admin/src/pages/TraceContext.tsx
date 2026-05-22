@@ -97,7 +97,7 @@ export default function TraceContext() {
                         </Link>
                       </td>
                       <td className="px-4 py-3 text-[var(--text-primary)]">
-                        <span className="text-[var(--text-tertiary)]">{task.source_agent || 'host'}</span>
+                        <span className="text-[var(--text-tertiary)]">{task.source_agent || 'unknown'}</span>
                         <span className="mx-1 text-[var(--text-tertiary)]">→</span>
                         <span>{task.target_agent || task.agent_name}</span>
                       </td>

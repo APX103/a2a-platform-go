@@ -58,6 +58,8 @@ export interface Message {
   id?: number;
   task_id?: string;
   role: string;
+  sender_agent?: string | null;
+  recipient_agent?: string | null;
   content: string;
   timestamp?: string;
 }

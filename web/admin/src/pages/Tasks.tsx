@@ -99,7 +99,7 @@ export default function Tasks() {
                         </Link>
                       </td>
                       <td className="px-4 py-3 text-[var(--text-primary)]">
-                        <span className="text-[var(--text-tertiary)]">{t.source_agent || 'host'}</span>
+                        <span className="text-[var(--text-tertiary)]">{t.source_agent || 'unknown'}</span>
                         <span className="mx-1 text-[var(--text-tertiary)]">→</span>
                         <span>{t.target_agent || t.agent_name}</span>
                       </td>
