@@ -69,7 +69,7 @@ func invokeHTTP(ctx context.Context, skill *config.SkillInvoke, target *config.B
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
 	if err != nil {
 		return "", fmt.Errorf("read response: %w", err)
 	}

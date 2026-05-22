@@ -81,20 +81,35 @@ func (h *CreateBuiltinAgentHandler) ServeHTTP(w http.ResponseWriter, r *http.Req
 
 	cfg := req.toConfig()
 
-	// Persist to database
-	_, err := h.svcCtx.BuiltinAgents.Create(cfg)
-	if err != nil {
-		jsonError(w, fmt.Sprintf("failed to save builtin agent: %v", err), 500)
-		return
-	}
-
 	if existing := h.svcCtx.Engine.GetAgent(cfg.Name); existing != nil {
 		h.svcCtx.Engine.RemoveAgent(cfg.Name)
 	}
-
 	if err := h.svcCtx.Engine.RegisterAgent(cfg); err != nil {
 		jsonError(w, err.Error(), 400)
 		return
+	}
+
+	// Persist after validation/registration succeeds. POST is intentionally
+	// idempotent for an existing builtin agent name, matching the existing
+	// API/e2e contract.
+	existingCfg, err := h.svcCtx.BuiltinAgents.Get(cfg.Name)
+	if err != nil {
+		h.svcCtx.Engine.RemoveAgent(cfg.Name)
+		jsonError(w, fmt.Sprintf("failed to load builtin agent: %v", err), 500)
+		return
+	}
+	if existingCfg == nil {
+		if _, err := h.svcCtx.BuiltinAgents.Create(cfg); err != nil {
+			h.svcCtx.Engine.RemoveAgent(cfg.Name)
+			jsonError(w, fmt.Sprintf("failed to save builtin agent: %v", err), 500)
+			return
+		}
+	} else {
+		if err := h.svcCtx.BuiltinAgents.Update(cfg); err != nil {
+			h.svcCtx.Engine.RemoveAgent(cfg.Name)
+			jsonError(w, fmt.Sprintf("failed to update builtin agent: %v", err), 500)
+			return
+		}
 	}
 
 	h.svcCtx.Registry.RegisterBuiltinAgent(cfg.Name, cfg.Description, nil)

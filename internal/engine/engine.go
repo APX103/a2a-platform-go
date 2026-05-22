@@ -28,6 +28,7 @@ const (
 	sseEventSubagentStarted  = "subagent.started"
 	sseEventSubagentComplete = "subagent.completed"
 	sseEventSubagentError    = "subagent.error"
+	toolCallTimeout          = 120 * time.Second
 )
 
 type Deps struct {
@@ -199,7 +200,7 @@ func (e *Engine) HandleRequest(
 ) {
 	agent := e.GetAgent(agentName)
 	if agent == nil {
-		http.Error(w, `{"error":"builtin agent not found"}`, 404)
+		writeJSONError(w, "builtin agent not found", http.StatusNotFound)
 		return
 	}
 
@@ -208,17 +209,7 @@ func (e *Engine) HandleRequest(
 	if contextId != "" {
 		msgs, err := deps.LoadHistory(contextId)
 		if err == nil {
-			for _, m := range msgs {
-				role := m.Role
-				if role == "agent" {
-					role = "assistant"
-				}
-				msg := llm.ChatMessage{Role: role, Content: m.Content}
-				if m.ReasoningContent != nil && *m.ReasoningContent != "" {
-					msg.ReasoningContent = *m.ReasoningContent
-				}
-				history = append(history, msg)
-			}
+			history = buildChatHistory(msgs)
 		}
 	}
 
@@ -231,7 +222,7 @@ func (e *Engine) HandleRequest(
 	w.Header().Set("Connection", "keep-alive")
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		http.Error(w, "streaming not supported", 500)
+		writeJSONError(w, "streaming not supported", http.StatusInternalServerError)
 		return
 	}
 
@@ -268,6 +259,38 @@ func (e *Engine) HandleRequest(
 	})
 }
 
+func buildChatHistory(messages []*model.Message) []llm.ChatMessage {
+	history := make([]llm.ChatMessage, 0, len(messages))
+	for _, m := range messages {
+		role := m.Role
+		if role == "agent" {
+			role = "assistant"
+		}
+
+		msg := llm.ChatMessage{Role: role, Content: m.Content}
+		if m.ReasoningContent != nil && *m.ReasoningContent != "" {
+			msg.ReasoningContent = *m.ReasoningContent
+		}
+		if m.ToolCalls != "" {
+			var calls []llm.ToolCall
+			if err := json.Unmarshal([]byte(m.ToolCalls), &calls); err == nil {
+				msg.ToolCalls = calls
+			}
+		}
+		if m.ToolCallId != nil && *m.ToolCallId != "" {
+			msg.ToolCallID = *m.ToolCallId
+		}
+
+		// A tool-role message without tool_call_id is invalid for OpenAI-style
+		// chat history and will break the next LLM call.
+		if msg.Role == "tool" && msg.ToolCallID == "" {
+			continue
+		}
+		history = append(history, msg)
+	}
+	return history
+}
+
 func (e *Engine) runLoop(
 	ctx context.Context,
 	agent *BuiltinAgent,
@@ -279,7 +302,13 @@ func (e *Engine) runLoop(
 ) (string, error) {
 	cfg := agent.Config
 	maxRounds := cfg.MaxToolRounds
+	if maxRounds == 0 {
+		maxRounds = 10
+	}
 	maxTurns := cfg.MaxTurns
+	if maxTurns == 0 {
+		maxTurns = 20
+	}
 	turnCount := 0
 
 	for round := 0; round <= maxRounds; round++ {
@@ -390,6 +419,7 @@ func (e *Engine) runLoop(
 			err    error
 		})
 		var roWg sync.WaitGroup
+		var roMu sync.Mutex
 		for _, tc := range toolCalls {
 			if tc.Name == "spawn_agent" || !toolRO[tc.Name] {
 				continue
@@ -397,14 +427,16 @@ func (e *Engine) runLoop(
 			roWg.Add(1)
 			go func(tcall llm.ToolCall) {
 				defer roWg.Done()
-				res, err := e.callTool(agent, tcall.Name, tcall.Arguments)
+				res, err := e.callToolWithTimeout(ctx, agent, tcall.Name, tcall.Arguments)
 				if err != nil {
 					res = fmt.Sprintf("Error: %s", err)
 				}
+				roMu.Lock()
 				roResults[tcall.ID] = struct {
 					result string
 					err    error
 				}{result: res, err: err}
+				roMu.Unlock()
 			}(tc)
 		}
 		roWg.Wait()
@@ -473,7 +505,7 @@ func (e *Engine) runLoop(
 						})
 					}
 				} else {
-					result, err = e.callTool(agent, tc.Name, tc.Arguments)
+					result, err = e.callToolWithTimeout(ctx, agent, tc.Name, tc.Arguments)
 					if err != nil {
 						result = fmt.Sprintf("Error: %s", err)
 					}
@@ -484,7 +516,7 @@ func (e *Engine) runLoop(
 				err = res.err
 			} else {
 				// Write tool: execute serially
-				result, err = e.callTool(agent, tc.Name, tc.Arguments)
+				result, err = e.callToolWithTimeout(ctx, agent, tc.Name, tc.Arguments)
 				if err != nil {
 					result = fmt.Sprintf("Error: %s", err)
 				}
@@ -542,6 +574,28 @@ func (e *Engine) runLoop(
 	return "", fmt.Errorf("max tool rounds (%d) exceeded", maxRounds)
 }
 
+func (e *Engine) callToolWithTimeout(ctx context.Context, agent *BuiltinAgent, name string, arguments string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, toolCallTimeout)
+	defer cancel()
+
+	type result struct {
+		text string
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		text, err := e.callTool(agent, name, arguments)
+		done <- result{text: text, err: err}
+	}()
+
+	select {
+	case res := <-done:
+		return res.text, res.err
+	case <-ctx.Done():
+		return "", fmt.Errorf("tool %q timed out after %s", name, toolCallTimeout)
+	}
+}
+
 func (e *Engine) defaultCallTool(agent *BuiltinAgent, name string, arguments string) (string, error) {
 	// Check MCP tools first
 	for _, c := range agent.MCPClients {
@@ -596,6 +650,12 @@ func writeSSE(w http.ResponseWriter, flusher http.Flusher, event string, data in
 	}
 	fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, string(jsonData))
 	flusher.Flush()
+}
+
+func writeJSONError(w http.ResponseWriter, message string, code int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": message})
 }
 
 func truncate(s string, max int) string {

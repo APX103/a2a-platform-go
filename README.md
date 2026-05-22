@@ -255,8 +255,9 @@ MCP SSE 端点：`http://localhost:18090/mcp/sse`
 ├── web/
 │   ├── admin/                   # React 前端源码
 │   ├── dist/                    # Vite 构建输出（git-ignored）
-│   └── embed.go                 # //go:embed
+│   └── embed*.go                # Admin UI embed（默认占位，生产嵌 dist）
 ├── docs/USAGE.md                # 完整使用指南
+├── docs/PROJECT_MAP.md          # 项目结构与整理建议
 ├── tests/e2e/e2e_test.go        # E2E 测试（63 cases）
 ├── etc/
 │   ├── config.yaml              # MySQL 模式配置
@@ -328,6 +329,9 @@ make dev    # 启动 Vite dev server on :3001，自动代理 /api 到 :18090
 
 # 后端开发
 go run ./cmd/server -f etc/config-sqlite.yaml
+
+# 后端单元测试
+make test
 
 # 完整构建
 make build  # 前端 build + Go build

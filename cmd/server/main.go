@@ -25,8 +25,11 @@ import (
 	"a2a-platform/internal/tools"
 	"a2a-platform/web"
 
+	"github.com/google/uuid"
 	"golang.org/x/time/rate"
 )
+
+type requestIDContextKey struct{}
 
 func main() {
 	// Initialize structured logging
@@ -36,8 +39,14 @@ func main() {
 	configFile := flag.String("f", "etc/config.yaml", "config file path")
 	flag.Parse()
 
-	cfg := config.MustLoad(*configFile)
-	svcCtx := svc.NewServiceContext(cfg)
+	cfg, err := config.Load(*configFile)
+	if err != nil {
+		log.Fatalf("Config error: %v", err)
+	}
+	svcCtx, err := svc.NewServiceContext(cfg)
+	if err != nil {
+		log.Fatalf("Service init error: %v", err)
+	}
 
 	// Restore agent connections from DB on startup
 	svcCtx.Registry.RestoreConnections()
@@ -122,7 +131,7 @@ func main() {
 	mux.HandleFunc("/mcp/messages", mcpHandler.ServeMessages)
 
 	// Embedded admin frontend (SPA)
-	distFS, _ := fs.Sub(web.AdminFS, "dist")
+	distFS, _ := fs.Sub(web.AdminFS, web.AdminDir)
 	mux.HandleFunc("/", spaHandler(distFS))
 
 	// ===== Start server =====
@@ -134,6 +143,7 @@ func main() {
 	h = authMiddleware(h, svcCtx)
 	h = rateLimitMiddleware(h, cfg)
 	h = corsMiddleware(h, cfg)
+	h = requestIDMiddleware(h)
 
 	server := &http.Server{
 		Addr:         addr,
@@ -231,9 +241,17 @@ func makeAgentDetailHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 		case http.MethodGet:
 			handler.NewGetAgentHandler(svcCtx).ServeHTTP(w, r)
 		case http.MethodDelete:
+			agent, err := svcCtx.Agents.Get(name)
+			if err != nil {
+				jsonError(w, err.Error(), 500)
+				return
+			}
 			svcCtx.Engine.RemoveAgent(name)
 			svcCtx.Registry.DisconnectAgent(name)
 			_ = svcCtx.Agents.Delete(name)
+			if agent != nil && agent.Type == "builtin" {
+				_ = svcCtx.BuiltinAgents.Delete(name)
+			}
 			w.WriteHeader(204)
 		default:
 			jsonError(w, "method not allowed", 405)
@@ -368,10 +386,20 @@ func makeSubagentRouteHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 		// Check if it's a context ID or subagent ID
 		isUUID := len(tail) == 36 && tail[8] == '-' && tail[13] == '-' && tail[18] == '-' && tail[23] == '-'
 		if isUUID {
-			r.Header.Set("X-Path-Param-Id", tail)
 			switch r.Method {
 			case http.MethodGet:
-				handler.NewGetSubagentHandler(svcCtx).ServeHTTP(w, r)
+				subagent, err := svcCtx.Subagents.Get(tail)
+				if err != nil {
+					jsonError(w, err.Error(), 500)
+					return
+				}
+				if subagent != nil {
+					r.Header.Set("X-Path-Param-Id", tail)
+					handler.NewGetSubagentHandler(svcCtx).ServeHTTP(w, r)
+					return
+				}
+				r.Header.Set("X-Path-Param-ContextId", tail)
+				handler.NewListSubagentsHandler(svcCtx).ServeHTTP(w, r)
 			default:
 				jsonError(w, "method not allowed", 405)
 			}
@@ -434,7 +462,10 @@ func authMiddleware(next http.Handler, svcCtx *svc.ServiceContext) http.Handler 
 		if method == http.MethodDelete && strings.HasPrefix(path, "/api/agents/") {
 			needsAuth = true
 		}
-		if (method == http.MethodPost || method == http.MethodPut || method == http.MethodDelete) && strings.HasPrefix(path, "/api/builtin-agents") {
+		if method == http.MethodPost && path == "/api/builtin-agents" {
+			needsAuth = true
+		}
+		if (method == http.MethodPut || method == http.MethodDelete) && strings.HasPrefix(path, "/api/builtin-agents/") {
 			needsAuth = true
 		}
 
@@ -499,12 +530,26 @@ func loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		next.ServeHTTP(w, r)
+		requestID, _ := r.Context().Value(requestIDContextKey{}).(string)
 		slog.Info("request",
+			"request_id", requestID,
 			"method", r.Method,
 			"path", r.URL.Path,
 			"remote", r.RemoteAddr,
 			"duration", time.Since(start),
 		)
+	})
+}
+
+func requestIDMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestID := r.Header.Get("X-Request-ID")
+		if requestID == "" {
+			requestID = uuid.NewString()
+		}
+		w.Header().Set("X-Request-ID", requestID)
+		ctx := context.WithValue(r.Context(), requestIDContextKey{}, requestID)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 

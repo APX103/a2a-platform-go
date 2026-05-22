@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,10 +13,12 @@ import (
 	"strings"
 	"time"
 
-	"a2a-platform/internal/model"
 	"a2a-platform/internal/engine"
+	"a2a-platform/internal/model"
 	"a2a-platform/internal/svc"
 )
+
+const maxRequestBodyBytes = 16 << 20
 
 // ===== Agent CRUD =====
 
@@ -160,15 +163,24 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	name := getPathParam(r, "name")
 
 	// Read the incoming request body
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			jsonError(w, "request body too large", http.StatusRequestEntityTooLarge)
+			return
+		}
 		jsonError(w, "read body failed", 500)
 		return
 	}
 
 	// Parse JSON-RPC to extract message and contextId for tracing
 	var rpcReq map[string]interface{}
-	json.Unmarshal(body, &rpcReq)
+	if err := json.Unmarshal(body, &rpcReq); err != nil {
+		jsonError(w, "invalid JSON", 400)
+		return
+	}
 
 	// Extract or auto-generate contextId
 	var contextId *string
@@ -189,7 +201,11 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Re-marshal body with injected contextId for forwarding
-	newBody, _ := json.Marshal(rpcReq)
+	newBody, err := json.Marshal(rpcReq)
+	if err != nil {
+		jsonError(w, "request marshal failed", 500)
+		return
+	}
 	body = newBody
 
 	// Create a task for tracking
@@ -200,7 +216,10 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		State:       "PENDING",
 		ContextId:   contextId,
 	}
-	h.svcCtx.Tasks.Create(task)
+	if err := h.svcCtx.Tasks.Create(task); err != nil {
+		jsonError(w, fmt.Sprintf("task create failed: %s", err), 500)
+		return
+	}
 	if h.svcCtx.EventBus != nil {
 		h.svcCtx.EventBus.Task("create", taskId, name, "PENDING")
 	}
@@ -208,12 +227,15 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Extract user text for message recording
 	userText := extractUserText(rpcReq)
 	if userText != "" {
-		h.svcCtx.Messages.Append(&model.Message{
+		if err := h.svcCtx.Messages.Append(&model.Message{
 			TaskId:    taskId,
 			ContextId: contextId,
 			Role:      "user",
 			Content:   userText,
-		})
+		}); err != nil {
+			jsonError(w, fmt.Sprintf("message save failed: %s", err), 500)
+			return
+		}
 	}
 
 	// Record trace
@@ -386,7 +408,7 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		// Non-streaming: relay the full response
-		respBody, _ := io.ReadAll(proxyResp.Body)
+		respBody, _ := io.ReadAll(io.LimitReader(proxyResp.Body, 16<<20))
 		w.WriteHeader(proxyResp.StatusCode)
 		w.Write(respBody)
 

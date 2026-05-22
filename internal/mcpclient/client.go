@@ -12,15 +12,16 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"a2a-platform/internal/llm"
 )
 
 type Client struct {
-	Name   string
-	Tools  []llm.ToolDef
-	send   func(method string, params interface{}) (json.RawMessage, error)
-	close  func()
+	Name  string
+	Tools []llm.ToolDef
+	send  func(method string, params interface{}) (json.RawMessage, error)
+	close func()
 }
 
 func (c *Client) CallTool(name string, arguments string) (string, error) {
@@ -64,7 +65,11 @@ func (c *Client) Close() {
 func ConnectSSE(name, url string) (*Client, error) {
 	slog.Info("Connecting to MCP server via SSE", "name", name, "url", url)
 
-	resp, err := http.Get(url)
+	connectClient := &http.Client{
+		Transport: &http.Transport{ResponseHeaderTimeout: 10 * time.Second},
+	}
+	messagesClient := &http.Client{Timeout: 60 * time.Second}
+	resp, err := connectClient.Get(url)
 	if err != nil {
 		return nil, fmt.Errorf("SSE connect failed: %w", err)
 	}
@@ -116,12 +121,12 @@ func ConnectSSE(name, url string) (*Client, error) {
 			"params":  params,
 		}
 		body, _ := json.Marshal(rpcReq)
-		httpResp, err := http.Post(messagesURL, "application/json", bytes.NewReader(body))
+		httpResp, err := messagesClient.Post(messagesURL, "application/json", bytes.NewReader(body))
 		if err != nil {
 			return nil, err
 		}
 		defer httpResp.Body.Close()
-		respBody, _ := io.ReadAll(httpResp.Body)
+		respBody, _ := io.ReadAll(io.LimitReader(httpResp.Body, 16<<20))
 		var rpcResp struct {
 			Result json.RawMessage `json:"result"`
 			Error  *struct {

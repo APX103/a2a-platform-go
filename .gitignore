@@ -4,6 +4,8 @@ a2a-platform
 
 # Dependencies (managed by go mod)
 vendor/
+.gocache/
+.gomodcache/
 
 # IDE
 .idea/

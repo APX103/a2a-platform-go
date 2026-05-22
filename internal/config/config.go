@@ -86,18 +86,18 @@ type MySQL struct {
 }
 
 type BuiltinAgent struct {
-	Name           string      `yaml:"name" json:"name"`
-	Provider       string      `yaml:"provider" json:"provider"`
-	BaseURL        string      `yaml:"base_url" json:"base_url"`
-	APIKey         string      `yaml:"api_key" json:"-"`
-	Model          string      `yaml:"model" json:"model"`
-	Description    string      `yaml:"description" json:"description"`
-	SystemPrompt   string      `yaml:"system_prompt" json:"system_prompt"`
-	MaxTokens      int         `yaml:"max_tokens" json:"max_tokens"`
-	MaxToolRounds  int         `yaml:"max_tool_rounds" json:"max_tool_rounds"`
+	Name              string      `yaml:"name" json:"name"`
+	Provider          string      `yaml:"provider" json:"provider"`
+	BaseURL           string      `yaml:"base_url" json:"base_url"`
+	APIKey            string      `yaml:"api_key" json:"-"`
+	Model             string      `yaml:"model" json:"model"`
+	Description       string      `yaml:"description" json:"description"`
+	SystemPrompt      string      `yaml:"system_prompt" json:"system_prompt"`
+	MaxTokens         int         `yaml:"max_tokens" json:"max_tokens"`
+	MaxToolRounds     int         `yaml:"max_tool_rounds" json:"max_tool_rounds"`
 	MaxTurns          int         `yaml:"max_turns" json:"max_turns"`
 	MaxToolResultSize int         `yaml:"max_tool_result_size" json:"max_tool_result_size"`
-	MCPServers     []MCPServer `yaml:"mcp_servers" json:"mcp_servers,omitempty"`
+	MCPServers        []MCPServer `yaml:"mcp_servers" json:"mcp_servers,omitempty"`
 }
 
 type MCPServer struct {
@@ -120,17 +120,17 @@ func expandEnv(s string) string {
 	})
 }
 
-func MustLoad(path string) *Config {
+func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 	// Expand environment variables before parsing
 	expanded := expandEnv(string(data))
 
 	var c Config
 	if err := yaml.Unmarshal([]byte(expanded), &c); err != nil {
-		panic(err)
+		return nil, err
 	}
 	if c.Port == 0 {
 		c.Port = 18090
@@ -163,7 +163,7 @@ func MustLoad(path string) *Config {
 			c.BuiltinAgents[i].MaxToolResultSize = 10000
 		}
 	}
-	return &c
+	return &c, nil
 }
 
 func (m MySQL) DSN() string {

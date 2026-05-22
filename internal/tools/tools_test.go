@@ -141,6 +141,40 @@ func TestToolSearch(t *testing.T) {
 	}
 }
 
+func TestExecuteFetchURLRejectsUnsupportedInputs(t *testing.T) {
+	if _, err := executeFetchURL(map[string]any{"url": "file:///etc/passwd"}); err == nil {
+		t.Fatal("expected unsupported scheme error")
+	}
+	if _, err := executeFetchURL(map[string]any{"url": "http://example.test", "method": "TRACE"}); err == nil {
+		t.Fatal("expected unsupported method error")
+	}
+}
+
+func TestResolveWorkspacePathRejectsSiblingPrefix(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	sibling := filepath.Join(root, "workspace-other")
+	if err := os.MkdirAll(workspace, 0755); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	if err := os.MkdirAll(sibling, 0755); err != nil {
+		t.Fatalf("create sibling: %v", err)
+	}
+
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(workspace); err != nil {
+		t.Fatalf("chdir workspace: %v", err)
+	}
+	defer os.Chdir(oldWd)
+
+	if _, err := resolveWorkspacePath(filepath.Join(sibling, "secret.txt")); err == nil {
+		t.Fatal("expected sibling path to be rejected")
+	}
+}
+
 func TestGetBuiltinTools(t *testing.T) {
 	tools := GetBuiltinTools()
 	if len(tools) == 0 {

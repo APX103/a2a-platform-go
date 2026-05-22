@@ -26,7 +26,7 @@ func (b *BridgeAgent) HandleRequest(ctx context.Context, w http.ResponseWriter, 
 	w.Header().Set("Connection", "keep-alive")
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		http.Error(w, "streaming not supported", 500)
+		writeJSONError(w, "streaming not supported", 500)
 		return
 	}
 
@@ -126,6 +126,12 @@ func (b *BridgeAgent) writeSSE(w http.ResponseWriter, flusher http.Flusher, data
 	jsonBytes, _ := json.Marshal(data)
 	fmt.Fprintf(w, "data: %s\n\n", string(jsonBytes))
 	flusher.Flush()
+}
+
+func writeJSONError(w http.ResponseWriter, message string, code int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": message})
 }
 
 // BridgeRegistry manages in-process bridge agents.

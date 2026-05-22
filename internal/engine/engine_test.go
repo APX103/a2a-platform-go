@@ -16,10 +16,12 @@ type mockProvider struct {
 	events    []llm.StreamEvent
 	eventIdx  int
 	callCount int
+	requests  []*llm.ChatRequest
 }
 
 func (m *mockProvider) ChatStream(ctx context.Context, req *llm.ChatRequest) (<-chan llm.StreamEvent, error) {
 	m.callCount++
+	m.requests = append(m.requests, req)
 	ch := make(chan llm.StreamEvent, len(m.events))
 	for m.eventIdx < len(m.events) {
 		evt := m.events[m.eventIdx]
@@ -33,6 +35,122 @@ func (m *mockProvider) ChatStream(ctx context.Context, req *llm.ChatRequest) (<-
 	return ch, nil
 }
 
+func TestBuildChatHistory_RestoresToolCallIDs(t *testing.T) {
+	ctxId := "ctx-1"
+	toolCallId := "call-1"
+	history := buildChatHistory([]*model.Message{
+		{
+			TaskId:    "task-1",
+			ContextId: &ctxId,
+			Role:      "agent",
+			Content:   "I'll call a tool.",
+			ToolCalls: `[{"id":"call-1","name":"test_tool","arguments":"{}"}]`,
+		},
+		{
+			TaskId:     "task-1",
+			ContextId:  &ctxId,
+			Role:       "tool",
+			Content:    "tool result",
+			ToolCallId: &toolCallId,
+		},
+	})
+
+	if len(history) != 2 {
+		t.Fatalf("history len = %d, want 2", len(history))
+	}
+	if history[0].Role != "assistant" {
+		t.Fatalf("first role = %q, want assistant", history[0].Role)
+	}
+	if len(history[0].ToolCalls) != 1 {
+		t.Fatalf("assistant tool calls len = %d, want 1", len(history[0].ToolCalls))
+	}
+	if history[0].ToolCalls[0].ID != toolCallId {
+		t.Fatalf("tool call id = %q, want %q", history[0].ToolCalls[0].ID, toolCallId)
+	}
+	if history[1].Role != "tool" {
+		t.Fatalf("second role = %q, want tool", history[1].Role)
+	}
+	if history[1].ToolCallID != toolCallId {
+		t.Fatalf("tool message tool_call_id = %q, want %q", history[1].ToolCallID, toolCallId)
+	}
+}
+
+func TestBuildChatHistory_SkipsInvalidToolMessageWithoutID(t *testing.T) {
+	history := buildChatHistory([]*model.Message{
+		{TaskId: "task-1", Role: "tool", Content: "orphan result"},
+		{TaskId: "task-1", Role: "user", Content: "next question"},
+	})
+
+	if len(history) != 1 {
+		t.Fatalf("history len = %d, want 1", len(history))
+	}
+	if history[0].Role != "user" {
+		t.Fatalf("role = %q, want user", history[0].Role)
+	}
+}
+
+func TestHandleRequest_LoadsToolHistoryForNextTurn(t *testing.T) {
+	eng := New()
+	provider := &mockProvider{
+		events: []llm.StreamEvent{
+			{Type: "text", Text: "next answer"},
+			{Type: "done"},
+		},
+	}
+	agent := &BuiltinAgent{
+		Config: config.BuiltinAgent{
+			Name:          "test-agent",
+			Provider:      "openai",
+			Model:         "gpt-4",
+			MaxToolRounds: 5,
+		},
+		Provider: provider,
+	}
+	eng.agents["test-agent"] = agent
+
+	ctxId := "ctx-1"
+	toolCallId := "call-1"
+	deps := &Deps{
+		LoadHistory: func(cid string) ([]*model.Message, error) {
+			return []*model.Message{
+				{
+					TaskId:    "task-old",
+					ContextId: &ctxId,
+					Role:      "agent",
+					Content:   "checking",
+					ToolCalls: `[{"id":"call-1","name":"test_tool","arguments":"{}"}]`,
+				},
+				{
+					TaskId:     "task-old",
+					ContextId:  &ctxId,
+					Role:       "tool",
+					Content:    "tool result",
+					ToolCallId: &toolCallId,
+				},
+			}, nil
+		},
+		RecordTrace: func(e *model.TraceEvent) error { return nil },
+		SaveMessage: func(m *model.Message) error { return nil },
+	}
+
+	rec := httptest.NewRecorder()
+	eng.HandleRequest(context.Background(), rec, "test-agent", "next question", ctxId, "task-2", deps)
+
+	if len(provider.requests) != 1 {
+		t.Fatalf("provider requests len = %d, want 1", len(provider.requests))
+	}
+	messages := provider.requests[0].Messages
+	if len(messages) != 3 {
+		t.Fatalf("request messages len = %d, want 3", len(messages))
+	}
+	if len(messages[0].ToolCalls) != 1 {
+		t.Fatalf("assistant history tool calls len = %d, want 1", len(messages[0].ToolCalls))
+	}
+	if messages[1].Role != "tool" || messages[1].ToolCallID != toolCallId {
+		t.Fatalf("tool history = role %q id %q, want tool %q", messages[1].Role, messages[1].ToolCallID, toolCallId)
+	}
+}
+
 // TestRunLoop_MaxRoundsExceeded_ToolExecuted is a regression test for the bug
 // where tools are executed even when maxRounds is exceeded.
 func TestRunLoop_MaxRoundsExceeded_ToolExecuted(t *testing.T) {
@@ -41,11 +159,11 @@ func TestRunLoop_MaxRoundsExceeded_ToolExecuted(t *testing.T) {
 	// Create a mock agent with maxToolRounds = 1
 	agent := &BuiltinAgent{
 		Config: config.BuiltinAgent{
-			Name:           "test-agent",
-			Provider:       "openai",
-			Model:          "gpt-4",
-			MaxToolRounds:  1,
-			SystemPrompt:   "You are a test agent.",
+			Name:          "test-agent",
+			Provider:      "openai",
+			Model:         "gpt-4",
+			MaxToolRounds: 1,
+			SystemPrompt:  "You are a test agent.",
 		},
 		Provider: &mockProvider{
 			events: []llm.StreamEvent{

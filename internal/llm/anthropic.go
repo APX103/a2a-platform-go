@@ -46,7 +46,7 @@ func (p *AnthropicProvider) ChatStream(ctx context.Context, req *ChatRequest) (<
 	}
 	if resp.StatusCode != 200 {
 		defer resp.Body.Close()
-		errBody, _ := io.ReadAll(resp.Body)
+		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		return nil, fmt.Errorf("Anthropic API error %d: %s", resp.StatusCode, string(errBody))
 	}
 
@@ -69,9 +69,9 @@ func (p *AnthropicProvider) buildRequest(req *ChatRequest) map[string]interface{
 				var input interface{}
 				json.Unmarshal([]byte(tc.Arguments), &input)
 				content = append(content, map[string]interface{}{
-					"type": "tool_use",
-					"id":   tc.ID,
-					"name": tc.Name,
+					"type":  "tool_use",
+					"id":    tc.ID,
+					"name":  tc.Name,
 					"input": input,
 				})
 			}

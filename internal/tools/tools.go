@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,7 +27,7 @@ func GetBuiltinTools() []model.BuiltinTool {
 				{Name: "body", Type: "string", Description: "Request body for POST/PUT", Required: false},
 				{Name: "timeout", Type: "number", Description: "Request timeout in seconds", Required: false},
 			},
-			Execute: executeFetchURL,
+			Execute:    executeFetchURL,
 			IsReadOnly: false, // can write via POST/PUT/DELETE
 		},
 		{
@@ -37,7 +38,7 @@ func GetBuiltinTools() []model.BuiltinTool {
 				{Name: "offset", Type: "number", Description: "Line number to start from (1-based)", Required: false},
 				{Name: "limit", Type: "number", Description: "Maximum lines to read", Required: false},
 			},
-			Execute: executeReadFile,
+			Execute:    executeReadFile,
 			IsReadOnly: true,
 		},
 		{
@@ -48,7 +49,7 @@ func GetBuiltinTools() []model.BuiltinTool {
 				{Name: "content", Type: "string", Description: "Content to write", Required: true},
 				{Name: "append", Type: "boolean", Description: "Append to existing file instead of overwrite", Required: false},
 			},
-			Execute: executeWriteFile,
+			Execute:    executeWriteFile,
 			IsReadOnly: false,
 		},
 		{
@@ -58,7 +59,7 @@ func GetBuiltinTools() []model.BuiltinTool {
 				{Name: "path", Type: "string", Description: "Directory path to list", Required: true},
 				{Name: "recursive", Type: "boolean", Description: "List recursively", Required: false},
 			},
-			Execute: executeListDirectory,
+			Execute:    executeListDirectory,
 			IsReadOnly: true,
 		},
 		{
@@ -67,7 +68,7 @@ func GetBuiltinTools() []model.BuiltinTool {
 			Parameters: []model.ToolParameter{
 				{Name: "name", Type: "string", Description: "Pattern to search for", Required: true},
 			},
-			Execute: executeToolSearch,
+			Execute:    executeToolSearch,
 			IsReadOnly: true,
 		},
 	}
@@ -107,19 +108,34 @@ func ExecuteTool(name string, args map[string]any) (string, error) {
 // ===== Tool Implementations =====
 
 func executeFetchURL(args map[string]any) (string, error) {
-	url, ok := args["url"].(string)
-	if !ok || url == "" {
+	targetURL, ok := args["url"].(string)
+	if !ok || targetURL == "" {
 		return "", fmt.Errorf("url is required")
+	}
+	parsedURL, err := url.Parse(targetURL)
+	if err != nil {
+		return "", fmt.Errorf("invalid url: %w", err)
+	}
+	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+		return "", fmt.Errorf("unsupported url scheme: %s", parsedURL.Scheme)
 	}
 
 	method := "GET"
 	if m, ok := args["method"].(string); ok && m != "" {
 		method = strings.ToUpper(m)
 	}
+	switch method {
+	case http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete:
+	default:
+		return "", fmt.Errorf("unsupported method: %s", method)
+	}
 
 	timeout := 30
 	if t, ok := args["timeout"].(float64); ok && t > 0 {
 		timeout = int(t)
+	}
+	if timeout > 120 {
+		timeout = 120
 	}
 
 	client := &http.Client{Timeout: time.Duration(timeout) * time.Second}
@@ -129,7 +145,7 @@ func executeFetchURL(args map[string]any) (string, error) {
 		body = strings.NewReader(b)
 	}
 
-	req, err := http.NewRequest(method, url, body)
+	req, err := http.NewRequest(method, targetURL, body)
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
@@ -151,7 +167,7 @@ func executeFetchURL(args map[string]any) (string, error) {
 	}
 	defer resp.Body.Close()
 
-	respBody, _ := io.ReadAll(resp.Body)
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	content := string(respBody)
 
 	maxLen := 8000
@@ -168,14 +184,9 @@ func executeReadFile(args map[string]any) (string, error) {
 		return "", fmt.Errorf("path is required")
 	}
 
-	absPath, err := filepath.Abs(path)
+	absPath, err := resolveWorkspacePath(path)
 	if err != nil {
-		return "", fmt.Errorf("invalid path: %w", err)
-	}
-
-	wd, _ := os.Getwd()
-	if !strings.HasPrefix(absPath, wd) {
-		return "", fmt.Errorf("path escapes working directory")
+		return "", err
 	}
 
 	content, err := os.ReadFile(absPath)
@@ -227,14 +238,9 @@ func executeWriteFile(args map[string]any) (string, error) {
 		appendMode = true
 	}
 
-	absPath, err := filepath.Abs(path)
+	absPath, err := resolveWorkspacePath(path)
 	if err != nil {
-		return "", fmt.Errorf("invalid path: %w", err)
-	}
-
-	wd, _ := os.Getwd()
-	if !strings.HasPrefix(absPath, wd) {
-		return "", fmt.Errorf("path escapes working directory")
+		return "", err
 	}
 
 	if err := os.MkdirAll(filepath.Dir(absPath), 0755); err != nil {
@@ -277,15 +283,11 @@ func executeListDirectory(args map[string]any) (string, error) {
 		recursive = r
 	}
 
-	absPath, err := filepath.Abs(path)
+	absPath, err := resolveWorkspacePath(path)
 	if err != nil {
-		return "", fmt.Errorf("invalid path: %w", err)
+		return "", err
 	}
-
 	wd, _ := os.Getwd()
-	if !strings.HasPrefix(absPath, wd) {
-		return "", fmt.Errorf("path escapes working directory")
-	}
 
 	var items []string
 	if recursive {
@@ -324,6 +326,25 @@ func executeListDirectory(args map[string]any) (string, error) {
 	}
 
 	return strings.Join(items, "\n"), nil
+}
+
+func resolveWorkspacePath(path string) (string, error) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("invalid path: %w", err)
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve working directory: %w", err)
+	}
+	rel, err := filepath.Rel(wd, absPath)
+	if err != nil {
+		return "", fmt.Errorf("invalid path: %w", err)
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("path escapes working directory")
+	}
+	return absPath, nil
 }
 
 func executeToolSearch(args map[string]any) (string, error) {

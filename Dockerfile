@@ -14,7 +14,7 @@ RUN go mod download
 COPY . .
 COPY --from=frontend /app/web/dist ./web/dist
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build -ldflags="-s -w" -o /a2a-platform ./cmd/server
+    go build -tags frontend -ldflags="-s -w" -o /a2a-platform ./cmd/server
 
 # Runtime stage
 FROM alpine:3.19

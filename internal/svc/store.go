@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"a2a-platform/internal/model"
 
@@ -473,15 +474,50 @@ func (s *TraceStore) ListContexts(limit int) ([]*model.TraceContextSummary, erro
 	for rows.Next() {
 		var cs model.TraceContextSummary
 		var agentsStr sql.NullString
-		if err := rows.Scan(&cs.ContextId, &cs.TraceCount, &cs.LastActive, &agentsStr); err != nil {
+		var lastActive interface{}
+		if err := rows.Scan(&cs.ContextId, &cs.TraceCount, &lastActive, &agentsStr); err != nil {
 			return nil, err
 		}
+		parsedLastActive, err := parseDBTime(lastActive)
+		if err != nil {
+			return nil, err
+		}
+		cs.LastActive = parsedLastActive
 		if agentsStr.Valid && agentsStr.String != "" {
 			cs.Agents = strings.Split(agentsStr.String, ",")
 		}
 		result = append(result, &cs)
 	}
 	return result, nil
+}
+
+func parseDBTime(v interface{}) (time.Time, error) {
+	switch t := v.(type) {
+	case time.Time:
+		return t, nil
+	case string:
+		return parseTimeString(t)
+	case []byte:
+		return parseTimeString(string(t))
+	default:
+		return time.Time{}, fmt.Errorf("unsupported time value %T", v)
+	}
+}
+
+func parseTimeString(s string) (time.Time, error) {
+	for _, layout := range []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02 15:04:05.999999999-07:00",
+		"2006-01-02 15:04:05.999999999Z07:00",
+		"2006-01-02 15:04:05.999999999",
+		"2006-01-02 15:04:05",
+	} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("unsupported time format %q", s)
 }
 
 func scanTraces(rows *sql.Rows) ([]*model.TraceEvent, error) {

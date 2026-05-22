@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -26,10 +27,10 @@ type MCPSSEHandler struct {
 }
 
 type SSESession struct {
-	ID       string
-	Events   chan string
-	Done     chan struct{}
-	Client   http.Client
+	ID     string
+	Events chan string
+	Done   chan struct{}
+	Client http.Client
 }
 
 func NewMCPSSEHandler(svcCtx *svc.ServiceContext, hostURL string) *MCPSSEHandler {
@@ -93,7 +94,7 @@ func (h *MCPSSEHandler) ServeSSE(w http.ResponseWriter, r *http.Request) {
 // ServeMessages handles POST /mcp/messages — receives JSON-RPC requests.
 func (h *MCPSSEHandler) ServeMessages(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", 405)
+		jsonError(w, "method not allowed", 405)
 		return
 	}
 
@@ -107,17 +108,23 @@ func (h *MCPSSEHandler) ServeMessages(w http.ResponseWriter, r *http.Request) {
 		session = nil
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		http.Error(w, "read body failed", 500)
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			jsonError(w, "request body too large", http.StatusRequestEntityTooLarge)
+			return
+		}
+		jsonError(w, "read body failed", 500)
 		return
 	}
 
 	// Parse JSON-RPC request
 	var rpcReq struct {
-		Jsonrpc string `json:"jsonrpc"`
-		ID      interface{} `json:"id"`
-		Method  string `json:"method"`
+		Jsonrpc string          `json:"jsonrpc"`
+		ID      interface{}     `json:"id"`
+		Method  string          `json:"method"`
 		Params  json.RawMessage `json:"params"`
 	}
 	if err := json.Unmarshal(body, &rpcReq); err != nil {

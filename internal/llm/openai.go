@@ -47,7 +47,7 @@ func (p *OpenAIProvider) ChatStream(ctx context.Context, req *ChatRequest) (<-ch
 	}
 	if resp.StatusCode != 200 {
 		defer resp.Body.Close()
-		errBody, _ := io.ReadAll(resp.Body)
+		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		return nil, fmt.Errorf("OpenAI API error %d: %s", resp.StatusCode, string(errBody))
 	}
 

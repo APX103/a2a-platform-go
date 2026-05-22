@@ -2,6 +2,7 @@ package svc
 
 import (
 	"database/sql"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -20,24 +21,27 @@ import (
 var DBDriver string
 
 type ServiceContext struct {
-	Config           *config.Config
-	DB               *sql.DB
-	Agents           *AgentStore
-	Tasks            *TaskStore
-	Messages         *MessageStore
-	Traces           *TraceStore
-	Contexts         *ContextStore
-	Subagents        *SubagentStore
-	TaskItems        *TaskItemStore
-	BuiltinAgents    *BuiltinAgentStore
-	Registry         *AgentRegistry
-	EventBus         *events.Broadcaster
-	Engine           *engine.Engine
-	BridgeRegistry   *bridge.BridgeRegistry
+	Config         *config.Config
+	DB             *sql.DB
+	Agents         *AgentStore
+	Tasks          *TaskStore
+	Messages       *MessageStore
+	Traces         *TraceStore
+	Contexts       *ContextStore
+	Subagents      *SubagentStore
+	TaskItems      *TaskItemStore
+	BuiltinAgents  *BuiltinAgentStore
+	Registry       *AgentRegistry
+	EventBus       *events.Broadcaster
+	Engine         *engine.Engine
+	BridgeRegistry *bridge.BridgeRegistry
 }
 
-func NewServiceContext(c *config.Config) *ServiceContext {
-	db := openDB(c)
+func NewServiceContext(c *config.Config) (*ServiceContext, error) {
+	db, err := openDB(c)
+	if err != nil {
+		return nil, err
+	}
 	migrate(db)
 
 	agents := NewAgentStore(db)
@@ -54,31 +58,31 @@ func NewServiceContext(c *config.Config) *ServiceContext {
 	bridgeReg := bridge.NewRegistry()
 
 	return &ServiceContext{
-		Config:           c,
-		DB:               db,
-		Agents:           agents,
-		Tasks:            tasks,
-		Messages:         messages,
-		Traces:           traces,
-		Contexts:         contexts,
-		Subagents:        subagents,
-		TaskItems:        taskItems,
-		BuiltinAgents:    builtinAgents,
-		Registry:         registry,
-		EventBus:         eventBus,
-		Engine:           eng,
-		BridgeRegistry:   bridgeReg,
-	}
+		Config:         c,
+		DB:             db,
+		Agents:         agents,
+		Tasks:          tasks,
+		Messages:       messages,
+		Traces:         traces,
+		Contexts:       contexts,
+		Subagents:      subagents,
+		TaskItems:      taskItems,
+		BuiltinAgents:  builtinAgents,
+		Registry:       registry,
+		EventBus:       eventBus,
+		Engine:         eng,
+		BridgeRegistry: bridgeReg,
+	}, nil
 }
 
-func openDB(c *config.Config) *sql.DB {
+func openDB(c *config.Config) (*sql.DB, error) {
 	if c.IsMySQL() {
 		return openMySQL(c)
 	}
 	return openSQLite()
 }
 
-func openMySQL(c *config.Config) *sql.DB {
+func openMySQL(c *config.Config) (*sql.DB, error) {
 	DBDriver = "mysql"
 	var db *sql.DB
 	var err error
@@ -87,7 +91,7 @@ func openMySQL(c *config.Config) *sql.DB {
 	for attempt := 0; attempt <= len(retryIntervals); attempt++ {
 		db, err = sql.Open("mysql", c.MySQL.DSN())
 		if err != nil {
-			panic(err)
+			return nil, err
 		}
 		db.SetMaxIdleConns(c.MySQL.MaxIdle)
 		db.SetMaxOpenConns(c.MySQL.MaxOpen)
@@ -104,28 +108,28 @@ func openMySQL(c *config.Config) *sql.DB {
 		}
 	}
 	if err != nil {
-		panic("Failed to connect to MySQL after retries: " + err.Error())
+		return nil, fmt.Errorf("failed to connect to MySQL after retries: %w", err)
 	}
 
 	slog.Info("Connected to MySQL successfully")
-	return db
+	return db, nil
 }
 
-func openSQLite() *sql.DB {
+func openSQLite() (*sql.DB, error) {
 	DBDriver = "sqlite"
 	dbPath := filepath.Join(".", "data", "a2a.db")
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
-		panic("Failed to create data directory: " + err.Error())
+		return nil, fmt.Errorf("failed to create data directory: %w", err)
 	}
 
 	db, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
 	if err != nil {
-		panic("Failed to open SQLite: " + err.Error())
+		return nil, fmt.Errorf("failed to open SQLite: %w", err)
 	}
 	db.SetMaxOpenConns(1)
 
 	slog.Info("Connected to SQLite", "path", dbPath)
-	return db
+	return db, nil
 }
 
 func migrate(db *sql.DB) {

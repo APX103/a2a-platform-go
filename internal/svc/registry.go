@@ -229,6 +229,9 @@ func (r *AgentRegistry) RestoreConnections() {
 		return
 	}
 	for _, rec := range records {
+		if rec.Type == "builtin" || rec.Url == "" {
+			continue
+		}
 		card, err := fetchAgentCard(rec.Url)
 		if err != nil {
 			slog.Warn("Failed to restore agent", "name", rec.Name, "error", err)
