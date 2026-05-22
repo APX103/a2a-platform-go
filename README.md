@@ -293,7 +293,7 @@ MCP SSE 端点：`http://localhost:18090/mcp/sse`
 ├── web/
 │   ├── admin/                   # React 前端源码
 │   ├── dist/                    # Vite 构建输出（git-ignored）
-│   └── embed*.go                # Admin UI embed（默认占位，生产嵌 dist）
+│   └── embed*.go                # Admin UI embed（默认占位，WITH_FRONTEND=1 嵌 dist）
 ├── docs/USAGE.md                # 完整使用指南
 ├── docs/PROJECT_MAP.md          # 项目结构与整理建议
 ├── tests/e2e/e2e_test.go        # E2E 测试（63 cases）
@@ -304,6 +304,36 @@ MCP SSE 端点：`http://localhost:18090/mcp/sse`
 ├── docker-compose.yml           # MySQL + Platform
 ├── Makefile                     # build / dev / clean
 └── go.mod
+```
+
+## 前后端分离构建
+
+默认 `make build` 会编译 React 前端并通过 Go build tag `frontend` 嵌入二进制。只构建后端 API：
+
+```bash
+make build WITH_FRONTEND=0
+```
+
+显式构建嵌入版：
+
+```bash
+make build WITH_FRONTEND=1
+```
+
+Docker 同样支持这个开关：
+
+```bash
+docker build --build-arg WITH_FRONTEND=0 -t a2a-platform:api .
+docker build --build-arg WITH_FRONTEND=1 -t a2a-platform:embedded .
+```
+
+本地前端连接远端后端时可设置：
+
+```bash
+cd web/admin
+VITE_DEV_API_PROXY=https://api.example.com npm run dev
+# 或者直连跨域 API，此时后端 cors_origins 需要允许本地前端 origin
+VITE_API_BASE_URL=https://api.example.com npm run dev
 ```
 
 ## 配置

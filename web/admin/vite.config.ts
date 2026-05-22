@@ -2,6 +2,8 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
+const apiTarget = process.env.VITE_DEV_API_PROXY ?? 'http://localhost:18090'
+
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   build: {
@@ -11,8 +13,10 @@ export default defineConfig({
   server: {
     port: 3001,
     proxy: {
-      '/api': 'http://localhost:18090',
-      '/health': 'http://localhost:18090',
+      '/api': apiTarget,
+      '/health': apiTarget,
+      '/agent': apiTarget,
+      '/mcp': apiTarget,
     }
   }
 })

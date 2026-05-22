@@ -1,0 +1,490 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>A2A Platform 前后端分离、鉴权与人类客户端设计</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #17202a;
+        --muted: #5f6f7a;
+        --line: #d9e2e7;
+        --panel: #ffffff;
+        --page: #f5f7f8;
+        --blue: #246bfe;
+        --green: #0f8a63;
+        --red: #b42318;
+        --amber: #a15c05;
+        --violet: #6655c8;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        color: var(--ink);
+        background: var(--page);
+        line-height: 1.65;
+      }
+
+      header {
+        background: #12202f;
+        color: #ffffff;
+        padding: 56px 32px 44px;
+      }
+
+      header .inner,
+      main {
+        max-width: 1120px;
+        margin: 0 auto;
+      }
+
+      h1 {
+        margin: 0 0 14px;
+        font-size: clamp(30px, 4vw, 48px);
+        line-height: 1.12;
+        letter-spacing: 0;
+      }
+
+      .subtitle {
+        max-width: 760px;
+        margin: 0;
+        color: #d7e4ed;
+        font-size: 18px;
+      }
+
+      main {
+        padding: 30px 24px 56px;
+      }
+
+      section {
+        margin: 24px 0;
+        padding: 28px;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+      }
+
+      h2 {
+        margin: 0 0 16px;
+        font-size: 24px;
+        line-height: 1.25;
+        letter-spacing: 0;
+      }
+
+      h3 {
+        margin: 24px 0 10px;
+        font-size: 18px;
+        letter-spacing: 0;
+      }
+
+      p {
+        margin: 10px 0;
+      }
+
+      ul,
+      ol {
+        padding-left: 22px;
+      }
+
+      li {
+        margin: 6px 0;
+      }
+
+      code {
+        padding: 2px 6px;
+        border: 1px solid #d6dde3;
+        border-radius: 4px;
+        background: #f6f9fb;
+        font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+        font-size: 0.92em;
+      }
+
+      pre {
+        overflow: auto;
+        padding: 16px;
+        border-radius: 8px;
+        border: 1px solid #d6dde3;
+        background: #101820;
+        color: #eaf2f8;
+        line-height: 1.55;
+      }
+
+      pre code {
+        padding: 0;
+        border: 0;
+        background: transparent;
+        color: inherit;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 16px 0;
+        font-size: 14px;
+      }
+
+      th,
+      td {
+        padding: 11px 12px;
+        border: 1px solid var(--line);
+        text-align: left;
+        vertical-align: top;
+      }
+
+      th {
+        background: #eef3f6;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 14px;
+      }
+
+      .note {
+        border-left: 4px solid var(--blue);
+        padding: 12px 14px;
+        background: #eef5ff;
+        border-radius: 6px;
+      }
+
+      .warn {
+        border-left-color: var(--amber);
+        background: #fff7ed;
+      }
+
+      .danger {
+        border-left-color: var(--red);
+        background: #fff1f0;
+      }
+
+      .ok {
+        border-left-color: var(--green);
+        background: #eefaf5;
+      }
+
+      .tag {
+        display: inline-block;
+        margin: 2px 4px 2px 0;
+        padding: 3px 8px;
+        border-radius: 999px;
+        background: #edf1f4;
+        color: #334553;
+        font-size: 12px;
+        white-space: nowrap;
+      }
+
+      .wireframe {
+        display: grid;
+        grid-template-columns: 260px 1fr 300px;
+        gap: 12px;
+        min-height: 420px;
+        padding: 12px;
+        border: 1px solid #cbd6dd;
+        border-radius: 8px;
+        background: #eef3f6;
+      }
+
+      .pane {
+        border: 1px solid #cbd6dd;
+        border-radius: 8px;
+        background: #ffffff;
+        padding: 14px;
+      }
+
+      .pane-title {
+        margin: 0 0 12px;
+        font-weight: 700;
+      }
+
+      .row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 9px 0;
+        border-bottom: 1px solid #edf1f4;
+      }
+
+      .bubble {
+        max-width: 82%;
+        margin: 10px 0;
+        padding: 10px 12px;
+        border-radius: 8px;
+        background: #eef5ff;
+      }
+
+      .bubble.self {
+        margin-left: auto;
+        background: #eefaf5;
+      }
+
+      .button {
+        display: inline-block;
+        min-width: 70px;
+        padding: 7px 10px;
+        border-radius: 6px;
+        background: var(--blue);
+        color: #ffffff;
+        font-size: 12px;
+        text-align: center;
+      }
+
+      @media (max-width: 900px) {
+        .grid,
+        .wireframe {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="inner">
+        <h1>A2A Platform 前后端分离、鉴权与人类客户端设计</h1>
+        <p class="subtitle">
+          目标是在没有完整用户系统的前提下，让后端可以独立上线，让本地或第三方前端安全接入，并为人类用户客户端预留清晰的协议边界。
+        </p>
+      </div>
+    </header>
+
+    <main>
+      <section>
+        <h2>1. 当前结论</h2>
+        <div class="grid">
+          <div class="note ok">
+            <strong>构建开关</strong>
+            <p>保留现有 Go build tag <code>frontend</code>，外层提供 <code>WITH_FRONTEND</code> 变量。后端-only 和嵌入版走同一套源码。</p>
+          </div>
+          <div class="note warn">
+            <strong>鉴权边界</strong>
+            <p>CORS 只能限制浏览器跨域读取，不是服务端认证。公开后端不能依赖 Origin 判断调用者可信。</p>
+          </div>
+          <div class="note">
+            <strong>人类客户端</strong>
+            <p>先做轻量客户端身份和能力令牌，不引入账号、密码、组织、角色等用户系统。</p>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>2. 前后端分离部署</h2>
+        <h3>构建模式</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>模式</th>
+              <th>命令</th>
+              <th>产物</th>
+              <th>适用场景</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>后端-only</td>
+              <td><code>make build WITH_FRONTEND=0</code></td>
+              <td>Go 二进制内只包含占位页</td>
+              <td>线上只部署 API，本地或独立静态站点提供前端</td>
+            </tr>
+            <tr>
+              <td>嵌入前端</td>
+              <td><code>make build WITH_FRONTEND=1</code></td>
+              <td>Go 二进制包含 Vite <code>dist</code></td>
+              <td>单文件部署、内网演示、小规模运维</td>
+            </tr>
+            <tr>
+              <td>Docker 后端-only</td>
+              <td><code>docker build --build-arg WITH_FRONTEND=0 .</code></td>
+              <td>Runtime image 只包含后端</td>
+              <td>云端 API 服务</td>
+            </tr>
+            <tr>
+              <td>Docker 嵌入版</td>
+              <td><code>docker build --build-arg WITH_FRONTEND=1 .</code></td>
+              <td>Runtime image 包含嵌入前端</td>
+              <td>一体化部署</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h3>本地前端连接线上后端</h3>
+        <pre><code>cd web/admin
+VITE_DEV_API_PROXY=https://api.example.com npm run dev
+
+# 或绕过 dev proxy，直接跨域请求远端 API
+VITE_API_BASE_URL=https://api.example.com npm run dev</code></pre>
+        <p>
+          使用 <code>VITE_DEV_API_PROXY</code> 时，浏览器看到的是本地同源请求，Vite dev server 代转给线上后端。使用
+          <code>VITE_API_BASE_URL</code> 时，浏览器直接访问远端 API，后端必须把本地前端 origin 加入 <code>cors_origins</code>。
+        </p>
+      </section>
+
+      <section>
+        <h2>3. 鉴权与攻击面</h2>
+        <div class="note danger">
+          <strong>核心判断</strong>
+          <p>如果后端公网可访问，来历不明的前端、curl、脚本都可以尝试请求后端。CORS 只影响浏览器是否允许页面读取响应，挡不住非浏览器客户端。</p>
+        </div>
+
+        <h3>当前接口分层</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>类别</th>
+              <th>示例</th>
+              <th>当前状态</th>
+              <th>风险</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>公开探活</td>
+              <td><code>/health</code></td>
+              <td>无认证</td>
+              <td>低，可能暴露服务存在与基础状态</td>
+            </tr>
+            <tr>
+              <td>发现与观测</td>
+              <td><code>/api/agents</code>, <code>/api/tasks</code>, <code>/api/traces</code></td>
+              <td>大多无认证</td>
+              <td>中，可能泄露 Agent、任务、上下文、trace 内容</td>
+            </tr>
+            <tr>
+              <td>交互调用</td>
+              <td><code>/agent/{name}</code>, <code>/api/contexts</code></td>
+              <td>无认证</td>
+              <td>高，可能消耗模型额度或触发工具调用</td>
+            </tr>
+            <tr>
+              <td>管理变更</td>
+              <td><code>POST /api/agents</code>, <code>POST /api/builtin-agents</code></td>
+              <td>Admin token</td>
+              <td>中，token 一旦给不可信前端就等同泄露</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h3>建议的无用户系统权限模型</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>凭证</th>
+              <th>谁持有</th>
+              <th>能力</th>
+              <th>存储方式</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>admin_token</code></td>
+              <td>平台管理员</td>
+              <td>注册、删除、更新 Agent 与内建 Agent</td>
+              <td>后端配置或环境变量，不写进前端构建产物</td>
+            </tr>
+            <tr>
+              <td><code>client_token</code></td>
+              <td>可信人类客户端</td>
+              <td>列列表、创建会话、发送消息、读取自己的上下文</td>
+              <td>后端配置多个 token，可轮换，可命名</td>
+            </tr>
+            <tr>
+              <td><code>agent_secret</code></td>
+              <td>Agent 或 Bridge</td>
+              <td>Agent 自注册、心跳、回调、受限代理调用</td>
+              <td>Agent 配置，不交给浏览器</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <p>
+          第一阶段可以只实现 <code>client_token</code> 的校验，不实现用户表。token 可以映射成一个逻辑客户端名，例如
+          <code>local-dev-lijialun</code>，用于审计与限制上下文可见范围。
+        </p>
+
+        <h3>CORS 策略</h3>
+        <ul>
+          <li>生产环境不建议默认 <code>*</code>，应配置明确 origin，例如 <code>https://admin.example.com</code> 和 <code>http://localhost:3001</code>。</li>
+          <li>允许本地调试时，推荐通过配置临时加入本地 origin，而不是放开所有来源。</li>
+          <li>如果未来使用 Cookie，会增加 CSRF 风险。当前 token header 方案没有自动带凭证，攻击面更小。</li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>4. 人类客户端设计</h2>
+        <h3>客户端目标</h3>
+        <ul>
+          <li>人类用户打开客户端后，可以看到可用对象列表。</li>
+          <li>对象可以是 Agent、Bridge、内建 Agent，也可以是未来的人类用户入口。</li>
+          <li>点击对象后进入对话或交互页，显示对方类型、能力、上下文模式和在线状态。</li>
+          <li>客户端不负责管理用户账号，只负责持有一个可撤销的客户端凭证。</li>
+        </ul>
+
+        <h3>界面草图</h3>
+        <div class="wireframe" aria-label="human client wireframe">
+          <div class="pane">
+            <p class="pane-title">对象列表</p>
+            <div class="row"><span>assistant</span><span class="tag">agent</span></div>
+            <div class="row"><span>planner</span><span class="tag">builtin</span></div>
+            <div class="row"><span>ops-console</span><span class="tag">bridge</span></div>
+            <div class="row"><span>lijialun</span><span class="tag">human</span></div>
+            <p><span class="button">刷新列表</span></p>
+          </div>
+          <div class="pane">
+            <p class="pane-title">对话区</p>
+            <div class="bubble self">帮我看一下今天哪些 Agent 在线。</div>
+            <div class="bubble">当前在线：assistant、planner、ops-console。</div>
+            <div class="bubble self">打开 planner 的能力列表。</div>
+            <div class="bubble">planner 支持任务拆解、上下文续写、子代理调度。</div>
+          </div>
+          <div class="pane">
+            <p class="pane-title">对象详情</p>
+            <p><strong>名称</strong><br />planner</p>
+            <p><strong>类型</strong><br /><span class="tag">agent</span><span class="tag">builtin</span></p>
+            <p><strong>上下文模式</strong><br />context</p>
+            <p><strong>能力</strong><br />plan, chat, delegate</p>
+            <p><span class="button">新建会话</span></p>
+          </div>
+        </div>
+
+        <h3>对象元数据扩展</h3>
+        <pre><code>{
+  "name": "planner",
+  "description": "Task planning agent",
+  "url": "http://localhost:18090/agent/planner",
+  "status": "connected",
+  "type": "builtin",
+  "x_actor_type": "agent",
+  "x_client_visible": true,
+  "x_context_mode": "context",
+  "skills": [
+    { "id": "chat", "name": "Chat" },
+    { "id": "plan", "name": "Plan" }
+  ]
+}</code></pre>
+        <p>
+          <code>x_actor_type</code> 用于回答“对方是用户还是 agent”。推荐取值：
+          <span class="tag">human</span>
+          <span class="tag">agent</span>
+          <span class="tag">bridge</span>
+          <span class="tag">system</span>
+        </p>
+      </section>
+
+      <section>
+        <h2>5. 建议落地顺序</h2>
+        <ol>
+          <li>先落地构建开关和前端 API 基址配置，确保后端-only 可独立发布。</li>
+          <li>把生产 <code>cors_origins</code> 从默认 <code>*</code> 调整为显式白名单，并保留本地开发配置入口。</li>
+          <li>新增 <code>client_tokens</code> 配置和中间件，保护交互调用、上下文、任务、trace。</li>
+          <li>给 AgentCard 增加 <code>x_actor_type</code> 与 <code>x_client_visible</code> 扩展，客户端按这个字段渲染对象类型。</li>
+          <li>再实现人类客户端页面，不提前引入用户表和登录流程。</li>
+        </ol>
+      </section>
+    </main>
+  </body>
+</html>
