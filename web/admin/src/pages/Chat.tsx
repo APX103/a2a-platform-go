@@ -31,7 +31,7 @@ export default function Chat() {
       setContextId(contextIdParam);
       loadContext(contextIdParam);
     }
-  }, [contextIdParam]);
+  }, [contextIdParam, setContextId, loadContext]);
 
   // Load context list
   const loadContextList = async () => {
@@ -43,13 +43,6 @@ export default function Chat() {
     }
   };
 
-  // Load existing context's messages
-  useEffect(() => {
-    if (contextId) {
-      loadContext(contextId);
-    }
-  }, [contextId]);
-
   const handleSend = async (content: string) => {
     if (!agentName) return;
 
@@ -60,6 +53,7 @@ export default function Chat() {
         const newCtx = await api.createContext({ agent_name: agentName, title: content.slice(0, 50) });
         currentContextId = newCtx.id;
         setContextId(newCtx.id);
+        clearChat();
         loadContextList();
       } catch (err) {
         alert('Failed to create session');
