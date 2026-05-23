@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -89,9 +90,110 @@ type groupEventResp struct {
 	Triggered     []*model.GroupEvent           `json:"triggered,omitempty"`
 }
 
+type groupStreamWriter struct {
+	header   http.Header
+	status   int
+	buffer   strings.Builder
+	raw      strings.Builder
+	onFrame  func(map[string]interface{})
+	text     strings.Builder
+	thinking strings.Builder
+}
+
+func newGroupStreamWriter(onFrame func(map[string]interface{})) *groupStreamWriter {
+	return &groupStreamWriter{
+		header:  make(http.Header),
+		status:  http.StatusOK,
+		onFrame: onFrame,
+	}
+}
+
+func (w *groupStreamWriter) Header() http.Header {
+	return w.header
+}
+
+func (w *groupStreamWriter) WriteHeader(statusCode int) {
+	w.status = statusCode
+}
+
+func (w *groupStreamWriter) Flush() {}
+
+func (w *groupStreamWriter) Write(p []byte) (int, error) {
+	chunk := string(p)
+	w.raw.WriteString(chunk)
+	w.buffer.WriteString(chunk)
+	for {
+		buffer := w.buffer.String()
+		idx := strings.Index(buffer, "\n\n")
+		if idx < 0 {
+			break
+		}
+		frame := buffer[:idx]
+		w.buffer.Reset()
+		w.buffer.WriteString(buffer[idx+2:])
+		w.handleFrame(frame)
+	}
+	return len(p), nil
+}
+
+func (w *groupStreamWriter) handleFrame(frame string) {
+	dataLines := []string{}
+	for _, line := range strings.Split(frame, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "data:") {
+			dataLines = append(dataLines, strings.TrimSpace(strings.TrimPrefix(line, "data:")))
+		}
+	}
+	if len(dataLines) == 0 {
+		return
+	}
+	data := strings.Join(dataLines, "\n")
+	var evt map[string]interface{}
+	if json.Unmarshal([]byte(data), &evt) != nil {
+		return
+	}
+	switch evt["type"] {
+	case "text.delta":
+		if text, ok := evt["text"].(string); ok {
+			w.text.WriteString(text)
+		}
+	case "thinking.delta":
+		if thinking, ok := evt["thinking"].(string); ok {
+			w.thinking.WriteString(thinking)
+		}
+	}
+	if w.onFrame != nil {
+		w.onFrame(evt)
+	}
+}
+
+func responseWriterCode(w http.ResponseWriter) int {
+	switch writer := w.(type) {
+	case *httptest.ResponseRecorder:
+		return writer.Code
+	case *groupStreamWriter:
+		return writer.status
+	default:
+		return http.StatusOK
+	}
+}
+
+func responseWriterBody(w http.ResponseWriter) string {
+	switch writer := w.(type) {
+	case *httptest.ResponseRecorder:
+		return writer.Body.String()
+	case *groupStreamWriter:
+		return writer.raw.String()
+	default:
+		return ""
+	}
+}
+
 type groupRules struct {
-	MaxSpeakers int `json:"max_speakers"`
-	MaxRounds   int `json:"max_rounds"`
+	MaxSpeakers  int    `json:"max_speakers"`
+	MaxRounds    int    `json:"max_rounds"`
+	AutoArtifact *bool  `json:"auto_artifact"`
+	ArtifactName string `json:"artifact_name"`
 }
 
 type groupMemoryPolicy struct {
@@ -530,6 +632,10 @@ func (h *GroupEventHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			errHTTP(w, err)
 			return
 		}
+		if wantsEventStream(r) {
+			h.streamGroupEventResponse(w, r, group, event, members)
+			return
+		}
 		triggered, err := h.maybeRunGroupTurn(r, group, event, members)
 		if err != nil {
 			errHTTP(w, err)
@@ -545,6 +651,47 @@ func (h *GroupEventHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func wantsEventStream(r *http.Request) bool {
+	return strings.Contains(strings.ToLower(r.Header.Get("Accept")), "text/event-stream")
+}
+
+func (h *GroupEventHandler) streamGroupEventResponse(w http.ResponseWriter, r *http.Request, group *model.Group, event *model.GroupEvent, members []*model.GroupMember) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		jsonError(w, "streaming not supported", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	writeGroupSSE(w, flusher, "group.event", map[string]interface{}{"event": event})
+	triggered, err := h.streamGroupTurn(w, flusher, r, group, event, members)
+	if err != nil {
+		writeGroupSSE(w, flusher, "group.error", map[string]interface{}{"error": err.Error()})
+		return
+	}
+	writeGroupSSE(w, flusher, "group.done", map[string]interface{}{
+		"event":         event,
+		"orchestration": svc.BuildGroupOrchestrationState(group, members),
+		"triggered":     triggered,
+	})
+}
+
+func writeGroupSSE(w io.Writer, flusher http.Flusher, event string, data map[string]interface{}) {
+	payload := make(map[string]interface{}, len(data)+1)
+	for k, v := range data {
+		payload[k] = v
+	}
+	payload["type"] = event
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+	fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, string(jsonData))
+	flusher.Flush()
+}
+
 func (h *GroupEventHandler) maybeRunGroupTurn(r *http.Request, group *model.Group, event *model.GroupEvent, members []*model.GroupMember) ([]*model.GroupEvent, error) {
 	switch group.OrchestrationMode {
 	case model.GroupModeFreeChat:
@@ -552,6 +699,154 @@ func (h *GroupEventHandler) maybeRunGroupTurn(r *http.Request, group *model.Grou
 	default:
 		return h.maybeRunLeaderTurn(r, group, event, members)
 	}
+}
+
+func (h *GroupEventHandler) streamGroupTurn(w io.Writer, flusher http.Flusher, r *http.Request, group *model.Group, event *model.GroupEvent, members []*model.GroupMember) ([]*model.GroupEvent, error) {
+	switch group.OrchestrationMode {
+	case model.GroupModeFreeChat:
+		return h.streamFreeChatTurn(w, flusher, r, group, event, members)
+	default:
+		return h.streamLeaderTurn(w, flusher, r, group, event, members)
+	}
+}
+
+func (h *GroupEventHandler) streamLeaderTurn(w io.Writer, flusher http.Flusher, r *http.Request, group *model.Group, event *model.GroupEvent, members []*model.GroupMember) ([]*model.GroupEvent, error) {
+	if h == nil || h.svcCtx == nil || group == nil || event == nil {
+		return nil, nil
+	}
+	if group.OrchestrationMode != model.GroupModeLeaderLed || event.EventType != "message" || event.SenderType == model.GroupActorAgent {
+		return nil, nil
+	}
+	leader := selectGroupLeader(members)
+	if leader == "" || !h.canInvokeAgent(leader) {
+		return nil, nil
+	}
+	prompt := h.buildLeaderPrompt(group, event, members)
+	text, statusCode, rawBody := h.invokeGroupAgentStreaming(r, group, leader, event, prompt, "leader", func(delta string) {
+		writeGroupSSE(w, flusher, "group.agent_delta", map[string]interface{}{"sender_id": leader, "sender_type": model.GroupActorAgent, "text": delta})
+	}, func(thinking string) {
+		writeGroupSSE(w, flusher, "group.agent_thinking", map[string]interface{}{"sender_id": leader, "sender_type": model.GroupActorAgent, "thinking": thinking})
+	})
+	if statusCode >= 400 {
+		text = strings.TrimSpace(rawBody)
+		if text == "" {
+			text = fmt.Sprintf("leader %s failed with status %d", leader, statusCode)
+		}
+		return h.appendSystemGroupEvent(group.ID, text, event.ID, group.OrchestrationMode)
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil, nil
+	}
+	metadata, _ := json.Marshal(map[string]interface{}{
+		"trigger_event_id": event.ID,
+		"orchestration":    model.GroupModeLeaderLed,
+		"role":             "leader",
+	})
+	leaderEvent := &model.GroupEvent{
+		GroupID:      group.ID,
+		EventType:    "message",
+		SenderType:   model.GroupActorAgent,
+		SenderID:     leader,
+		Content:      text,
+		MetadataJson: string(metadata),
+	}
+	if err := h.svcCtx.GroupEvents.Append(leaderEvent); err != nil {
+		return nil, err
+	}
+	writeGroupSSE(w, flusher, "group.event", map[string]interface{}{"event": leaderEvent})
+	if artifact, err := h.upsertAutoArtifact(group, event, []*model.GroupEvent{leaderEvent}); err != nil {
+		return nil, err
+	} else if artifact != nil {
+		writeGroupSSE(w, flusher, "group.artifact", map[string]interface{}{"artifact": artifact})
+	}
+	return []*model.GroupEvent{leaderEvent}, nil
+}
+
+func (h *GroupEventHandler) streamFreeChatTurn(w io.Writer, flusher http.Flusher, r *http.Request, group *model.Group, event *model.GroupEvent, members []*model.GroupMember) ([]*model.GroupEvent, error) {
+	if h == nil || h.svcCtx == nil || group == nil || event == nil {
+		return nil, nil
+	}
+	if event.EventType != "message" || event.SenderType == model.GroupActorSystem {
+		return nil, nil
+	}
+	rules := parseGroupRules(group.RulesJson)
+	maxSpeakers := rules.MaxSpeakers
+	if maxSpeakers <= 0 {
+		maxSpeakers = 3
+	}
+	if maxSpeakers > 8 {
+		maxSpeakers = 8
+	}
+	candidates := freeChatCandidates(members, event.SenderType, event.SenderID)
+	if len(candidates) == 0 {
+		return nil, nil
+	}
+	recentEvents, err := h.svcCtx.GroupEvents.List(group.ID, freeChatHotMessageLimit(group.MemoryPolicyJson))
+	if err != nil {
+		return nil, err
+	}
+
+	triggered := []*model.GroupEvent{}
+	for _, agentName := range candidates {
+		if len(triggered) >= maxSpeakers {
+			break
+		}
+		if !h.canInvokeAgent(agentName) {
+			continue
+		}
+		writeGroupSSE(w, flusher, "group.agent_start", map[string]interface{}{"sender_id": agentName, "sender_type": model.GroupActorAgent})
+		prompt := h.buildFreeChatPrompt(group, event, members, recentEvents, agentName)
+		text, statusCode, rawBody := h.invokeGroupAgentStreaming(r, group, agentName, event, prompt, "free_chat", func(delta string) {
+			writeGroupSSE(w, flusher, "group.agent_delta", map[string]interface{}{"sender_id": agentName, "sender_type": model.GroupActorAgent, "text": delta})
+		}, func(thinking string) {
+			writeGroupSSE(w, flusher, "group.agent_thinking", map[string]interface{}{"sender_id": agentName, "sender_type": model.GroupActorAgent, "thinking": thinking})
+		})
+		if statusCode >= 400 {
+			text = strings.TrimSpace(rawBody)
+			if text == "" {
+				text = fmt.Sprintf("agent %s failed with status %d", agentName, statusCode)
+			}
+			systemEvents, err := h.appendSystemGroupEvent(group.ID, text, event.ID, group.OrchestrationMode)
+			if err != nil {
+				return nil, err
+			}
+			for _, systemEvent := range systemEvents {
+				writeGroupSSE(w, flusher, "group.event", map[string]interface{}{"event": systemEvent})
+			}
+			triggered = append(triggered, systemEvents...)
+			continue
+		}
+		text = strings.TrimSpace(text)
+		if text == "" || isNoReply(text) {
+			writeGroupSSE(w, flusher, "group.agent_skip", map[string]interface{}{"sender_id": agentName, "sender_type": model.GroupActorAgent})
+			continue
+		}
+		metadata, _ := json.Marshal(map[string]interface{}{
+			"trigger_event_id": event.ID,
+			"orchestration":    model.GroupModeFreeChat,
+			"role":             "participant",
+		})
+		agentEvent := &model.GroupEvent{
+			GroupID:      group.ID,
+			EventType:    "message",
+			SenderType:   model.GroupActorAgent,
+			SenderID:     agentName,
+			Content:      text,
+			MetadataJson: string(metadata),
+		}
+		if err := h.svcCtx.GroupEvents.Append(agentEvent); err != nil {
+			return nil, err
+		}
+		writeGroupSSE(w, flusher, "group.event", map[string]interface{}{"event": agentEvent})
+		triggered = append(triggered, agentEvent)
+	}
+	if artifact, err := h.upsertAutoArtifact(group, event, triggered); err != nil {
+		return nil, err
+	} else if artifact != nil {
+		writeGroupSSE(w, flusher, "group.artifact", map[string]interface{}{"artifact": artifact})
+	}
+	return triggered, nil
 }
 
 func (h *GroupEventHandler) maybeRunLeaderTurn(r *http.Request, group *model.Group, event *model.GroupEvent, members []*model.GroupMember) ([]*model.GroupEvent, error) {
@@ -593,6 +888,9 @@ func (h *GroupEventHandler) maybeRunLeaderTurn(r *http.Request, group *model.Gro
 		MetadataJson: string(metadata),
 	}
 	if err := h.svcCtx.GroupEvents.Append(leaderEvent); err != nil {
+		return nil, err
+	}
+	if _, err := h.upsertAutoArtifact(group, event, []*model.GroupEvent{leaderEvent}); err != nil {
 		return nil, err
 	}
 	return []*model.GroupEvent{leaderEvent}, nil
@@ -666,7 +964,102 @@ func (h *GroupEventHandler) maybeRunFreeChatTurn(r *http.Request, group *model.G
 		}
 		triggered = append(triggered, agentEvent)
 	}
+	if _, err := h.upsertAutoArtifact(group, event, triggered); err != nil {
+		return nil, err
+	}
 	return triggered, nil
+}
+
+func (h *GroupEventHandler) upsertAutoArtifact(group *model.Group, trigger *model.GroupEvent, triggered []*model.GroupEvent) (*model.GroupArtifact, error) {
+	if h == nil || h.svcCtx == nil || h.svcCtx.GroupArtifacts == nil || group == nil || trigger == nil {
+		return nil, nil
+	}
+	if !autoArtifactEnabled(group) {
+		return nil, nil
+	}
+	agentEvents := make([]*model.GroupEvent, 0, len(triggered))
+	for _, event := range triggered {
+		if event == nil || event.EventType != "message" || event.SenderType != model.GroupActorAgent || strings.TrimSpace(event.Content) == "" {
+			continue
+		}
+		agentEvents = append(agentEvents, event)
+	}
+	if len(agentEvents) == 0 {
+		return nil, nil
+	}
+	artifact := &model.GroupArtifact{
+		GroupID:      group.ID,
+		Name:         autoArtifactName(group),
+		ArtifactType: "document",
+		Content:      buildAutoArtifactContent(group, trigger, agentEvents),
+		Status:       "updated",
+		CreatedBy:    "platform",
+	}
+	if err := h.svcCtx.GroupArtifacts.UpsertByName(artifact); err != nil {
+		return nil, err
+	}
+	return artifact, nil
+}
+
+func autoArtifactEnabled(group *model.Group) bool {
+	if group == nil {
+		return false
+	}
+	rules := parseGroupRules(group.RulesJson)
+	if rules.AutoArtifact != nil {
+		return *rules.AutoArtifact
+	}
+	return group.OrchestrationMode == model.GroupModeLeaderLed ||
+		group.OrchestrationMode == model.GroupModeFreeChat ||
+		group.OrchestrationMode == model.GroupModeResearchLongRun
+}
+
+func autoArtifactName(group *model.Group) string {
+	if group == nil {
+		return "group-output.md"
+	}
+	rules := parseGroupRules(group.RulesJson)
+	if strings.TrimSpace(rules.ArtifactName) != "" {
+		return strings.TrimSpace(rules.ArtifactName)
+	}
+	switch group.OrchestrationMode {
+	case model.GroupModeLeaderLed:
+		return "leader-summary.md"
+	case model.GroupModeFreeChat:
+		return "group-discussion.md"
+	case model.GroupModeResearchLongRun:
+		return "research-checkpoint.md"
+	default:
+		return "group-output.md"
+	}
+}
+
+func buildAutoArtifactContent(group *model.Group, trigger *model.GroupEvent, agentEvents []*model.GroupEvent) string {
+	var b strings.Builder
+	title := "Group Output"
+	if group != nil && strings.TrimSpace(group.Name) != "" {
+		title = group.Name
+	}
+	b.WriteString("# " + title + "\n\n")
+	b.WriteString("_Automatically generated by A2A Platform group orchestration._\n\n")
+	b.WriteString("Updated: " + time.Now().Format(time.RFC3339) + "\n\n")
+	if group != nil {
+		b.WriteString("Mode: `" + group.OrchestrationMode + "`\n\n")
+	}
+	if trigger != nil {
+		b.WriteString("## Latest Human Request\n\n")
+		b.WriteString(fmt.Sprintf("From `%s:%s` at %s:\n\n", trigger.SenderType, trigger.SenderID, trigger.CreatedAt.Format(time.RFC3339)))
+		b.WriteString(strings.TrimSpace(trigger.Content) + "\n\n")
+	}
+	b.WriteString("## Agent Outputs\n\n")
+	for _, event := range agentEvents {
+		if event == nil {
+			continue
+		}
+		b.WriteString("### " + event.SenderID + "\n\n")
+		b.WriteString(strings.TrimSpace(event.Content) + "\n\n")
+	}
+	return b.String()
 }
 
 func (h *GroupEventHandler) canInvokeAgent(name string) bool {
@@ -686,6 +1079,26 @@ func (h *GroupEventHandler) canInvokeAgent(name string) bool {
 }
 
 func (h *GroupEventHandler) invokeGroupAgent(r *http.Request, group *model.Group, agentName string, event *model.GroupEvent, prompt, role string) (string, int, string) {
+	return h.invokeGroupAgentWithWriter(r, group, agentName, event, prompt, role, httptest.NewRecorder())
+}
+
+func (h *GroupEventHandler) invokeGroupAgentStreaming(r *http.Request, group *model.Group, agentName string, event *model.GroupEvent, prompt, role string, onDelta func(string), onThinking func(string)) (string, int, string) {
+	writer := newGroupStreamWriter(func(evt map[string]interface{}) {
+		switch evt["type"] {
+		case "text.delta":
+			if text, ok := evt["text"].(string); ok && text != "" && onDelta != nil {
+				onDelta(text)
+			}
+		case "thinking.delta":
+			if thinking, ok := evt["thinking"].(string); ok && thinking != "" && onThinking != nil {
+				onThinking(thinking)
+			}
+		}
+	})
+	return h.invokeGroupAgentWithWriter(r, group, agentName, event, prompt, role, writer)
+}
+
+func (h *GroupEventHandler) invokeGroupAgentWithWriter(r *http.Request, group *model.Group, agentName string, event *model.GroupEvent, prompt, role string, writer http.ResponseWriter) (string, int, string) {
 	body, _ := json.Marshal(map[string]interface{}{
 		"jsonrpc": "2.0",
 		"id":      fmt.Sprintf("group-event-%d-%s", event.ID, agentName),
@@ -712,10 +1125,15 @@ func (h *GroupEventHandler) invokeGroupAgent(r *http.Request, group *model.Group
 		req.Header.Set("X-A2A-Group-Role", role)
 	}
 
-	rec := httptest.NewRecorder()
-	NewAgentProxyHandler(h.svcCtx).ServeHTTP(rec, req)
-	rawBody := rec.Body.String()
-	return extractGroupAgentResponseText(rawBody), rec.Code, rawBody
+	NewAgentProxyHandler(h.svcCtx).ServeHTTP(writer, req)
+	rawBody := responseWriterBody(writer)
+	text := extractGroupAgentResponseText(rawBody)
+	if streamWriter, ok := writer.(*groupStreamWriter); ok {
+		if streamed := strings.TrimSpace(streamWriter.text.String()); streamed != "" {
+			text = streamed
+		}
+	}
+	return text, responseWriterCode(writer), rawBody
 }
 
 func (h *GroupEventHandler) buildLeaderPrompt(group *model.Group, event *model.GroupEvent, members []*model.GroupMember) string {

@@ -32,6 +32,52 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return JSON.parse(text) as T;
 }
 
+async function streamRequest(path: string, options: RequestInit, onEvent: (event: GroupStreamEvent) => void): Promise<void> {
+  const token = localStorage.getItem('admin_token') || '';
+  const optionHeaders = headersToObject(options.headers);
+  const hasExplicitAuth = Object.keys(optionHeaders).some(key => {
+    const normalized = key.toLowerCase();
+    return normalized === 'authorization' || normalized === 'x-admin-token' || normalized === 'x-group-member-token';
+  });
+  const res = await fetch(`${BASE}${path}`, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token && !hasExplicitAuth ? { 'X-Admin-Token': token } : {}),
+      ...optionHeaders,
+    },
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`${res.status}: ${text}`);
+  }
+  if (!res.body) return;
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let boundary = buffer.indexOf('\n\n');
+    while (boundary >= 0) {
+      const frame = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + 2);
+      const data = frame
+        .split('\n')
+        .map(line => line.trim())
+        .filter(line => line.startsWith('data:'))
+        .map(line => line.slice(5).trim())
+        .join('\n');
+      if (data) {
+        onEvent(JSON.parse(data) as GroupStreamEvent);
+      }
+      boundary = buffer.indexOf('\n\n');
+    }
+  }
+}
+
 function headersToObject(headers?: HeadersInit): Record<string, string> {
   if (!headers) return {};
   if (headers instanceof Headers) {
@@ -250,6 +296,16 @@ export interface GroupEventResponse {
   triggered?: GroupEvent[];
 }
 
+export type GroupStreamEvent =
+  | { type: 'group.event'; event: GroupEvent }
+  | { type: 'group.agent_start'; sender_id: string; sender_type: string }
+  | { type: 'group.agent_delta'; sender_id: string; sender_type: string; text: string }
+  | { type: 'group.agent_thinking'; sender_id: string; sender_type: string; thinking: string }
+  | { type: 'group.agent_skip'; sender_id: string; sender_type: string }
+  | { type: 'group.artifact'; artifact: GroupArtifact }
+  | { type: 'group.done'; event: GroupEvent; orchestration: GroupOrchestrationState; triggered?: GroupEvent[] }
+  | { type: 'group.error'; error: string };
+
 export interface GroupJoinResponse {
   group: Group;
   member: GroupMember;
@@ -401,6 +457,19 @@ export const api = {
       ...(memberToken ? { headers: { Authorization: `Bearer ${memberToken}` } } : {}),
       body: JSON.stringify(event),
     }),
+  streamGroupEvent: (
+    id: string,
+    event: { event_type?: string; sender_type: string; sender_id: string; content: string; metadata?: unknown },
+    handlers: { onEvent: (event: GroupStreamEvent) => void },
+    memberToken?: string,
+  ) => streamRequest(`/api/groups/${id}/events`, {
+    method: 'POST',
+    headers: {
+      Accept: 'text/event-stream',
+      ...(memberToken ? { Authorization: `Bearer ${memberToken}` } : {}),
+    },
+    body: JSON.stringify(event),
+  }, handlers.onEvent),
   listGroupArtifacts: (id: string) => request<GroupArtifact[]>(`/api/groups/${id}/artifacts`),
   createGroupArtifact: (id: string, artifact: { name: string; artifact_type?: string; content: string; status?: string; created_by?: string }, memberToken?: string) =>
     request<GroupArtifact>(`/api/groups/${id}/artifacts`, {

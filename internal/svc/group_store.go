@@ -667,6 +667,29 @@ func (s *GroupArtifactStore) Get(id string) (*model.GroupArtifact, error) {
 	return &a, nil
 }
 
+func (s *GroupArtifactStore) GetByName(groupID, name string) (*model.GroupArtifact, error) {
+	var a model.GroupArtifact
+	var content, createdBy sql.NullString
+	err := s.db.QueryRow(
+		`SELECT id, group_id, name, artifact_type, version, content, status, created_by, created_at, updated_at
+		 FROM group_artifacts WHERE group_id = ? AND name = ?`,
+		groupID, name,
+	).Scan(&a.ID, &a.GroupID, &a.Name, &a.ArtifactType, &a.Version, &content, &a.Status, &createdBy, &a.CreatedAt, &a.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if content.Valid {
+		a.Content = content.String
+	}
+	if createdBy.Valid {
+		a.CreatedBy = createdBy.String
+	}
+	return &a, nil
+}
+
 func (s *GroupArtifactStore) List(groupID string) ([]*model.GroupArtifact, error) {
 	rows, err := s.db.Query(
 		`SELECT id, group_id, name, artifact_type, version, content, status, created_by, created_at, updated_at
@@ -707,6 +730,38 @@ func (s *GroupArtifactStore) Update(a *model.GroupArtifact) error {
 		a.Name, a.ArtifactType, a.Content, a.Status, a.ID, a.GroupID,
 	)
 	return err
+}
+
+func (s *GroupArtifactStore) UpsertByName(a *model.GroupArtifact) error {
+	if a.GroupID == "" {
+		return fmt.Errorf("group id is required")
+	}
+	if strings.TrimSpace(a.Name) == "" {
+		return fmt.Errorf("artifact name is required")
+	}
+	existing, err := s.GetByName(a.GroupID, a.Name)
+	if err != nil {
+		return err
+	}
+	if existing == nil {
+		return s.Create(a)
+	}
+	a.ID = existing.ID
+	if a.ArtifactType == "" {
+		a.ArtifactType = existing.ArtifactType
+	}
+	if a.Status == "" {
+		a.Status = existing.Status
+	}
+	if err := s.Update(a); err != nil {
+		return err
+	}
+	stored, err := s.Get(a.ID)
+	if err != nil || stored == nil {
+		return err
+	}
+	*a = *stored
+	return nil
 }
 
 func BuildGroupOrchestrationState(group *model.Group, members []*model.GroupMember) model.GroupOrchestrationState {

@@ -10,6 +10,7 @@ import {
   GroupInvite,
   GroupMember,
   GroupOrchestrationState,
+  GroupStreamEvent,
 } from '../api/client'
 
 function formatTime(value?: string) {
@@ -95,6 +96,7 @@ export default function GroupDetail() {
   const [newInviteToken, setNewInviteToken] = useState('')
   const [sendingEvent, setSendingEvent] = useState(false)
   const chatEndRef = useRef<HTMLDivElement | null>(null)
+  const streamingEventIdsRef = useRef<Record<string, number>>({})
 
   const load = async () => {
     if (!id) return
@@ -242,12 +244,12 @@ export default function GroupDetail() {
     setSendingEvent(true)
     try {
       const sendAsMember = memberToken && eventForm.sender_type === 'human'
-      await api.appendGroupEvent(id, {
+      await api.streamGroupEvent(id, {
         event_type: 'message',
         sender_type: eventForm.sender_type,
         sender_id: eventForm.sender_id,
         content: eventForm.content,
-      }, sendAsMember ? memberToken : undefined)
+      }, { onEvent: handleGroupStreamEvent }, sendAsMember ? memberToken : undefined)
       setEventForm(f => ({ ...f, content: '' }))
       load()
     } catch (err) {
@@ -255,6 +257,100 @@ export default function GroupDetail() {
     } finally {
       setSendingEvent(false)
     }
+  }
+
+  const handleGroupStreamEvent = (streamEvent: GroupStreamEvent) => {
+    switch (streamEvent.type) {
+      case 'group.event':
+        commitStreamEvent(streamEvent.event)
+        break
+      case 'group.agent_start':
+        ensureStreamingEvent(streamEvent.sender_id, streamEvent.sender_type)
+        break
+      case 'group.agent_delta':
+        appendStreamingDelta(streamEvent.sender_id, streamEvent.sender_type, streamEvent.text || '')
+        break
+      case 'group.artifact':
+        commitStreamArtifact(streamEvent.artifact)
+        break
+      case 'group.done':
+        setOrchestration(streamEvent.orchestration)
+        ;(streamEvent.triggered || []).forEach(event => commitStreamEvent(event))
+        break
+      case 'group.error':
+        setError(streamEvent.error || 'Group stream failed')
+        break
+    }
+  }
+
+  const ensureStreamingEvent = (senderID: string, senderType: string) => {
+    if (!senderID) return
+    const key = `${senderType}:${senderID}`
+    setEvents(prev => {
+      const existingID = streamingEventIdsRef.current[key]
+      if (existingID && prev.some(event => event.id === existingID)) return prev
+      const tempID = -Date.now() - Math.floor(Math.random() * 1000)
+      streamingEventIdsRef.current[key] = tempID
+      return [...prev, {
+        id: tempID,
+        group_id: id || '',
+        event_type: 'message',
+        sender_type: senderType,
+        sender_id: senderID,
+        content: '',
+        metadata_json: '{"streaming":true}',
+        created_at: new Date().toISOString(),
+      }]
+    })
+  }
+
+  const appendStreamingDelta = (senderID: string, senderType: string, text: string) => {
+    if (!text) return
+    const key = `${senderType}:${senderID}`
+    setEvents(prev => {
+      let tempID = streamingEventIdsRef.current[key]
+      let next = prev
+      if (!tempID || !prev.some(event => event.id === tempID)) {
+        tempID = -Date.now() - Math.floor(Math.random() * 1000)
+        streamingEventIdsRef.current[key] = tempID
+        next = [...prev, {
+          id: tempID,
+          group_id: id || '',
+          event_type: 'message',
+          sender_type: senderType,
+          sender_id: senderID,
+          content: '',
+          metadata_json: '{"streaming":true}',
+          created_at: new Date().toISOString(),
+        }]
+      }
+      return next.map(event => event.id === tempID ? { ...event, content: event.content + text } : event)
+    })
+  }
+
+  const commitStreamEvent = (event: GroupEvent) => {
+    const key = `${event.sender_type}:${event.sender_id}`
+    setEvents(prev => {
+      const tempID = streamingEventIdsRef.current[key]
+      if (tempID) {
+        delete streamingEventIdsRef.current[key]
+      }
+      const withoutTemp = tempID ? prev.filter(item => item.id !== tempID) : prev
+      if (withoutTemp.some(item => item.id === event.id)) {
+        return withoutTemp.map(item => item.id === event.id ? event : item)
+      }
+      return [...withoutTemp, event]
+    })
+  }
+
+  const commitStreamArtifact = (artifact: GroupArtifact) => {
+    if (!artifact?.id) return
+    setArtifacts(prev => {
+      if (prev.some(item => item.id === artifact.id)) {
+        return prev.map(item => item.id === artifact.id ? artifact : item)
+      }
+      return [artifact, ...prev]
+    })
   }
 
   const handleEventKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {

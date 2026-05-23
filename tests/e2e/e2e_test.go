@@ -53,6 +53,60 @@ func req(t *testing.T, method, path, body string, headers map[string]string) (in
 	return resp.StatusCode, data
 }
 
+func streamReq(t *testing.T, path, body string, headers map[string]string) []map[string]interface{} {
+	t.Helper()
+	limiter.Wait(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+	r, err := http.NewRequestWithContext(ctx, "POST", baseURL+path, strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("create stream request: %v", err)
+	}
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Accept", "text/event-stream")
+	for k, v := range headers {
+		r.Header.Set(k, v)
+	}
+	resp, err := httpClient.Do(r)
+	if err != nil {
+		t.Fatalf("stream POST %s: %v", path, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		data, _ := io.ReadAll(resp.Body)
+		t.Fatalf("stream status = %d, want 200: %s", resp.StatusCode, string(data))
+	}
+	if ct := resp.Header.Get("Content-Type"); !strings.Contains(ct, "text/event-stream") {
+		t.Fatalf("stream content-type = %s, want text/event-stream", ct)
+	}
+	scanner := bufio.NewScanner(resp.Body)
+	events := []map[string]interface{}{}
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		var item map[string]interface{}
+		if err := json.Unmarshal([]byte(strings.TrimSpace(strings.TrimPrefix(line, "data:"))), &item); err != nil {
+			t.Fatalf("invalid SSE data: %v", err)
+		}
+		events = append(events, item)
+		if item["type"] == "group.error" {
+			t.Fatalf("group stream error: %#v", item)
+		}
+		if item["type"] == "group.done" {
+			break
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("read stream: %v", err)
+	}
+	if len(events) == 0 {
+		t.Fatal("no SSE events")
+	}
+	return events
+}
+
 func obj(t *testing.T, data []byte) map[string]interface{} {
 	t.Helper()
 	var m map[string]interface{}
@@ -396,18 +450,48 @@ func TestGroupFreeChatInvokesBuiltinAgents(t *testing.T) {
 	}
 
 	prompt := "编排 e2e 测试：请群内每个 agent 各用一句中文说明自己在这个问题讨论中能承担的角色。不要调用工具，不要输出 NO_REPLY。"
-	code, data = req(t, "POST", "/api/groups/"+groupID+"/events",
+	streamEvents := streamReq(t, "/api/groups/"+groupID+"/events",
 		fmt.Sprintf(`{"event_type":"message","sender_type":"human","sender_id":%q,"content":%q}`, humanID, prompt), memberAuth)
-	expect(t, code, 200)
-	eventResp := obj(t, data)
-	event, _ := eventResp["event"].(map[string]interface{})
+	var event map[string]interface{}
+	var done map[string]interface{}
+	var streamArtifact map[string]interface{}
+	deltaCount := 0
+	for _, item := range streamEvents {
+		switch item["type"] {
+		case "group.event":
+			ev, _ := item["event"].(map[string]interface{})
+			if ev["sender_type"] == "human" && ev["sender_id"] == humanID {
+				event = ev
+			}
+		case "group.agent_delta":
+			if strings.TrimSpace(fmt.Sprint(item["text"])) != "" {
+				deltaCount++
+			}
+		case "group.artifact":
+			streamArtifact, _ = item["artifact"].(map[string]interface{})
+		case "group.done":
+			done = item
+		}
+	}
+	if event == nil {
+		t.Fatalf("stream did not include human group.event: %#v", streamEvents)
+	}
+	if done == nil {
+		t.Fatalf("stream did not include group.done: %#v", streamEvents)
+	}
+	if deltaCount == 0 {
+		t.Fatalf("stream did not include any group.agent_delta events: %#v", streamEvents)
+	}
+	if streamArtifact == nil {
+		t.Fatalf("stream did not include group.artifact: %#v", streamEvents)
+	}
 	triggerEventID, _ := event["id"].(float64)
 	if triggerEventID == 0 {
-		t.Fatalf("trigger event id missing: %s", string(data))
+		t.Fatalf("trigger event id missing: %#v", event)
 	}
-	triggered, _ := eventResp["triggered"].([]interface{})
+	triggered, _ := done["triggered"].([]interface{})
 	if len(triggered) == 0 {
-		t.Fatalf("free_chat produced no triggered agent events: %s", string(data))
+		t.Fatalf("free_chat produced no triggered agent events: %#v", done)
 	}
 	if len(triggered) > 3 {
 		t.Fatalf("triggered len = %d, want <= 3", len(triggered))
@@ -464,6 +548,31 @@ func TestGroupFreeChatInvokesBuiltinAgents(t *testing.T) {
 	}
 	if seenAgentReplies < len(triggered) {
 		t.Fatalf("persisted free_chat replies = %d, triggered = %d", seenAgentReplies, len(triggered))
+	}
+
+	code, data = req(t, "GET", "/api/groups/"+groupID+"/artifacts", "", memberAuth)
+	expect(t, code, 200)
+	artifacts := arr(t, data)
+	if len(artifacts) == 0 {
+		t.Fatalf("free_chat did not create an auto artifact")
+	}
+	autoArtifact := map[string]interface{}{}
+	for _, item := range artifacts {
+		artifact, _ := item.(map[string]interface{})
+		if artifact["created_by"] == "platform" {
+			autoArtifact = artifact
+			break
+		}
+	}
+	if len(autoArtifact) == 0 {
+		t.Fatalf("no platform-created artifact found: %#v", artifacts)
+	}
+	if autoArtifact["name"] != "group-discussion.md" {
+		t.Fatalf("artifact name = %v, want group-discussion.md", autoArtifact["name"])
+	}
+	content := fmt.Sprint(autoArtifact["content"])
+	if !strings.Contains(content, prompt) || !strings.Contains(content, "Agent Outputs") {
+		t.Fatalf("auto artifact content did not include prompt and agent output section: %s", content)
 	}
 
 	assertGroupTraceRecorded(t, groupID)

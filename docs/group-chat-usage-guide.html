@@ -347,6 +347,11 @@
             <td>点击群详情页右上角 <code>Trace</code>。</td>
             <td>看到 root context 为 <code>group:&lt;group_id&gt;</code> 的任务链路。</td>
           </tr>
+          <tr>
+            <td>查看产物</td>
+            <td>在 <code>Artifacts</code> 区域查看自动生成的 markdown，或手工创建补充文档。</td>
+            <td>leader_led 会更新 <code>leader-summary.md</code>；free_chat 会更新 <code>group-discussion.md</code>。</td>
+          </tr>
         </tbody>
       </table>
     </section>
@@ -413,6 +418,26 @@
           <p>把长期任务拆成 workstreams、checkpoints、evidence gates 和 critic passes，最终沉淀为报告型 artifacts。</p>
         </article>
       </div>
+    </section>
+
+    <section>
+      <h2>Artifacts 是什么</h2>
+      <div class="grid">
+        <article class="mode">
+          <div class="badge">auto</div>
+          <h3>自动产物</h3>
+          <p>当编排触发 agent 回复后，平台会自动创建或更新一份 markdown artifact，把最新人类请求和 agent 输出沉淀下来。</p>
+        </article>
+        <article class="mode">
+          <div class="badge">manual</div>
+          <h3>手工产物</h3>
+          <p>人类用户也可以在 Artifacts 区域创建草稿、方案、检查清单或报告，用于后续圆桌审查和长程任务。</p>
+        </article>
+      </div>
+      <p class="note">
+        如果不希望自动生成产物，可以在 Rules JSON 中设置 <code>"auto_artifact": false</code>。
+        也可以用 <code>"artifact_name": "research-report.md"</code> 指定自动产物文件名。
+      </p>
     </section>
 
     <section>
@@ -486,7 +511,9 @@
       <p class="note">创建群时可以把 Rules JSON 设置为：</p>
       <pre><code>{
   "max_speakers": 3,
-  "max_rounds": 1
+  "max_rounds": 1,
+  "auto_artifact": true,
+  "artifact_name": "group-discussion.md"
 }</code></pre>
       <p class="note">Memory Policy JSON 设置为：</p>
       <pre><code>{
