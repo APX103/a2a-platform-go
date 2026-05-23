@@ -162,6 +162,7 @@ type Skill struct {
 
 const (
 	GroupModeLeaderLed       = "leader_led"
+	GroupModeFreeChat        = "free_chat"
 	GroupModeRoundtable      = "roundtable"
 	GroupModeStateflow       = "stateflow"
 	GroupModeResearchLongRun = "research_long_horizon"

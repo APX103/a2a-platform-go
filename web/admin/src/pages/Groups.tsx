@@ -7,6 +7,7 @@ type GroupStatusFilter = 'active' | 'archived' | ''
 
 const modes = [
   { value: 'leader_led', label: 'Leader-led' },
+  { value: 'free_chat', label: 'Free chat' },
   { value: 'roundtable', label: 'Roundtable' },
   { value: 'stateflow', label: 'Stateflow' },
   { value: 'research_long_horizon', label: 'Research' },

@@ -109,4 +109,13 @@ func TestGroupStores_Lifecycle(t *testing.T) {
 	if state.NextAction != "collect_member_intents" {
 		t.Fatalf("next action = %q", state.NextAction)
 	}
+
+	group.OrchestrationMode = model.GroupModeFreeChat
+	state = BuildGroupOrchestrationState(group, memberList)
+	if state.Mode != model.GroupModeFreeChat {
+		t.Fatalf("mode = %q, want %q", state.Mode, model.GroupModeFreeChat)
+	}
+	if state.NextAction != "agents_observe_and_optionally_reply" {
+		t.Fatalf("free chat next action = %q", state.NextAction)
+	}
 }

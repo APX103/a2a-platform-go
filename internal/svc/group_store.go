@@ -34,7 +34,15 @@ func (s *GroupStore) Create(g *model.Group) error {
 		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		g.ID, g.Name, g.Description, g.OrchestrationMode, g.RulesJson, g.MemoryPolicyJson, g.Status,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	stored, err := s.Get(g.ID)
+	if err != nil || stored == nil {
+		return err
+	}
+	*g = *stored
+	return nil
 }
 
 func (s *GroupStore) Get(id string) (*model.Group, error) {
@@ -165,6 +173,8 @@ func normalizeGroup(g *model.Group) {
 
 func NormalizeGroupMode(mode string) string {
 	switch strings.TrimSpace(mode) {
+	case model.GroupModeFreeChat:
+		return model.GroupModeFreeChat
 	case model.GroupModeRoundtable:
 		return model.GroupModeRoundtable
 	case model.GroupModeStateflow:
@@ -213,7 +223,15 @@ func (s *GroupMemberStore) Upsert(m *model.GroupMember) error {
 			   role = excluded.role, capabilities_json = excluded.capabilities_json`
 	}
 	_, err := s.db.Exec(query, m.GroupID, m.ActorType, m.ActorID, m.Role, m.CapabilitiesJson)
-	return err
+	if err != nil {
+		return err
+	}
+	stored, err := s.Get(m.GroupID, m.ActorType, m.ActorID)
+	if err != nil || stored == nil {
+		return err
+	}
+	*m = *stored
+	return nil
 }
 
 func (s *GroupMemberStore) List(groupID string) ([]*model.GroupMember, error) {
@@ -292,7 +310,15 @@ func (s *GroupInviteStore) Create(invite *model.GroupInvite) (string, error) {
 			invite.ID = id
 		}
 	}
-	return token, err
+	if err != nil {
+		return "", err
+	}
+	stored, err := s.GetByToken(token)
+	if err != nil || stored == nil {
+		return "", err
+	}
+	*invite = *stored
+	return token, nil
 }
 
 func (s *GroupInviteStore) List(groupID string) ([]*model.GroupInvite, error) {
@@ -515,7 +541,35 @@ func (s *GroupEventStore) Append(e *model.GroupEvent) error {
 			e.ID = id
 		}
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	stored, err := s.Get(e.ID)
+	if err != nil || stored == nil {
+		return err
+	}
+	*e = *stored
+	return nil
+}
+
+func (s *GroupEventStore) Get(id int64) (*model.GroupEvent, error) {
+	var e model.GroupEvent
+	var metadata sql.NullString
+	err := s.db.QueryRow(
+		`SELECT id, group_id, event_type, sender_type, sender_id, content, metadata_json, created_at
+		 FROM group_events WHERE id = ?`,
+		id,
+	).Scan(&e.ID, &e.GroupID, &e.EventType, &e.SenderType, &e.SenderID, &e.Content, &metadata, &e.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if metadata.Valid {
+		e.MetadataJson = metadata.String
+	}
+	return &e, nil
 }
 
 func (s *GroupEventStore) List(groupID string, limit int) ([]*model.GroupEvent, error) {
@@ -579,7 +633,15 @@ func (s *GroupArtifactStore) Create(a *model.GroupArtifact) error {
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		a.ID, a.GroupID, a.Name, a.ArtifactType, a.Version, a.Content, a.Status, a.CreatedBy,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	stored, err := s.Get(a.ID)
+	if err != nil || stored == nil {
+		return err
+	}
+	*a = *stored
+	return nil
 }
 
 func (s *GroupArtifactStore) Get(id string) (*model.GroupArtifact, error) {
@@ -654,6 +716,11 @@ func BuildGroupOrchestrationState(group *model.Group, members []*model.GroupMemb
 	}
 
 	switch group.OrchestrationMode {
+	case model.GroupModeFreeChat:
+		state.NextAction = "agents_observe_and_optionally_reply"
+		state.ContextPolicy = "each agent receives recent room messages, group rules, and the latest message; each decides whether to reply"
+		state.TerminationPolicy = "stop after one bounded reaction wave or max_speakers is reached"
+		state.EligibleSpeakers = groupSpeakers(members, false)
 	case model.GroupModeRoundtable:
 		state.NextAction = "collect_member_intents"
 		state.ContextPolicy = "all members receive the shared artifact, rolling summary, open questions, and recent key events"

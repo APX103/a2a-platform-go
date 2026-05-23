@@ -3,10 +3,15 @@ const BASE = API_BASE_URL.endsWith('/') ? API_BASE_URL.slice(0, -1) : API_BASE_U
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const token = localStorage.getItem('admin_token') || '';
+  const optionHeaders = headersToObject(options?.headers);
+  const hasExplicitAuth = Object.keys(optionHeaders).some(key => {
+    const normalized = key.toLowerCase();
+    return normalized === 'authorization' || normalized === 'x-admin-token' || normalized === 'x-group-member-token';
+  });
   const headers = {
     'Content-Type': 'application/json',
-    ...(token ? { 'X-Admin-Token': token } : {}),
-    ...(options?.headers || {}),
+    ...(token && !hasExplicitAuth ? { 'X-Admin-Token': token } : {}),
+    ...optionHeaders,
   };
   const res = await fetch(`${BASE}${path}`, {
     ...options,
@@ -25,6 +30,19 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     return undefined as T;
   }
   return JSON.parse(text) as T;
+}
+
+function headersToObject(headers?: HeadersInit): Record<string, string> {
+  if (!headers) return {};
+  if (headers instanceof Headers) {
+    const result: Record<string, string> = {};
+    headers.forEach((value, key) => { result[key] = value; });
+    return result;
+  }
+  if (Array.isArray(headers)) {
+    return Object.fromEntries(headers.map(([key, value]) => [key, value]));
+  }
+  return { ...headers };
 }
 
 import type {
@@ -154,7 +172,7 @@ export interface Group {
   id: string;
   name: string;
   description?: string;
-  orchestration_mode: 'leader_led' | 'roundtable' | 'stateflow' | 'research_long_horizon' | string;
+  orchestration_mode: 'leader_led' | 'free_chat' | 'roundtable' | 'stateflow' | 'research_long_horizon' | string;
   rules_json?: string;
   memory_policy_json?: string;
   status: string;
@@ -228,6 +246,14 @@ export interface GroupInvite {
 
 export interface GroupEventResponse {
   event: GroupEvent;
+  orchestration: GroupOrchestrationState;
+  triggered?: GroupEvent[];
+}
+
+export interface GroupJoinResponse {
+  group: Group;
+  member: GroupMember;
+  access_token: string;
   orchestration: GroupOrchestrationState;
 }
 
@@ -362,17 +388,24 @@ export const api = {
       ...(token ? { headers: { 'Content-Type': 'application/json', 'X-Admin-Token': token } } : {}),
       body: JSON.stringify(client),
     }),
+  joinGroupByInvite: (req: { invite_token: string; actor_type?: string; actor_id: string; client_id?: string; capabilities?: unknown }) =>
+    request<GroupJoinResponse>('/api/group-joins', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    }),
   listGroupEvents: (id: string, limit?: number) =>
     request<GroupEvent[]>(`/api/groups/${id}/events${limit ? `?limit=${limit}` : ''}`),
-  appendGroupEvent: (id: string, event: { event_type?: string; sender_type: string; sender_id: string; content: string; metadata?: unknown }) =>
+  appendGroupEvent: (id: string, event: { event_type?: string; sender_type: string; sender_id: string; content: string; metadata?: unknown }, memberToken?: string) =>
     request<GroupEventResponse>(`/api/groups/${id}/events`, {
       method: 'POST',
+      ...(memberToken ? { headers: { Authorization: `Bearer ${memberToken}` } } : {}),
       body: JSON.stringify(event),
     }),
   listGroupArtifacts: (id: string) => request<GroupArtifact[]>(`/api/groups/${id}/artifacts`),
-  createGroupArtifact: (id: string, artifact: { name: string; artifact_type?: string; content: string; status?: string; created_by?: string }) =>
+  createGroupArtifact: (id: string, artifact: { name: string; artifact_type?: string; content: string; status?: string; created_by?: string }, memberToken?: string) =>
     request<GroupArtifact>(`/api/groups/${id}/artifacts`, {
       method: 'POST',
+      ...(memberToken ? { headers: { Authorization: `Bearer ${memberToken}` } } : {}),
       body: JSON.stringify(artifact),
     }),
   updateGroupArtifact: (groupId: string, artifactId: string, artifact: Partial<GroupArtifact>, token: string) =>

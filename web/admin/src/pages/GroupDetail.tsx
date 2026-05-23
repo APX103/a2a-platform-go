@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, Bot, FileText, GitBranch, RefreshCw, Send, UserPlus, Users } from 'lucide-react'
+import { ArrowLeft, Bot, ExternalLink, FileText, GitBranch, KeyRound, RefreshCw, Send, UserPlus, Users } from 'lucide-react'
 import {
   Agent,
   api,
@@ -34,6 +34,7 @@ function tryFormatJson(value?: string) {
 function modeLabel(mode: string) {
   switch (mode) {
     case 'leader_led': return 'Leader-led'
+    case 'free_chat': return 'Free chat'
     case 'roundtable': return 'Roundtable'
     case 'stateflow': return 'Stateflow'
     case 'research_long_horizon': return 'Research'
@@ -54,6 +55,23 @@ function actorInitial(id: string) {
   return (trimmed[0] || '?').toUpperCase()
 }
 
+function modeHint(mode: string) {
+  switch (mode) {
+    case 'leader_led':
+      return 'Leader-led: messages trigger the leader and create task/trace records.'
+    case 'free_chat':
+      return 'Free chat: agents observe each new message and decide whether to reply.'
+    case 'roundtable':
+      return 'Roundtable: structured review around shared artifacts.'
+    case 'stateflow':
+      return 'Stateflow: configured phases decide who can speak next.'
+    case 'research_long_horizon':
+      return 'Research: long-running workstreams, checkpoints, and artifacts.'
+    default:
+      return 'Custom orchestration mode.'
+  }
+}
+
 export default function GroupDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -69,6 +87,8 @@ export default function GroupDetail() {
   const [token, setToken] = useState(() => localStorage.getItem('admin_token') || '')
   const [memberForm, setMemberForm] = useState({ actor_id: '', role: 'member' })
   const [joinForm, setJoinForm] = useState({ client_id: 'human-local' })
+  const [inviteJoinForm, setInviteJoinForm] = useState({ invite_token: '', actor_id: 'human-local' })
+  const [memberToken, setMemberToken] = useState('')
   const [eventForm, setEventForm] = useState({ sender_type: 'human', sender_id: 'human-local', content: '' })
   const [artifactForm, setArtifactForm] = useState({ name: 'proposal.md', content: '', created_by: 'human-local' })
   const [inviteForm, setInviteForm] = useState({ actor_type_allowed: 'human', role: 'member', max_uses: 20 })
@@ -105,6 +125,14 @@ export default function GroupDetail() {
   }
 
   useEffect(() => { load() }, [id])
+
+  useEffect(() => {
+    if (!id) {
+      setMemberToken('')
+      return
+    }
+    setMemberToken(localStorage.getItem(`group_member_token_${id}`) || '')
+  }, [id])
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ block: 'end' })
@@ -156,6 +184,31 @@ export default function GroupDetail() {
     }
   }
 
+  const handleJoinByInvite = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!id) return
+    if (!inviteJoinForm.invite_token.trim() || !inviteJoinForm.actor_id.trim()) {
+      setError('Invite token and human id are required')
+      return
+    }
+    try {
+      const joined = await api.joinGroupByInvite({
+        invite_token: inviteJoinForm.invite_token.trim(),
+        actor_type: 'human',
+        actor_id: inviteJoinForm.actor_id.trim(),
+        capabilities: { ui: 'admin-human-session' },
+      })
+      localStorage.setItem(`group_member_token_${id}`, joined.access_token)
+      setMemberToken(joined.access_token)
+      setEventForm(f => ({ ...f, sender_type: 'human', sender_id: joined.member.actor_id }))
+      setArtifactForm(f => ({ ...f, created_by: joined.member.actor_id }))
+      setInviteJoinForm(f => ({ ...f, invite_token: '' }))
+      load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Join by invite failed')
+    }
+  }
+
   const handleCreateInvite = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!id) return
@@ -170,6 +223,9 @@ export default function GroupDetail() {
         max_uses: inviteForm.max_uses,
       }, token)
       setNewInviteToken(invite.token || '')
+      if (invite.token) {
+        setInviteJoinForm(f => ({ ...f, invite_token: invite.token || '' }))
+      }
       load()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Create invite failed')
@@ -185,12 +241,13 @@ export default function GroupDetail() {
     }
     setSendingEvent(true)
     try {
+      const sendAsMember = memberToken && eventForm.sender_type === 'human'
       await api.appendGroupEvent(id, {
         event_type: 'message',
         sender_type: eventForm.sender_type,
         sender_id: eventForm.sender_id,
         content: eventForm.content,
-      })
+      }, sendAsMember ? memberToken : undefined)
       setEventForm(f => ({ ...f, content: '' }))
       load()
     } catch (err) {
@@ -215,12 +272,13 @@ export default function GroupDetail() {
       return
     }
     try {
+      const createAsMember = memberToken && artifactForm.created_by === eventForm.sender_id
       await api.createGroupArtifact(id, {
         name: artifactForm.name,
         artifact_type: 'document',
         content: artifactForm.content,
         created_by: artifactForm.created_by,
-      })
+      }, createAsMember ? memberToken : undefined)
       setArtifactForm(f => ({ ...f, content: '' }))
       load()
     } catch (err) {
@@ -230,6 +288,7 @@ export default function GroupDetail() {
 
   if (loading) return <div className="p-8 text-sm text-[var(--text-tertiary)]">Loading...</div>
   if (!group) return <div className="p-8 text-sm text-[var(--error)]">Group not found</div>
+  const groupTracePath = `/traces/context/${encodeURIComponent(`group:${group.id}`)}`
 
   return (
     <div className="p-8 max-w-7xl">
@@ -238,10 +297,16 @@ export default function GroupDetail() {
           <ArrowLeft size={14} />
           Back to Groups
         </button>
-        <button onClick={load} className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md bg-[var(--bg-tertiary)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
-          <RefreshCw size={14} />
-          Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          <Link to={groupTracePath} className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md bg-[var(--bg-tertiary)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] no-underline">
+            <ExternalLink size={14} />
+            Trace
+          </Link>
+          <button onClick={load} className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md bg-[var(--bg-tertiary)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
+            <RefreshCw size={14} />
+            Refresh
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -361,6 +426,7 @@ export default function GroupDetail() {
             </form>
 
             <form onSubmit={handleJoin} className="mt-4 space-y-2">
+              <label className="text-xs text-[var(--text-tertiary)]">Admin add human</label>
               <input
                 value={joinForm.client_id}
                 onChange={e => setJoinForm({ client_id: e.target.value })}
@@ -368,7 +434,7 @@ export default function GroupDetail() {
               />
               <button className="flex items-center justify-center gap-1.5 w-full px-3 py-1.5 text-sm rounded-md bg-[var(--bg-tertiary)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
                 <UserPlus size={14} />
-                Join as Human
+                Add Human
               </button>
             </form>
           </section>
@@ -427,6 +493,36 @@ export default function GroupDetail() {
               ))}
             </div>
           </section>
+
+          <section className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <KeyRound size={15} className="text-[var(--accent)]" />
+              <h2 className="text-sm font-medium text-[var(--text-primary)]">Human Session</h2>
+            </div>
+            {memberToken && (
+              <div className="mb-3 rounded-md border border-[var(--success)]/25 bg-[var(--success)]/10 p-2 text-xs text-[var(--success)]">
+                Member token active for this browser
+              </div>
+            )}
+            <form onSubmit={handleJoinByInvite} className="space-y-2">
+              <input
+                value={inviteJoinForm.actor_id}
+                onChange={e => setInviteJoinForm(f => ({ ...f, actor_id: e.target.value }))}
+                placeholder="human id"
+                className="w-full px-3 py-1.5 text-sm rounded-md border border-[var(--border)] bg-[var(--bg-primary)] text-[var(--text-primary)]"
+              />
+              <input
+                value={inviteJoinForm.invite_token}
+                onChange={e => setInviteJoinForm(f => ({ ...f, invite_token: e.target.value }))}
+                placeholder="invite token"
+                className="w-full px-3 py-1.5 text-sm rounded-md border border-[var(--border)] bg-[var(--bg-primary)] text-[var(--text-primary)]"
+              />
+              <button className="flex items-center justify-center gap-1.5 w-full px-3 py-1.5 text-sm rounded-md bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)]">
+                <KeyRound size={14} />
+                Join With Invite
+              </button>
+            </form>
+          </section>
         </aside>
 
         <div className="space-y-6 min-w-0">
@@ -435,9 +531,7 @@ export default function GroupDetail() {
               <div className="min-w-0">
                 <h2 className="text-sm font-medium text-[var(--text-primary)]">Group Chat</h2>
                 <div className="mt-0.5 text-xs text-[var(--text-tertiary)] truncate">
-                  {group.orchestration_mode === 'leader_led'
-                    ? 'Leader-led: messages trigger the leader and create task/trace records.'
-                    : 'Event-only for now: automatic agent orchestration is not enabled for this mode.'}
+                  {modeHint(group.orchestration_mode)}
                 </div>
               </div>
               <span className="shrink-0 text-xs px-2 py-1 rounded-full bg-[var(--bg-tertiary)] text-[var(--text-secondary)]">{events.length} messages</span>
@@ -495,6 +589,9 @@ export default function GroupDetail() {
             </div>
             <form onSubmit={handleSendEvent} className="border-t border-[var(--border)] bg-[var(--bg-secondary)] p-4">
               <div className="mb-3 flex flex-wrap items-center gap-2">
+                {memberToken && eventForm.sender_type === 'human' && (
+                  <span className="rounded-full bg-[var(--success)]/10 px-2 py-1 text-xs text-[var(--success)]">member token</span>
+                )}
                 <select
                   value={eventForm.sender_type}
                   onChange={e => setEventForm(f => ({ ...f, sender_type: e.target.value }))}

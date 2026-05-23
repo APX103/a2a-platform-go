@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -20,7 +21,7 @@ const (
 )
 
 var (
-	httpClient = &http.Client{Timeout: 30 * time.Second}
+	httpClient = &http.Client{Timeout: 180 * time.Second}
 	limiter    = rate.NewLimiter(15, 5) // 15 req/s with burst 5, stays under server's 20/s limit
 )
 
@@ -72,6 +73,64 @@ func arr(t *testing.T, data []byte) []interface{} {
 
 func auth() map[string]string {
 	return map[string]string{"X-Admin-Token": adminToken}
+}
+
+func connectedBuiltinAgents(t *testing.T, minCount int) []string {
+	t.Helper()
+	code, body := req(t, "GET", "/api/agents", "", auth())
+	expect(t, code, 200)
+	agents := []string{}
+	for _, item := range arr(t, body) {
+		agent, _ := item.(map[string]interface{})
+		if agent["type"] == "builtin" && agent["status"] == "connected" {
+			if name, _ := agent["name"].(string); name != "" {
+				agents = append(agents, name)
+			}
+		}
+	}
+	sort.Strings(agents)
+	preferred := make([]string, 0, len(agents))
+	for _, name := range agents {
+		if !strings.HasPrefix(name, "e2e-") && name != "bearer-test" {
+			preferred = append(preferred, name)
+		}
+	}
+	if len(preferred) >= minCount {
+		agents = preferred
+	}
+	if len(agents) < minCount {
+		t.Fatalf("connected builtin agents = %v, want at least %d", agents, minCount)
+	}
+	return agents
+}
+
+func joinHumanByInvite(t *testing.T, groupID, actorID string) map[string]string {
+	t.Helper()
+	code, data := req(t, "POST", "/api/groups/"+groupID+"/invites",
+		`{"actor_type_allowed":"human","role":"member","max_uses":1}`, auth())
+	expect(t, code, 200)
+	inviteToken, _ := obj(t, data)["token"].(string)
+	if inviteToken == "" {
+		t.Fatalf("invite token missing: %s", string(data))
+	}
+	code, data = req(t, "POST", "/api/group-joins",
+		fmt.Sprintf(`{"invite_token":%q,"actor_type":"human","actor_id":%q,"capabilities":{"ui":"e2e"}}`, inviteToken, actorID), nil)
+	expect(t, code, 200)
+	accessToken, _ := obj(t, data)["access_token"].(string)
+	if accessToken == "" {
+		t.Fatalf("access token missing: %s", string(data))
+	}
+	return map[string]string{"Authorization": "Bearer " + accessToken}
+}
+
+func assertGroupTraceRecorded(t *testing.T, groupID string) {
+	t.Helper()
+	code, body := req(t, "GET", "/api/traces/context/group:"+groupID, "", auth())
+	expect(t, code, 200)
+	traces := arr(t, body)
+	if len(traces) == 0 {
+		t.Fatalf("no traces recorded for group context %s", groupID)
+	}
 }
 
 func expect(t *testing.T, got, want int) {
@@ -290,6 +349,124 @@ func TestGroupOrchestrationLifecycle(t *testing.T) {
 	if state["mode"] != "roundtable" {
 		t.Fatalf("orchestration mode = %v, want roundtable", state["mode"])
 	}
+}
+
+func TestGroupFreeChatInvokesBuiltinAgents(t *testing.T) {
+	agents := connectedBuiltinAgents(t, 3)
+	agents = agents[:3]
+
+	body := fmt.Sprintf(`{
+		"name": %q,
+		"description": "E2E free-chat orchestration with builtin agents",
+		"orchestration_mode": "free_chat",
+		"rules": {"max_speakers": 3, "max_rounds": 1},
+		"memory_policy": {"hot_messages": 20, "summary": true}
+	}`, "e2e free chat "+time.Now().Format("150405.000"))
+	code, data := req(t, "POST", "/api/groups", body, auth())
+	expect(t, code, 200)
+	group := obj(t, data)
+	groupID, _ := group["id"].(string)
+	if groupID == "" {
+		t.Fatalf("group id missing: %s", string(data))
+	}
+	if group["orchestration_mode"] != "free_chat" {
+		t.Fatalf("mode = %v, want free_chat", group["orchestration_mode"])
+	}
+	t.Cleanup(func() {
+		req(t, "DELETE", "/api/groups/"+groupID, "", auth())
+	})
+
+	for _, name := range agents {
+		code, data = req(t, "POST", "/api/groups/"+groupID+"/members",
+			fmt.Sprintf(`{"actor_type":"agent","actor_id":%q,"role":"member","capabilities":{"source":"e2e"}}`, name), auth())
+		expect(t, code, 200)
+	}
+
+	humanID := "human-e2e-free-chat-" + strings.ReplaceAll(time.Now().Format("150405.000"), ".", "")
+	memberAuth := joinHumanByInvite(t, groupID, humanID)
+
+	code, data = req(t, "GET", "/api/groups/"+groupID+"/orchestration", "", memberAuth)
+	expect(t, code, 200)
+	state := obj(t, data)
+	if state["mode"] != "free_chat" {
+		t.Fatalf("state mode = %v, want free_chat", state["mode"])
+	}
+	if state["next_action"] != "agents_observe_and_optionally_reply" {
+		t.Fatalf("next_action = %v, want agents_observe_and_optionally_reply", state["next_action"])
+	}
+
+	prompt := "编排 e2e 测试：请群内每个 agent 各用一句中文说明自己在这个问题讨论中能承担的角色。不要调用工具，不要输出 NO_REPLY。"
+	code, data = req(t, "POST", "/api/groups/"+groupID+"/events",
+		fmt.Sprintf(`{"event_type":"message","sender_type":"human","sender_id":%q,"content":%q}`, humanID, prompt), memberAuth)
+	expect(t, code, 200)
+	eventResp := obj(t, data)
+	event, _ := eventResp["event"].(map[string]interface{})
+	triggerEventID, _ := event["id"].(float64)
+	if triggerEventID == 0 {
+		t.Fatalf("trigger event id missing: %s", string(data))
+	}
+	triggered, _ := eventResp["triggered"].([]interface{})
+	if len(triggered) == 0 {
+		t.Fatalf("free_chat produced no triggered agent events: %s", string(data))
+	}
+	if len(triggered) > 3 {
+		t.Fatalf("triggered len = %d, want <= 3", len(triggered))
+	}
+
+	allowed := map[string]bool{}
+	for _, name := range agents {
+		allowed[name] = true
+	}
+	for _, item := range triggered {
+		ev, _ := item.(map[string]interface{})
+		if ev["event_type"] != "message" || ev["sender_type"] != "agent" {
+			t.Fatalf("triggered event is not an agent message: %#v", ev)
+		}
+		senderID, _ := ev["sender_id"].(string)
+		if !allowed[senderID] {
+			t.Fatalf("unexpected triggered sender %q, allowed %v", senderID, agents)
+		}
+		if strings.TrimSpace(fmt.Sprint(ev["content"])) == "" {
+			t.Fatalf("triggered event has empty content: %#v", ev)
+		}
+		metadataJSON, _ := ev["metadata_json"].(string)
+		var metadata map[string]interface{}
+		if err := json.Unmarshal([]byte(metadataJSON), &metadata); err != nil {
+			t.Fatalf("invalid metadata_json %q: %v", metadataJSON, err)
+		}
+		if metadata["orchestration"] != "free_chat" {
+			t.Fatalf("metadata orchestration = %v, want free_chat", metadata["orchestration"])
+		}
+		if metadata["trigger_event_id"] != triggerEventID {
+			t.Fatalf("metadata trigger_event_id = %v, want %v", metadata["trigger_event_id"], triggerEventID)
+		}
+	}
+
+	code, data = req(t, "GET", "/api/groups/"+groupID+"/events?limit=20", "", memberAuth)
+	expect(t, code, 200)
+	events := arr(t, data)
+	seenHuman := false
+	seenAgentReplies := 0
+	for _, item := range events {
+		ev, _ := item.(map[string]interface{})
+		if ev["sender_type"] == "human" && ev["sender_id"] == humanID {
+			seenHuman = true
+		}
+		if ev["sender_type"] == "agent" {
+			metadataJSON, _ := ev["metadata_json"].(string)
+			if strings.Contains(metadataJSON, `"orchestration":"free_chat"`) {
+				seenAgentReplies++
+			}
+		}
+	}
+	if !seenHuman {
+		t.Fatalf("human trigger message was not persisted in group events")
+	}
+	if seenAgentReplies < len(triggered) {
+		t.Fatalf("persisted free_chat replies = %d, triggered = %d", seenAgentReplies, len(triggered))
+	}
+
+	assertGroupTraceRecorded(t, groupID)
 }
 
 // ===== 4. Agent List & Detail =====

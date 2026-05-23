@@ -110,6 +110,46 @@ func TestResolveRootContextId_FallsBackToOriginalContextForStateless(t *testing.
 	}
 }
 
+func TestFreeChatCandidates(t *testing.T) {
+	members := []*model.GroupMember{
+		{ActorType: model.GroupActorAgent, ActorID: "planner", Role: "member"},
+		{ActorType: model.GroupActorAgent, ActorID: "reviewer", Role: "reviewer"},
+		{ActorType: model.GroupActorAgent, ActorID: "observer", Role: "observer"},
+		{ActorType: model.GroupActorHuman, ActorID: "human-local", Role: "member"},
+		{ActorType: model.GroupActorAgent, ActorID: "planner", Role: "member"},
+	}
+
+	got := freeChatCandidates(members, model.GroupActorAgent, "planner")
+	want := []string{"reviewer"}
+	if len(got) != len(want) || got[0] != want[0] {
+		t.Fatalf("candidates = %#v, want %#v", got, want)
+	}
+
+	got = freeChatCandidates(members, model.GroupActorHuman, "human-local")
+	want = []string{"planner", "reviewer"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("human-triggered candidates = %#v, want %#v", got, want)
+	}
+}
+
+func TestFreeChatRulesAndNoReply(t *testing.T) {
+	rules := parseGroupRules(`{"max_speakers":2,"max_rounds":4}`)
+	if rules.MaxSpeakers != 2 || rules.MaxRounds != 4 {
+		t.Fatalf("rules = %#v", rules)
+	}
+	if got := freeChatHotMessageLimit(`{"hot_messages":200}`); got != 80 {
+		t.Fatalf("hot limit = %d, want 80", got)
+	}
+	for _, text := range []string{"NO_REPLY", "`NO_REPLY`", "不回复"} {
+		if !isNoReply(text) {
+			t.Fatalf("%q should be treated as no reply", text)
+		}
+	}
+	if isNoReply("我来补充一点") {
+		t.Fatal("normal reply was treated as no reply")
+	}
+}
+
 func TestAgentProxyRecordsRootAndParentLineage(t *testing.T) {
 	db := setupAgentProxyLineageDB(t)
 	svcCtx := &svc.ServiceContext{

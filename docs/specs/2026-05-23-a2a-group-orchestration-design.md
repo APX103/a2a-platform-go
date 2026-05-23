@@ -19,7 +19,7 @@ An A2A group is the boundary for:
 `groups`
 
 - `id`: stable group id; it is not a join credential
-- `orchestration_mode`: `leader_led`, `roundtable`, `stateflow`, `research_long_horizon`
+- `orchestration_mode`: `leader_led`, `free_chat`, `roundtable`, `stateflow`, `research_long_horizon`
 - `rules_json`: mode-specific rules, such as max rounds, required reviewers, phase order
 - `memory_policy_json`: hot-window, summary, artifact, and retrieval policies
 - `status`: `active` or `archived`
@@ -45,6 +45,10 @@ An A2A group is the boundary for:
 `leader_led`
 
 The leader receives broad room state and selects the next speaker or finalizes. This is the default mode for predictable convergence.
+
+`free_chat`
+
+Every eligible agent observes each new room message and independently decides whether to reply. The platform bounds each reaction wave with rules such as `max_speakers`, so it feels like an open chat room without allowing unlimited agent cascades.
 
 `roundtable`
 

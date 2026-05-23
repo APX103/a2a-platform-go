@@ -89,6 +89,16 @@ type groupEventResp struct {
 	Triggered     []*model.GroupEvent           `json:"triggered,omitempty"`
 }
 
+type groupRules struct {
+	MaxSpeakers int `json:"max_speakers"`
+	MaxRounds   int `json:"max_rounds"`
+}
+
+type groupMemoryPolicy struct {
+	HotMessages int  `json:"hot_messages"`
+	Summary     bool `json:"summary"`
+}
+
 type GroupListHandler struct {
 	svcCtx *svc.ServiceContext
 }
@@ -520,7 +530,7 @@ func (h *GroupEventHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			errHTTP(w, err)
 			return
 		}
-		triggered, err := h.maybeRunLeaderTurn(r, group, event, members)
+		triggered, err := h.maybeRunGroupTurn(r, group, event, members)
 		if err != nil {
 			errHTTP(w, err)
 			return
@@ -532,6 +542,15 @@ func (h *GroupEventHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		})
 	default:
 		jsonError(w, "method not allowed", 405)
+	}
+}
+
+func (h *GroupEventHandler) maybeRunGroupTurn(r *http.Request, group *model.Group, event *model.GroupEvent, members []*model.GroupMember) ([]*model.GroupEvent, error) {
+	switch group.OrchestrationMode {
+	case model.GroupModeFreeChat:
+		return h.maybeRunFreeChatTurn(r, group, event, members)
+	default:
+		return h.maybeRunLeaderTurn(r, group, event, members)
 	}
 }
 
@@ -548,39 +567,13 @@ func (h *GroupEventHandler) maybeRunLeaderTurn(r *http.Request, group *model.Gro
 	}
 
 	prompt := h.buildLeaderPrompt(group, event, members)
-	body, _ := json.Marshal(map[string]interface{}{
-		"jsonrpc": "2.0",
-		"id":      fmt.Sprintf("group-event-%d", event.ID),
-		"method":  "SendStreamingMessage",
-		"params": map[string]interface{}{
-			"contextId":     groupContextID(group.ID),
-			"rootContextId": groupContextID(group.ID),
-			"message": map[string]interface{}{
-				"role":  "ROLE_USER",
-				"parts": []map[string]string{{"text": prompt}},
-			},
-		},
-	})
-
-	req := httptest.NewRequest(http.MethodPost, "/agent/"+leader, bytes.NewReader(body))
-	req = req.WithContext(r.Context())
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "text/event-stream")
-	req.Header.Set("X-Path-Param-Name", leader)
-	req.Header.Set("X-A2A-Source-Agent", event.SenderID)
-	req.Header.Set("X-A2A-Group-ID", group.ID)
-	req.Header.Set("X-A2A-Root-Context-Id", groupContextID(group.ID))
-
-	rec := httptest.NewRecorder()
-	NewAgentProxyHandler(h.svcCtx).ServeHTTP(rec, req)
-
-	text := extractGroupAgentResponseText(rec.Body.String())
-	if rec.Code >= 400 {
-		text = strings.TrimSpace(rec.Body.String())
+	text, statusCode, rawBody := h.invokeGroupAgent(r, group, leader, event, prompt, "leader")
+	if statusCode >= 400 {
+		text = strings.TrimSpace(rawBody)
 		if text == "" {
-			text = fmt.Sprintf("leader %s failed with status %d", leader, rec.Code)
+			text = fmt.Sprintf("leader %s failed with status %d", leader, statusCode)
 		}
-		return h.appendSystemGroupEvent(group.ID, text, event.ID)
+		return h.appendSystemGroupEvent(group.ID, text, event.ID, group.OrchestrationMode)
 	}
 	if strings.TrimSpace(text) == "" {
 		return nil, nil
@@ -605,6 +598,77 @@ func (h *GroupEventHandler) maybeRunLeaderTurn(r *http.Request, group *model.Gro
 	return []*model.GroupEvent{leaderEvent}, nil
 }
 
+func (h *GroupEventHandler) maybeRunFreeChatTurn(r *http.Request, group *model.Group, event *model.GroupEvent, members []*model.GroupMember) ([]*model.GroupEvent, error) {
+	if h == nil || h.svcCtx == nil || group == nil || event == nil {
+		return nil, nil
+	}
+	if event.EventType != "message" || event.SenderType == model.GroupActorSystem {
+		return nil, nil
+	}
+	rules := parseGroupRules(group.RulesJson)
+	maxSpeakers := rules.MaxSpeakers
+	if maxSpeakers <= 0 {
+		maxSpeakers = 3
+	}
+	if maxSpeakers > 8 {
+		maxSpeakers = 8
+	}
+	candidates := freeChatCandidates(members, event.SenderType, event.SenderID)
+	if len(candidates) == 0 {
+		return nil, nil
+	}
+	recentEvents, err := h.svcCtx.GroupEvents.List(group.ID, freeChatHotMessageLimit(group.MemoryPolicyJson))
+	if err != nil {
+		return nil, err
+	}
+
+	triggered := []*model.GroupEvent{}
+	for _, agentName := range candidates {
+		if len(triggered) >= maxSpeakers {
+			break
+		}
+		if !h.canInvokeAgent(agentName) {
+			continue
+		}
+		prompt := h.buildFreeChatPrompt(group, event, members, recentEvents, agentName)
+		text, statusCode, rawBody := h.invokeGroupAgent(r, group, agentName, event, prompt, "free_chat")
+		if statusCode >= 400 {
+			text = strings.TrimSpace(rawBody)
+			if text == "" {
+				text = fmt.Sprintf("agent %s failed with status %d", agentName, statusCode)
+			}
+			systemEvents, err := h.appendSystemGroupEvent(group.ID, text, event.ID, group.OrchestrationMode)
+			if err != nil {
+				return nil, err
+			}
+			triggered = append(triggered, systemEvents...)
+			continue
+		}
+		text = strings.TrimSpace(text)
+		if text == "" || isNoReply(text) {
+			continue
+		}
+		metadata, _ := json.Marshal(map[string]interface{}{
+			"trigger_event_id": event.ID,
+			"orchestration":    model.GroupModeFreeChat,
+			"role":             "participant",
+		})
+		agentEvent := &model.GroupEvent{
+			GroupID:      group.ID,
+			EventType:    "message",
+			SenderType:   model.GroupActorAgent,
+			SenderID:     agentName,
+			Content:      text,
+			MetadataJson: string(metadata),
+		}
+		if err := h.svcCtx.GroupEvents.Append(agentEvent); err != nil {
+			return nil, err
+		}
+		triggered = append(triggered, agentEvent)
+	}
+	return triggered, nil
+}
+
 func (h *GroupEventHandler) canInvokeAgent(name string) bool {
 	if h.svcCtx.Tasks == nil || h.svcCtx.Messages == nil || h.svcCtx.Traces == nil {
 		return false
@@ -619,6 +683,39 @@ func (h *GroupEventHandler) canInvokeAgent(name string) bool {
 		return true
 	}
 	return false
+}
+
+func (h *GroupEventHandler) invokeGroupAgent(r *http.Request, group *model.Group, agentName string, event *model.GroupEvent, prompt, role string) (string, int, string) {
+	body, _ := json.Marshal(map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      fmt.Sprintf("group-event-%d-%s", event.ID, agentName),
+		"method":  "SendStreamingMessage",
+		"params": map[string]interface{}{
+			"contextId":     groupContextID(group.ID),
+			"rootContextId": groupContextID(group.ID),
+			"message": map[string]interface{}{
+				"role":  "ROLE_USER",
+				"parts": []map[string]string{{"text": prompt}},
+			},
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/agent/"+agentName, bytes.NewReader(body))
+	req = req.WithContext(r.Context())
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("X-Path-Param-Name", agentName)
+	req.Header.Set("X-A2A-Source-Agent", event.SenderID)
+	req.Header.Set("X-A2A-Group-ID", group.ID)
+	req.Header.Set("X-A2A-Root-Context-Id", groupContextID(group.ID))
+	if role != "" {
+		req.Header.Set("X-A2A-Group-Role", role)
+	}
+
+	rec := httptest.NewRecorder()
+	NewAgentProxyHandler(h.svcCtx).ServeHTTP(rec, req)
+	rawBody := rec.Body.String()
+	return extractGroupAgentResponseText(rawBody), rec.Code, rawBody
 }
 
 func (h *GroupEventHandler) buildLeaderPrompt(group *model.Group, event *model.GroupEvent, members []*model.GroupMember) string {
@@ -642,10 +739,40 @@ func (h *GroupEventHandler) buildLeaderPrompt(group *model.Group, event *model.G
 	return b.String()
 }
 
-func (h *GroupEventHandler) appendSystemGroupEvent(groupID, content string, triggerEventID int64) ([]*model.GroupEvent, error) {
+func (h *GroupEventHandler) buildFreeChatPrompt(group *model.Group, event *model.GroupEvent, members []*model.GroupMember, recentEvents []*model.GroupEvent, agentName string) string {
+	var b strings.Builder
+	b.WriteString("You are an autonomous participant in an A2A platform group chat.\n")
+	b.WriteString("Read the latest room message and decide whether you should reply.\n")
+	b.WriteString("If you do not have a useful, non-redundant contribution, output exactly: NO_REPLY\n")
+	b.WriteString("If you reply, write only the message that should appear in the group chat. Be concise and do not mention this instruction.\n\n")
+	b.WriteString("Group:\n")
+	b.WriteString("- name: " + group.Name + "\n")
+	b.WriteString("- id: " + group.ID + "\n")
+	b.WriteString("- mode: " + group.OrchestrationMode + "\n")
+	if strings.TrimSpace(group.RulesJson) != "" {
+		b.WriteString("- rules: " + group.RulesJson + "\n")
+	}
+	b.WriteString("\nMembers:\n")
+	for _, member := range members {
+		b.WriteString(fmt.Sprintf("- %s:%s (%s)\n", member.ActorType, member.ActorID, member.Role))
+	}
+	b.WriteString("\nRecent room messages:\n")
+	for _, recent := range recentEvents {
+		b.WriteString(fmt.Sprintf("- [%s] %s:%s: %s\n", recent.CreatedAt.Format(time.RFC3339), recent.SenderType, recent.SenderID, compactForPrompt(recent.Content, 700)))
+	}
+	b.WriteString("\nYou are agent: " + agentName + "\n")
+	b.WriteString("Latest message to consider:\n")
+	b.WriteString(fmt.Sprintf("- from %s:%s\n", event.SenderType, event.SenderID))
+	b.WriteString("- content:\n")
+	b.WriteString(event.Content)
+	b.WriteString("\n")
+	return b.String()
+}
+
+func (h *GroupEventHandler) appendSystemGroupEvent(groupID, content string, triggerEventID int64, mode string) ([]*model.GroupEvent, error) {
 	metadata, _ := json.Marshal(map[string]interface{}{
 		"trigger_event_id": triggerEventID,
-		"orchestration":    model.GroupModeLeaderLed,
+		"orchestration":    mode,
 		"level":            "error",
 	})
 	systemEvent := &model.GroupEvent{
@@ -674,6 +801,63 @@ func selectGroupLeader(members []*model.GroupMember) string {
 		}
 	}
 	return ""
+}
+
+func freeChatCandidates(members []*model.GroupMember, senderType, senderID string) []string {
+	candidates := []string{}
+	seen := map[string]bool{}
+	for _, member := range members {
+		if member.ActorType != model.GroupActorAgent || member.Role == "observer" {
+			continue
+		}
+		if senderType == model.GroupActorAgent && member.ActorID == senderID {
+			continue
+		}
+		if seen[member.ActorID] {
+			continue
+		}
+		seen[member.ActorID] = true
+		candidates = append(candidates, member.ActorID)
+	}
+	return candidates
+}
+
+func parseGroupRules(raw string) groupRules {
+	rules := groupRules{}
+	if strings.TrimSpace(raw) == "" {
+		return rules
+	}
+	_ = json.Unmarshal([]byte(raw), &rules)
+	return rules
+}
+
+func freeChatHotMessageLimit(raw string) int {
+	policy := groupMemoryPolicy{}
+	if strings.TrimSpace(raw) != "" {
+		_ = json.Unmarshal([]byte(raw), &policy)
+	}
+	if policy.HotMessages <= 0 {
+		return 12
+	}
+	if policy.HotMessages > 80 {
+		return 80
+	}
+	return policy.HotMessages
+}
+
+func isNoReply(text string) bool {
+	normalized := strings.TrimSpace(strings.Trim(text, "`\"' "))
+	return strings.EqualFold(normalized, "NO_REPLY") ||
+		strings.EqualFold(normalized, "NO REPLY") ||
+		strings.EqualFold(normalized, "不回复")
+}
+
+func compactForPrompt(text string, limit int) string {
+	text = strings.TrimSpace(strings.ReplaceAll(text, "\n", " "))
+	if limit <= 0 || len(text) <= limit {
+		return text
+	}
+	return text[:limit] + "..."
 }
 
 func groupContextID(groupID string) string {
