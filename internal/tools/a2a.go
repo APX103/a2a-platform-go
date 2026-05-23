@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -14,8 +15,9 @@ import (
 )
 
 var (
-	platformBaseURL string
-	platformURLOnce sync.Once
+	platformBaseURL    string
+	platformAdminToken string
+	platformURLOnce    sync.Once
 )
 
 // SetPlatformBaseURL sets the base URL for A2A platform API calls
@@ -25,77 +27,171 @@ func SetPlatformBaseURL(url string) {
 	})
 }
 
+// SetPlatformAdminToken sets the internal admin token for platform API calls.
+func SetPlatformAdminToken(token string) {
+	platformAdminToken = token
+}
+
 // GetA2ATools returns tools for interacting with the A2A platform
 func GetA2ATools() []model.BuiltinTool {
 	return []model.BuiltinTool{
 		{
-			Name:        "list_agents",
-			Description: "List all registered agents in the A2A platform. Returns agent names, types, descriptions, and connection status.",
+			Name:        "list_groups",
+			Description: "List groups visible to the current agent. Use this before list_agents or send_to_agent to choose the group_id boundary for collaboration.",
 			Parameters: []model.ToolParameter{
+				{Name: "status", Type: "string", Description: "Optional group status filter. Defaults to active.", Required: false},
+			},
+			Execute:    executeListGroups,
+			IsReadOnly: true,
+		},
+		{
+			Name:        "list_agents",
+			Description: "List agents in a specific group. Agents should call list_groups first, then pass group_id here. In an active group chat, group_id is inferred from the current group.",
+			Parameters: []model.ToolParameter{
+				{Name: "group_id", Type: "string", Description: "Group ID returned by list_groups. Required outside an active group chat.", Required: false},
 				{Name: "filter_type", Type: "string", Description: "Optional filter by agent type (e.g., 'builtin', 'external', 'bridge')", Required: false},
 			},
-			Execute: executeListAgents,
+			Execute:    executeListAgents,
+			IsReadOnly: true,
 		},
 		{
 			Name:        "send_to_agent",
-			Description: "Send a message to another agent in the platform and get the response. Useful for delegating tasks to specialized agents.",
+			Description: "Send a message to another agent inside a group and get the response. Call list_groups then list_agents first; pass group_id unless it is inferred from the active group chat.",
 			Parameters: []model.ToolParameter{
 				{Name: "agent", Type: "string", Description: "Name of the target agent", Required: true},
 				{Name: "message", Type: "string", Description: "Message to send to the agent", Required: true},
+				{Name: "group_id", Type: "string", Description: "Group ID that authorizes this agent-to-agent interaction.", Required: false},
 			},
 			Execute: executeSendToAgent,
 		},
 		{
 			Name:        "get_agent_info",
-			Description: "Get detailed information about a specific agent including skills, version, and description.",
+			Description: "Get information about a specific agent visible in a group. Call list_groups and list_agents first unless group_id is inferred from the active group chat.",
 			Parameters: []model.ToolParameter{
 				{Name: "name", Type: "string", Description: "Name of the agent", Required: true},
+				{Name: "group_id", Type: "string", Description: "Group ID returned by list_groups.", Required: false},
 			},
-			Execute: executeGetAgentInfo,
+			Execute:    executeGetAgentInfo,
+			IsReadOnly: true,
 		},
 	}
 }
 
-func executeListAgents(args map[string]any) (string, error) {
-	url := platformBaseURL + "/api/agents"
+func executeListGroups(args map[string]any) (string, error) {
+	groupID := groupIDFromArgs(args)
+	if groupID != "" {
+		group, err := fetchGroup(groupID)
+		if err != nil {
+			return "", err
+		}
+		body, _ := json.Marshal([]map[string]interface{}{group})
+		return formatGroupList(body)
+	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(url)
+	status := normalizeString(args["status"])
+	if status == "" {
+		status = model.GroupStatusActive
+	}
+	sourceAgent := normalizeString(args["_source_agent"])
+	groups, err := fetchVisibleGroups(sourceAgent, status)
+	if err != nil {
+		return "", err
+	}
+	body, _ := json.Marshal(groups)
+	return formatGroupList(body)
+}
+
+func executeListAgents(args map[string]any) (string, error) {
+	sourceAgent := normalizeString(args["_source_agent"])
+	groupID := groupIDFromArgs(args)
+	if groupID != "" {
+		if err := ensureSourceCanUseGroup(sourceAgent, groupID); err != nil {
+			return "", err
+		}
+		return executeListGroupAgents(groupID, args)
+	}
+	if sourceAgent != "" {
+		groups, err := fetchVisibleGroups(sourceAgent, model.GroupStatusActive)
+		if err != nil {
+			return "", err
+		}
+		body, _ := json.Marshal(groups)
+		list, _ := formatGroupList(body)
+		return "group_id is required before listing agents. Call list_groups first, choose one group_id, then call list_agents with that group_id.\n" + list, nil
+	}
+
+	req, err := platformRequest(http.MethodGet, platformBaseURL+"/api/agents", nil)
+	if err != nil {
+		return "", err
+	}
+	body, err := doPlatformRequest(req, 10*time.Second)
 	if err != nil {
 		return "", fmt.Errorf("failed to list agents: %w", err)
 	}
-	defer resp.Body.Close()
+	return formatAgentList(body, args)
+}
 
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(body))
-	}
-
-	body, err := io.ReadAll(resp.Body)
+func executeListGroupAgents(groupID string, args map[string]any) (string, error) {
+	members, err := fetchGroupMembers(groupID)
 	if err != nil {
-		return "", fmt.Errorf("failed to read response: %w", err)
+		return "", err
 	}
 
 	var agents []map[string]interface{}
-	if err := json.Unmarshal(body, &agents); err != nil {
-		return string(body), nil // Return raw response if parsing fails
+	for _, member := range members {
+		if normalizeString(member["actor_type"]) != model.GroupActorAgent {
+			continue
+		}
+		name := normalizeString(member["actor_id"])
+		if name == "" {
+			continue
+		}
+		agent, err := fetchAgentInfo(name)
+		if err != nil {
+			agent = map[string]interface{}{
+				"name":   name,
+				"type":   "unknown",
+				"status": "unknown",
+				"role":   normalizeString(member["role"]),
+			}
+		} else if role := normalizeString(member["role"]); role != "" {
+			agent["role"] = role
+		}
+		agents = append(agents, agent)
 	}
+	body, _ := json.Marshal(agents)
+	return formatAgentList(body, args)
+}
 
-	var result []string
-	result = append(result, fmt.Sprintf("Found %d agents:", len(agents)))
+func formatAgentList(body []byte, args map[string]any) (string, error) {
+	var agents []map[string]interface{}
+	if err := json.Unmarshal(body, &agents); err != nil {
+		return string(body), nil
+	}
+	filterType, _ := args["filter_type"].(string)
+
+	var lines []string
 	for _, a := range agents {
 		name, _ := a["name"].(string)
 		status, _ := a["status"].(string)
 		aType, _ := a["type"].(string)
 		desc, _ := a["description"].(string)
+		role, _ := a["role"].(string)
+		if filterType != "" && aType != filterType {
+			continue
+		}
 
 		line := fmt.Sprintf("  - %s (type: %s, status: %s)", name, aType, status)
+		if role != "" {
+			line += fmt.Sprintf(" role: %s", role)
+		}
 		if desc != "" {
 			line += fmt.Sprintf(" - %s", desc)
 		}
-		result = append(result, line)
+		lines = append(lines, line)
 	}
 
+	result := append([]string{fmt.Sprintf("Found %d agents:", len(lines))}, lines...)
 	return "\n" + strings.Join(result, "\n"), nil
 }
 
@@ -108,10 +204,27 @@ func executeSendToAgent(args map[string]any) (string, error) {
 	if !ok || message == "" {
 		return "", fmt.Errorf("message is required")
 	}
-	sourceAgent, _ := args["_source_agent"].(string)
-	rootContextId, _ := args["_root_context_id"].(string)
-	parentTaskId, _ := args["_parent_task_id"].(string)
-	parentToolCallId, _ := args["_parent_tool_call_id"].(string)
+	sourceAgent := normalizeString(args["_source_agent"])
+	rootContextId := normalizeString(args["_root_context_id"])
+	parentTaskId := normalizeString(args["_parent_task_id"])
+	parentToolCallId := normalizeString(args["_parent_tool_call_id"])
+	groupID := groupIDFromArgs(args)
+
+	if groupID == "" && sourceAgent != "" {
+		return "", fmt.Errorf("group_id is required before sending to another agent; call list_groups, then list_agents with the selected group_id")
+	}
+	if groupID != "" {
+		if err := ensureSourceCanUseGroup(sourceAgent, groupID); err != nil {
+			return "", err
+		}
+		allowed, err := groupHasAgent(groupID, agent)
+		if err != nil {
+			return "", err
+		}
+		if !allowed {
+			return "", fmt.Errorf("target agent %q is not visible in group %q", agent, groupID)
+		}
+	}
 
 	reqBody := map[string]interface{}{
 		"jsonrpc": "2.0",
@@ -136,8 +249,12 @@ func executeSendToAgent(args map[string]any) (string, error) {
 		return "", fmt.Errorf("failed to build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	addPlatformAuth(req)
 	if sourceAgent != "" {
 		req.Header.Set("X-A2A-Source-Agent", sourceAgent)
+	}
+	if groupID != "" {
+		req.Header.Set("X-A2A-Tool-Group-ID", groupID)
 	}
 	if rootContextId != "" {
 		req.Header.Set("X-A2A-Root-Context-Id", rootContextId)
@@ -212,25 +329,224 @@ func executeSendToAgent(args map[string]any) (string, error) {
 func executeGetAgentInfo(args map[string]any) (string, error) {
 	name, ok := args["name"].(string)
 	if !ok || name == "" {
+		name, ok = args["agent_name"].(string)
+	}
+	if !ok || name == "" {
 		return "", fmt.Errorf("agent name is required")
 	}
+	sourceAgent := normalizeString(args["_source_agent"])
+	groupID := groupIDFromArgs(args)
+	if groupID == "" && sourceAgent != "" {
+		return "", fmt.Errorf("group_id is required before reading agent info; call list_groups, then list_agents with the selected group_id")
+	}
+	if groupID != "" {
+		if err := ensureSourceCanUseGroup(sourceAgent, groupID); err != nil {
+			return "", err
+		}
+		allowed, err := groupHasAgent(groupID, name)
+		if err != nil {
+			return "", err
+		}
+		if !allowed {
+			return "", fmt.Errorf("agent %q is not visible in group %q", name, groupID)
+		}
+	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(platformBaseURL + "/api/agents/" + name)
+	agent, err := fetchAgentInfo(name)
 	if err != nil {
-		return "", fmt.Errorf("failed to get agent info: %w", err)
+		return "", err
+	}
+	body, _ := json.Marshal(agent)
+	return string(body), nil
+}
+
+func platformRequest(method, url string, body io.Reader) (*http.Request, error) {
+	req, err := http.NewRequest(method, url, body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build request: %w", err)
+	}
+	addPlatformAuth(req)
+	return req, nil
+}
+
+func addPlatformAuth(req *http.Request) {
+	if platformAdminToken != "" {
+		req.Header.Set("X-Admin-Token", platformAdminToken)
+	}
+}
+
+func doPlatformRequest(req *http.Request, timeout time.Duration) ([]byte, error) {
+	client := &http.Client{Timeout: 10 * time.Second}
+	if timeout > 0 {
+		client.Timeout = timeout
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", fmt.Errorf("failed to read response: %w", err)
+		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 
-	return string(body), nil
+	return body, nil
+}
+
+func fetchVisibleGroups(sourceAgent, status string) ([]map[string]interface{}, error) {
+	endpoint := platformBaseURL + "/api/groups"
+	if status != "" {
+		endpoint += "?status=" + url.QueryEscape(status)
+	}
+	req, err := platformRequest(http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	body, err := doPlatformRequest(req, 10*time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list groups: %w", err)
+	}
+	var groups []map[string]interface{}
+	if err := json.Unmarshal(body, &groups); err != nil {
+		return nil, err
+	}
+	if sourceAgent == "" {
+		return groups, nil
+	}
+
+	var visible []map[string]interface{}
+	for _, group := range groups {
+		groupID := normalizeString(group["id"])
+		if groupID == "" {
+			continue
+		}
+		ok, err := groupHasAgent(groupID, sourceAgent)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			visible = append(visible, group)
+		}
+	}
+	return visible, nil
+}
+
+func fetchGroup(groupID string) (map[string]interface{}, error) {
+	req, err := platformRequest(http.MethodGet, platformBaseURL+"/api/groups/"+url.PathEscape(groupID), nil)
+	if err != nil {
+		return nil, err
+	}
+	body, err := doPlatformRequest(req, 10*time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get group: %w", err)
+	}
+	var group map[string]interface{}
+	if err := json.Unmarshal(body, &group); err != nil {
+		return nil, err
+	}
+	return group, nil
+}
+
+func fetchAgentInfo(name string) (map[string]interface{}, error) {
+	req, err := platformRequest(http.MethodGet, platformBaseURL+"/api/agents/"+url.PathEscape(name), nil)
+	if err != nil {
+		return nil, err
+	}
+	body, err := doPlatformRequest(req, 10*time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get agent info: %w", err)
+	}
+	var agent map[string]interface{}
+	if err := json.Unmarshal(body, &agent); err != nil {
+		return nil, err
+	}
+	return agent, nil
+}
+
+func fetchGroupMembers(groupID string) ([]map[string]interface{}, error) {
+	req, err := platformRequest(http.MethodGet, platformBaseURL+"/api/groups/"+url.PathEscape(groupID)+"/members", nil)
+	if err != nil {
+		return nil, err
+	}
+	body, err := doPlatformRequest(req, 10*time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list group members: %w", err)
+	}
+	var members []map[string]interface{}
+	if err := json.Unmarshal(body, &members); err != nil {
+		return nil, err
+	}
+	return members, nil
+}
+
+func groupHasAgent(groupID, agent string) (bool, error) {
+	if groupID == "" || agent == "" {
+		return false, nil
+	}
+	members, err := fetchGroupMembers(groupID)
+	if err != nil {
+		return false, err
+	}
+	for _, member := range members {
+		if normalizeString(member["actor_type"]) == model.GroupActorAgent && normalizeString(member["actor_id"]) == agent {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func ensureSourceCanUseGroup(sourceAgent, groupID string) error {
+	if sourceAgent == "" || groupID == "" {
+		return nil
+	}
+	ok, err := groupHasAgent(groupID, sourceAgent)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("source agent %q is not a member of group %q", sourceAgent, groupID)
+	}
+	return nil
+}
+
+func formatGroupList(body []byte) (string, error) {
+	var groups []map[string]interface{}
+	if err := json.Unmarshal(body, &groups); err != nil {
+		return string(body), nil
+	}
+	var lines []string
+	for _, group := range groups {
+		id := normalizeString(group["id"])
+		name := normalizeString(group["name"])
+		mode := normalizeString(group["orchestration_mode"])
+		status := normalizeString(group["status"])
+		desc := normalizeString(group["description"])
+		line := fmt.Sprintf("  - %s (id: %s, mode: %s, status: %s)", name, id, mode, status)
+		if desc != "" {
+			line += fmt.Sprintf(" - %s", desc)
+		}
+		lines = append(lines, line)
+	}
+	result := append([]string{fmt.Sprintf("Found %d groups:", len(lines))}, lines...)
+	return "\n" + strings.Join(result, "\n"), nil
+}
+
+func groupIDFromArgs(args map[string]any) string {
+	if groupID := normalizeString(args["_group_id"]); groupID != "" {
+		return groupID
+	}
+	return normalizeString(args["group_id"])
+}
+
+func normalizeString(value interface{}) string {
+	if s, ok := value.(string); ok {
+		return strings.TrimSpace(s)
+	}
+	return ""
 }

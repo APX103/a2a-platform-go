@@ -139,6 +139,7 @@ func main() {
 
 	// Set platform base URL for A2A tools
 	tools.SetPlatformBaseURL(hostURL)
+	tools.SetPlatformAdminToken(cfg.AdminToken)
 
 	mcpHandler := handler.NewMCPSSEHandler(svcCtx, hostURL)
 	mux.HandleFunc("/mcp/sse", mcpHandler.ServeSSE)

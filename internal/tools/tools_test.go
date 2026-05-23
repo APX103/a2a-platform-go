@@ -144,11 +144,174 @@ func TestToolSearch(t *testing.T) {
 	}
 }
 
+func TestExecuteListAgentsUsesAdminToken(t *testing.T) {
+	var gotToken string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotToken = r.Header.Get("X-Admin-Token")
+		if r.URL.Path != "/api/agents" {
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintln(w, `[{"name":"mi-1","type":"builtin","status":"connected","description":"leader"}]`)
+	}))
+	defer server.Close()
+
+	oldBaseURL := platformBaseURL
+	oldAdminToken := platformAdminToken
+	platformBaseURL = server.URL
+	platformAdminToken = "secret"
+	t.Cleanup(func() {
+		platformBaseURL = oldBaseURL
+		platformAdminToken = oldAdminToken
+	})
+
+	result, err := executeListAgents(map[string]any{})
+	if err != nil {
+		t.Fatalf("executeListAgents failed: %v", err)
+	}
+	if gotToken != "secret" {
+		t.Fatalf("admin token = %q, want secret", gotToken)
+	}
+	if !strings.Contains(result, "mi-1") {
+		t.Fatalf("result = %q", result)
+	}
+}
+
+func TestExecuteListGroupsFiltersBySourceAgent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Admin-Token") != "secret" {
+			t.Fatalf("missing admin token on %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/groups":
+			fmt.Fprintln(w, `[
+				{"id":"g1","name":"Planning","orchestration_mode":"leader_led","status":"active"},
+				{"id":"g2","name":"Hidden","orchestration_mode":"leader_led","status":"active"}
+			]`)
+		case "/api/groups/g1/members":
+			fmt.Fprintln(w, `[{"actor_type":"agent","actor_id":"mi-1","role":"leader"}]`)
+		case "/api/groups/g2/members":
+			fmt.Fprintln(w, `[{"actor_type":"agent","actor_id":"mi-2","role":"leader"}]`)
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	oldBaseURL := platformBaseURL
+	oldAdminToken := platformAdminToken
+	platformBaseURL = server.URL
+	platformAdminToken = "secret"
+	t.Cleanup(func() {
+		platformBaseURL = oldBaseURL
+		platformAdminToken = oldAdminToken
+	})
+
+	result, err := executeListGroups(map[string]any{"_source_agent": "mi-1"})
+	if err != nil {
+		t.Fatalf("executeListGroups failed: %v", err)
+	}
+	if !strings.Contains(result, "Planning") || strings.Contains(result, "Hidden") {
+		t.Fatalf("result = %q", result)
+	}
+}
+
+func TestExecuteListAgentsRequiresGroupForSourceAgent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Admin-Token") != "secret" {
+			t.Fatalf("missing admin token on %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/groups":
+			fmt.Fprintln(w, `[{"id":"g1","name":"Planning","orchestration_mode":"leader_led","status":"active"}]`)
+		case "/api/groups/g1/members":
+			fmt.Fprintln(w, `[{"actor_type":"agent","actor_id":"mi-1","role":"leader"}]`)
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	oldBaseURL := platformBaseURL
+	oldAdminToken := platformAdminToken
+	platformBaseURL = server.URL
+	platformAdminToken = "secret"
+	t.Cleanup(func() {
+		platformBaseURL = oldBaseURL
+		platformAdminToken = oldAdminToken
+	})
+
+	result, err := executeListAgents(map[string]any{"_source_agent": "mi-1"})
+	if err != nil {
+		t.Fatalf("executeListAgents failed: %v", err)
+	}
+	if !strings.Contains(result, "group_id is required") || !strings.Contains(result, "Planning") {
+		t.Fatalf("result = %q", result)
+	}
+}
+
+func TestExecuteListAgentsGroupScoped(t *testing.T) {
+	requestedAgents := map[string]bool{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Admin-Token") != "secret" {
+			t.Fatalf("missing admin token on %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/groups/g1/members":
+			fmt.Fprintln(w, `[
+				{"actor_type":"agent","actor_id":"mi-1","role":"leader"},
+				{"actor_type":"human","actor_id":"human-1","role":"member"},
+				{"actor_type":"agent","actor_id":"mi-2","role":"member"}
+			]`)
+		case "/api/agents/mi-1":
+			requestedAgents["mi-1"] = true
+			fmt.Fprintln(w, `{"name":"mi-1","type":"builtin","status":"connected","description":"leader agent"}`)
+		case "/api/agents/mi-2":
+			requestedAgents["mi-2"] = true
+			fmt.Fprintln(w, `{"name":"mi-2","type":"builtin","status":"connected","description":"member agent"}`)
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	oldBaseURL := platformBaseURL
+	oldAdminToken := platformAdminToken
+	platformBaseURL = server.URL
+	platformAdminToken = "secret"
+	t.Cleanup(func() {
+		platformBaseURL = oldBaseURL
+		platformAdminToken = oldAdminToken
+	})
+
+	result, err := executeListAgents(map[string]any{"_group_id": "g1"})
+	if err != nil {
+		t.Fatalf("executeListAgents failed: %v", err)
+	}
+	if !requestedAgents["mi-1"] || !requestedAgents["mi-2"] {
+		t.Fatalf("requestedAgents = %#v", requestedAgents)
+	}
+	if strings.Contains(result, "human-1") {
+		t.Fatalf("human leaked into agent list: %s", result)
+	}
+	if !strings.Contains(result, "mi-1") || !strings.Contains(result, "mi-2") {
+		t.Fatalf("result = %q", result)
+	}
+}
+
 func TestExecuteSendToAgentPropagatesRootAndParentHeaders(t *testing.T) {
 	var gotRoot, gotParentTask, gotParentTool, gotSource string
 	var forwardedContextId any
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/groups/g1/members" {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintln(w, `[{"actor_type":"agent","actor_id":"mi-1","role":"leader"},{"actor_type":"agent","actor_id":"mi-2","role":"member"}]`)
+			return
+		}
 		gotRoot = r.Header.Get("X-A2A-Root-Context-Id")
 		gotParentTask = r.Header.Get("X-A2A-Parent-Task-Id")
 		gotParentTool = r.Header.Get("X-A2A-Parent-Tool-Call-Id")
@@ -178,6 +341,7 @@ func TestExecuteSendToAgentPropagatesRootAndParentHeaders(t *testing.T) {
 		"_root_context_id":     "root-1",
 		"_parent_task_id":      "task-1",
 		"_parent_tool_call_id": "tool-1",
+		"_group_id":            "g1",
 	})
 	if err != nil {
 		t.Fatalf("executeSendToAgent failed: %v", err)
@@ -190,6 +354,52 @@ func TestExecuteSendToAgentPropagatesRootAndParentHeaders(t *testing.T) {
 	}
 	if forwardedContextId != nil {
 		t.Fatalf("contextId was forwarded to child agent body: %#v", forwardedContextId)
+	}
+}
+
+func TestExecuteSendToAgentGroupScoped(t *testing.T) {
+	var gotGroup, gotToken string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/groups/g1/members":
+			if r.Header.Get("X-Admin-Token") != "secret" {
+				t.Fatalf("missing admin token on member check")
+			}
+			fmt.Fprintln(w, `[{"actor_type":"agent","actor_id":"mi-2","role":"member"}]`)
+		case "/agent/mi-2":
+			gotToken = r.Header.Get("X-Admin-Token")
+			gotGroup = r.Header.Get("X-A2A-Tool-Group-ID")
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprintln(w, `data: {"type":"text.delta","text":"ok"}`)
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	oldBaseURL := platformBaseURL
+	oldAdminToken := platformAdminToken
+	platformBaseURL = server.URL
+	platformAdminToken = "secret"
+	t.Cleanup(func() {
+		platformBaseURL = oldBaseURL
+		platformAdminToken = oldAdminToken
+	})
+
+	result, err := executeSendToAgent(map[string]any{
+		"agent":     "mi-2",
+		"message":   "hello",
+		"_group_id": "g1",
+	})
+	if err != nil {
+		t.Fatalf("executeSendToAgent failed: %v", err)
+	}
+	if result != "ok" {
+		t.Fatalf("result = %q, want ok", result)
+	}
+	if gotToken != "secret" || gotGroup != "g1" {
+		t.Fatalf("token/group = %q/%q, want secret/g1", gotToken, gotGroup)
 	}
 }
 

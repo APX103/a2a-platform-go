@@ -273,7 +273,11 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return h.svcCtx.Messages.Append(m)
 			},
 		}
-		h.svcCtx.Engine.HandleRequest(r.Context(), w, name, userText, stringValue(contextId), stringValue(rootContextId), taskId, deps)
+		groupID := r.Header.Get("X-A2A-Group-ID")
+		if groupID == "" && r.Header.Get("X-A2A-Principal") == "admin" {
+			groupID = r.Header.Get("X-A2A-Tool-Group-ID")
+		}
+		h.svcCtx.Engine.HandleRequest(r.Context(), w, name, userText, stringValue(contextId), stringValue(rootContextId), taskId, groupID, deps)
 
 		// Record final agent response from the engine
 		// The engine already streamed SSE to the client; now record the final message

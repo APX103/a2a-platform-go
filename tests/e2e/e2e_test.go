@@ -781,7 +781,7 @@ func TestMCP_ToolsList(t *testing.T) {
 			names[n] = true
 		}
 	}
-	for _, want := range []string{"list_agents", "send_to_agent", "get_agent_info"} {
+	for _, want := range []string{"list_groups", "list_agents", "send_to_agent", "get_agent_info"} {
 		if !names[want] {
 			t.Errorf("missing tool %q", want)
 		}

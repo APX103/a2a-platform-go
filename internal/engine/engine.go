@@ -49,6 +49,7 @@ type ToolExecutionContext struct {
 	RootContextId    string
 	ParentTaskId     string
 	ParentToolCallId string
+	GroupId          string
 }
 
 type Engine struct {
@@ -204,6 +205,7 @@ func (e *Engine) HandleRequest(
 	contextId string,
 	rootContextId string,
 	taskId string,
+	groupId string,
 	deps *Deps,
 ) {
 	agent := e.GetAgent(agentName)
@@ -242,7 +244,7 @@ func (e *Engine) HandleRequest(
 	})
 
 	// Run the LLM + tool loop
-	finalText, err := e.runLoop(ctx, agent, history, w, flusher, taskId, contextId, rootContextId, deps)
+	finalText, err := e.runLoop(ctx, agent, history, w, flusher, taskId, contextId, rootContextId, groupId, deps)
 	if err != nil {
 		slog.Error("Builtin agent error", "agent", agentName, "error", err)
 		writeSSE(w, flusher, "task.status", map[string]interface{}{
@@ -305,7 +307,7 @@ func (e *Engine) runLoop(
 	messages []llm.ChatMessage,
 	w http.ResponseWriter,
 	flusher http.Flusher,
-	taskId, contextId, rootContextId string,
+	taskId, contextId, rootContextId, groupId string,
 	deps *Deps,
 ) (string, error) {
 	cfg := agent.Config
@@ -327,7 +329,7 @@ func (e *Engine) runLoop(
 
 		req := &llm.ChatRequest{
 			Model:        cfg.Model,
-			SystemPrompt: cfg.SystemPrompt,
+			SystemPrompt: withA2AToolGuidance(cfg.SystemPrompt),
 			Messages:     messages,
 			Tools:        agent.Tools,
 			MaxTokens:    cfg.MaxTokens,
@@ -440,6 +442,7 @@ func (e *Engine) runLoop(
 					RootContextId:    rootContextId,
 					ParentTaskId:     taskId,
 					ParentToolCallId: tcall.ID,
+					GroupId:          groupId,
 				}
 				res, err := e.callToolWithTimeout(ctx, agent, tcall.Name, tcall.Arguments, execCtx)
 				if err != nil {
@@ -525,6 +528,7 @@ func (e *Engine) runLoop(
 						RootContextId:    rootContextId,
 						ParentTaskId:     taskId,
 						ParentToolCallId: tc.ID,
+						GroupId:          groupId,
 					}
 					result, err = e.callToolWithTimeout(ctx, agent, tc.Name, tc.Arguments, execCtx)
 					if err != nil {
@@ -542,6 +546,7 @@ func (e *Engine) runLoop(
 					RootContextId:    rootContextId,
 					ParentTaskId:     taskId,
 					ParentToolCallId: tc.ID,
+					GroupId:          groupId,
 				}
 				result, err = e.callToolWithTimeout(ctx, agent, tc.Name, tc.Arguments, execCtx)
 				if err != nil {
@@ -662,6 +667,9 @@ func (e *Engine) defaultCallTool(agent *BuiltinAgent, name string, arguments str
 			if execCtx.ParentToolCallId != "" {
 				args["_parent_tool_call_id"] = execCtx.ParentToolCallId
 			}
+			if execCtx.GroupId != "" {
+				args["_group_id"] = execCtx.GroupId
+			}
 			result, err := tool.Execute(args)
 			if err != nil {
 				return fmt.Sprintf("Error: %v", err), err
@@ -671,6 +679,21 @@ func (e *Engine) defaultCallTool(agent *BuiltinAgent, name string, arguments str
 	}
 
 	return "", fmt.Errorf("tool %q not found", name)
+}
+
+func withA2AToolGuidance(prompt string) string {
+	const guidance = `A2A collaboration tool policy:
+- Treat groups as the boundary for discovery and collaboration.
+- Before looking for other agents, call list_groups to see which groups you can use.
+- To discover collaborators, call list_agents with a selected group_id from list_groups, unless the current group chat already provides that group context.
+- When sending to another agent or reading agent info, stay within the same selected group_id. Do not assume global agent visibility.`
+	if strings.Contains(prompt, "A2A collaboration tool policy:") {
+		return prompt
+	}
+	if strings.TrimSpace(prompt) == "" {
+		return guidance
+	}
+	return prompt + "\n\n" + guidance
 }
 
 func stringPtr(value string) *string {

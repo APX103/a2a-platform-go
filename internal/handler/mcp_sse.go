@@ -242,11 +242,23 @@ func (h *MCPSSEHandler) handleToolsList() interface{} {
 	return map[string]interface{}{
 		"tools": []interface{}{
 			map[string]interface{}{
-				"name":        "list_agents",
-				"description": "List all available A2A agents and their skills",
+				"name":        "list_groups",
+				"description": "List visible A2A groups. Agents should use this before list_agents.",
 				"inputSchema": map[string]interface{}{
-					"type":       "object",
-					"properties": map[string]interface{}{},
+					"type": "object",
+					"properties": map[string]interface{}{
+						"status": map[string]interface{}{"type": "string", "description": "Optional group status filter"},
+					},
+				},
+			},
+			map[string]interface{}{
+				"name":        "list_agents",
+				"description": "List A2A agents in a selected group",
+				"inputSchema": map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"group_id": map[string]interface{}{"type": "string", "description": "Optional group ID"},
+					},
 				},
 			},
 			map[string]interface{}{
@@ -257,6 +269,7 @@ func (h *MCPSSEHandler) handleToolsList() interface{} {
 					"properties": map[string]interface{}{
 						"agent_name": map[string]interface{}{"type": "string", "description": "Target agent name"},
 						"message":    map[string]interface{}{"type": "string", "description": "Message text to send"},
+						"group_id":   map[string]interface{}{"type": "string", "description": "Optional group ID"},
 					},
 					"required": []string{"agent_name", "message"},
 				},
@@ -268,6 +281,7 @@ func (h *MCPSSEHandler) handleToolsList() interface{} {
 					"type": "object",
 					"properties": map[string]interface{}{
 						"agent_name": map[string]interface{}{"type": "string", "description": "Agent name to query"},
+						"group_id":   map[string]interface{}{"type": "string", "description": "Optional group ID"},
 					},
 					"required": []string{"agent_name"},
 				},
@@ -286,6 +300,8 @@ func (h *MCPSSEHandler) handleToolsCall(params json.RawMessage) (interface{}, *R
 	}
 
 	switch call.Name {
+	case "list_groups":
+		return h.toolListGroups(call.Arguments)
 	case "list_agents":
 		return h.toolListAgents()
 	case "send_to_agent":
@@ -295,6 +311,37 @@ func (h *MCPSSEHandler) handleToolsCall(params json.RawMessage) (interface{}, *R
 	default:
 		return nil, &RPCError{Code: -32601, Message: "Unknown tool: " + call.Name}
 	}
+}
+
+func (h *MCPSSEHandler) toolListGroups(args json.RawMessage) (interface{}, *RPCError) {
+	var params struct {
+		Status string `json:"status"`
+	}
+	if len(args) > 0 {
+		if err := json.Unmarshal(args, &params); err != nil {
+			return nil, &RPCError{Code: -32602, Message: "Invalid arguments"}
+		}
+	}
+	if params.Status == "" {
+		params.Status = model.GroupStatusActive
+	}
+	groups, err := h.svcCtx.Groups.List(params.Status)
+	if err != nil {
+		return nil, &RPCError{Code: -32000, Message: err.Error()}
+	}
+	var lines []string
+	for _, g := range groups {
+		lines = append(lines, fmt.Sprintf("- %s (id: %s, mode: %s, status: %s)", g.Name, g.ID, g.OrchestrationMode, g.Status))
+	}
+	text := strings.Join(lines, "\n")
+	if text == "" {
+		text = "(no groups)"
+	}
+	return map[string]interface{}{
+		"content": []interface{}{
+			map[string]interface{}{"type": "text", "text": text},
+		},
+	}, nil
 }
 
 func (h *MCPSSEHandler) toolListAgents() (interface{}, *RPCError) {
