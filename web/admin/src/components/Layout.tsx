@@ -15,8 +15,8 @@ export default function Layout() {
   const { dark, toggle } = useTheme()
 
   return (
-    <div className="flex h-screen">
-      <aside className="w-56 border-r border-[var(--border)] bg-[var(--bg-secondary)] flex flex-col">
+    <div className="flex h-screen overflow-hidden">
+      <aside className="w-56 shrink-0 border-r border-[var(--border)] bg-[var(--bg-secondary)] flex flex-col">
         <div className="p-5 border-b border-[var(--border)]">
           <h1 className="text-base font-semibold tracking-tight text-[var(--text-primary)]">
             A2A Platform
@@ -52,7 +52,7 @@ export default function Layout() {
           </button>
         </div>
       </aside>
-      <main className="flex-1 overflow-auto">
+      <main className="min-w-0 flex-1 overflow-auto">
         <Outlet />
       </main>
     </div>

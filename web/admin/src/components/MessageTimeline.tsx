@@ -29,7 +29,7 @@ export default function MessageTimeline({ messages }: MessageTimelineProps) {
   }, [messages]);
 
   return (
-    <div className="mx-auto flex w-full max-w-5xl flex-col gap-5">
+    <div className="mx-auto flex w-full min-w-0 max-w-5xl flex-col gap-5">
       {groupedMessages.map((item, index) => (
         <MessageItem key={item.message.id || `${item.message.task_id || item.type}-${index}`} item={item} />
       ))}
@@ -103,13 +103,13 @@ function MessageItem({ item }: MessageItemProps) {
   }, [message.tool_calls]);
 
   return (
-    <div className={`flex items-end gap-3 ${isUser ? 'justify-end' : 'justify-start'}`}>
+    <div className={`flex w-full min-w-0 items-end gap-3 ${isUser ? 'justify-end' : 'justify-start'}`}>
       {!isUser && (
         <Avatar isUser={false} />
       )}
 
       <div
-        className={`min-w-0 rounded-2xl px-4 py-3 shadow-sm ${
+        className={`min-w-0 overflow-hidden rounded-2xl px-4 py-3 shadow-sm ${
           isUser
             ? 'max-w-[min(620px,75%)] rounded-br-md bg-orange-500 text-white'
             : 'max-w-[min(760px,82%)] rounded-bl-md border border-gray-200 bg-white text-gray-900 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100'
@@ -157,15 +157,15 @@ function ReasoningDisclosure({ content }: { content: string }) {
   const preview = content.replace(/\s+/g, ' ').trim();
 
   return (
-    <div className="mb-3 rounded-lg border border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-900/60">
+    <div className="mb-3 min-w-0 max-w-full overflow-hidden rounded-lg border border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-900/60">
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-gray-600 transition-colors hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100"
+        className="flex w-full min-w-0 items-center gap-2 overflow-hidden px-3 py-2 text-left text-xs text-gray-600 transition-colors hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100"
       >
-        {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-        <Brain size={14} />
-        <span className="font-medium">Reasoning</span>
+        <span className="shrink-0">{expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</span>
+        <Brain size={14} className="shrink-0" />
+        <span className="shrink-0 font-medium">Reasoning</span>
         {!expanded && preview && (
           <span className="min-w-0 flex-1 truncate text-gray-500 dark:text-gray-500">
             {preview}
@@ -173,7 +173,7 @@ function ReasoningDisclosure({ content }: { content: string }) {
         )}
       </button>
       {expanded && (
-        <div className="border-t border-gray-200 px-3 py-2 font-mono text-xs leading-relaxed text-gray-700 whitespace-pre-wrap dark:border-gray-700 dark:text-gray-300">
+        <div className="break-words border-t border-gray-200 px-3 py-2 font-mono text-xs leading-relaxed text-gray-700 whitespace-pre-wrap dark:border-gray-700 dark:text-gray-300">
           {content}
         </div>
       )}

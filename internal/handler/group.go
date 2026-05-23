@@ -1,8 +1,11 @@
 package handler
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"strings"
 	"time"
@@ -83,6 +86,7 @@ type artifactReq struct {
 type groupEventResp struct {
 	Event         *model.GroupEvent             `json:"event"`
 	Orchestration model.GroupOrchestrationState `json:"orchestration"`
+	Triggered     []*model.GroupEvent           `json:"triggered,omitempty"`
 }
 
 type GroupListHandler struct {
@@ -516,13 +520,197 @@ func (h *GroupEventHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			errHTTP(w, err)
 			return
 		}
+		triggered, err := h.maybeRunLeaderTurn(r, group, event, members)
+		if err != nil {
+			errHTTP(w, err)
+			return
+		}
 		okJSON(w, groupEventResp{
 			Event:         event,
 			Orchestration: svc.BuildGroupOrchestrationState(group, members),
+			Triggered:     triggered,
 		})
 	default:
 		jsonError(w, "method not allowed", 405)
 	}
+}
+
+func (h *GroupEventHandler) maybeRunLeaderTurn(r *http.Request, group *model.Group, event *model.GroupEvent, members []*model.GroupMember) ([]*model.GroupEvent, error) {
+	if h == nil || h.svcCtx == nil || group == nil || event == nil {
+		return nil, nil
+	}
+	if group.OrchestrationMode != model.GroupModeLeaderLed || event.EventType != "message" || event.SenderType == model.GroupActorAgent {
+		return nil, nil
+	}
+	leader := selectGroupLeader(members)
+	if leader == "" || !h.canInvokeAgent(leader) {
+		return nil, nil
+	}
+
+	prompt := h.buildLeaderPrompt(group, event, members)
+	body, _ := json.Marshal(map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      fmt.Sprintf("group-event-%d", event.ID),
+		"method":  "SendStreamingMessage",
+		"params": map[string]interface{}{
+			"contextId":     groupContextID(group.ID),
+			"rootContextId": groupContextID(group.ID),
+			"message": map[string]interface{}{
+				"role":  "ROLE_USER",
+				"parts": []map[string]string{{"text": prompt}},
+			},
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/agent/"+leader, bytes.NewReader(body))
+	req = req.WithContext(r.Context())
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("X-Path-Param-Name", leader)
+	req.Header.Set("X-A2A-Source-Agent", event.SenderID)
+	req.Header.Set("X-A2A-Group-ID", group.ID)
+	req.Header.Set("X-A2A-Root-Context-Id", groupContextID(group.ID))
+
+	rec := httptest.NewRecorder()
+	NewAgentProxyHandler(h.svcCtx).ServeHTTP(rec, req)
+
+	text := extractGroupAgentResponseText(rec.Body.String())
+	if rec.Code >= 400 {
+		text = strings.TrimSpace(rec.Body.String())
+		if text == "" {
+			text = fmt.Sprintf("leader %s failed with status %d", leader, rec.Code)
+		}
+		return h.appendSystemGroupEvent(group.ID, text, event.ID)
+	}
+	if strings.TrimSpace(text) == "" {
+		return nil, nil
+	}
+
+	metadata, _ := json.Marshal(map[string]interface{}{
+		"trigger_event_id": event.ID,
+		"orchestration":    model.GroupModeLeaderLed,
+		"role":             "leader",
+	})
+	leaderEvent := &model.GroupEvent{
+		GroupID:      group.ID,
+		EventType:    "message",
+		SenderType:   model.GroupActorAgent,
+		SenderID:     leader,
+		Content:      text,
+		MetadataJson: string(metadata),
+	}
+	if err := h.svcCtx.GroupEvents.Append(leaderEvent); err != nil {
+		return nil, err
+	}
+	return []*model.GroupEvent{leaderEvent}, nil
+}
+
+func (h *GroupEventHandler) canInvokeAgent(name string) bool {
+	if h.svcCtx.Tasks == nil || h.svcCtx.Messages == nil || h.svcCtx.Traces == nil {
+		return false
+	}
+	if h.svcCtx.Engine != nil && h.svcCtx.Engine.GetAgent(name) != nil {
+		return true
+	}
+	if h.svcCtx.Registry != nil && h.svcCtx.Registry.GetClient(name) != nil {
+		return true
+	}
+	if h.svcCtx.BridgeRegistry != nil && h.svcCtx.BridgeRegistry.Get(name) != nil {
+		return true
+	}
+	return false
+}
+
+func (h *GroupEventHandler) buildLeaderPrompt(group *model.Group, event *model.GroupEvent, members []*model.GroupMember) string {
+	var b strings.Builder
+	b.WriteString("You are the leader of an A2A platform group chat.\n")
+	b.WriteString("Reply to the group as the leader. Keep the response useful and concise.\n")
+	b.WriteString("If another agent should act, you may use platform tools within the same group_id; otherwise answer directly.\n\n")
+	b.WriteString("Group:\n")
+	b.WriteString("- name: " + group.Name + "\n")
+	b.WriteString("- id: " + group.ID + "\n")
+	b.WriteString("- mode: " + group.OrchestrationMode + "\n\n")
+	b.WriteString("Members:\n")
+	for _, member := range members {
+		b.WriteString(fmt.Sprintf("- %s:%s (%s)\n", member.ActorType, member.ActorID, member.Role))
+	}
+	b.WriteString("\nNew group message:\n")
+	b.WriteString(fmt.Sprintf("- from %s:%s\n", event.SenderType, event.SenderID))
+	b.WriteString("- content:\n")
+	b.WriteString(event.Content)
+	b.WriteString("\n")
+	return b.String()
+}
+
+func (h *GroupEventHandler) appendSystemGroupEvent(groupID, content string, triggerEventID int64) ([]*model.GroupEvent, error) {
+	metadata, _ := json.Marshal(map[string]interface{}{
+		"trigger_event_id": triggerEventID,
+		"orchestration":    model.GroupModeLeaderLed,
+		"level":            "error",
+	})
+	systemEvent := &model.GroupEvent{
+		GroupID:      groupID,
+		EventType:    "orchestration_error",
+		SenderType:   model.GroupActorSystem,
+		SenderID:     "platform",
+		Content:      content,
+		MetadataJson: string(metadata),
+	}
+	if err := h.svcCtx.GroupEvents.Append(systemEvent); err != nil {
+		return nil, err
+	}
+	return []*model.GroupEvent{systemEvent}, nil
+}
+
+func selectGroupLeader(members []*model.GroupMember) string {
+	for _, member := range members {
+		if member.ActorType == model.GroupActorAgent && member.Role == "leader" {
+			return member.ActorID
+		}
+	}
+	for _, member := range members {
+		if member.ActorType == model.GroupActorAgent {
+			return member.ActorID
+		}
+	}
+	return ""
+}
+
+func groupContextID(groupID string) string {
+	return "group:" + groupID
+}
+
+func extractGroupAgentResponseText(body string) string {
+	var streamed strings.Builder
+	var wrapped string
+	for _, line := range strings.Split(body, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if data == "" {
+			continue
+		}
+		var evt map[string]interface{}
+		if json.Unmarshal([]byte(data), &evt) == nil {
+			if evt["type"] == "text.delta" {
+				if text, ok := evt["text"].(string); ok {
+					streamed.WriteString(text)
+				}
+			}
+		}
+		if text := extractTextFromSSEData(data); text != "" {
+			wrapped = text
+		}
+	}
+	if text := strings.TrimSpace(streamed.String()); text != "" {
+		return text
+	}
+	if strings.TrimSpace(wrapped) != "" {
+		return wrapped
+	}
+	return extractResponseText([]byte(body))
 }
 
 type GroupArtifactHandler struct {

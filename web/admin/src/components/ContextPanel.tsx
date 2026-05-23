@@ -57,7 +57,7 @@ export default function ContextPanel({
   };
 
   return (
-    <div className="w-64 border-r border-gray-300 dark:border-gray-700 bg-gray-200 dark:bg-gray-800 flex flex-col">
+    <div className="w-64 shrink-0 border-r border-gray-300 dark:border-gray-700 bg-gray-200 dark:bg-gray-800 flex flex-col">
       <div className="p-4 border-b border-gray-300 dark:border-gray-700">
         <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Conversations</h2>
       </div>
@@ -97,7 +97,7 @@ export default function ContextPanel({
       <div className="p-4 border-t border-gray-300 dark:border-gray-700">
         <button
           onClick={onNewContext}
-          className="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-colors shadow-sm"
+          className="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-colors shadow-sm whitespace-nowrap"
         >
           <Plus size={14} />
           New Conversation

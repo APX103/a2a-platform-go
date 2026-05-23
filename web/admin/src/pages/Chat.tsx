@@ -117,7 +117,7 @@ export default function Chat() {
   }
 
   return (
-    <div className="flex h-screen bg-white dark:bg-gray-900">
+    <div className="flex h-screen min-w-0 overflow-hidden bg-white dark:bg-gray-900">
       {showSidebar && (
         <ContextPanel
           agentName={agentName}
@@ -128,7 +128,7 @@ export default function Chat() {
         />
       )}
 
-      <div className="flex-1 flex flex-col">
+      <div className="min-w-0 flex-1 flex flex-col">
         <ChatHeader
           agentName={agentName}
           contextId={contextId}
@@ -138,7 +138,7 @@ export default function Chat() {
           showTaskPanel={showTaskPanel}
         />
 
-        <div className="flex-1 overflow-y-auto bg-white dark:bg-gray-900 p-6">
+        <div className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden bg-white dark:bg-gray-900 p-6">
           {messages.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full text-gray-500 dark:text-gray-400">
               <p className="mb-2">Start a conversation with {agentName}</p>

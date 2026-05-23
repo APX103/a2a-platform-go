@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, Bot, FileText, GitBranch, RefreshCw, Send, UserPlus, Users } from 'lucide-react'
 import {
@@ -49,6 +49,11 @@ function actorColor(type: string) {
   }
 }
 
+function actorInitial(id: string) {
+  const trimmed = id.trim()
+  return (trimmed[0] || '?').toUpperCase()
+}
+
 export default function GroupDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -68,6 +73,8 @@ export default function GroupDetail() {
   const [artifactForm, setArtifactForm] = useState({ name: 'proposal.md', content: '', created_by: 'human-local' })
   const [inviteForm, setInviteForm] = useState({ actor_type_allowed: 'human', role: 'member', max_uses: 20 })
   const [newInviteToken, setNewInviteToken] = useState('')
+  const [sendingEvent, setSendingEvent] = useState(false)
+  const chatEndRef = useRef<HTMLDivElement | null>(null)
 
   const load = async () => {
     if (!id) return
@@ -98,6 +105,10 @@ export default function GroupDetail() {
   }
 
   useEffect(() => { load() }, [id])
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ block: 'end' })
+  }, [events.length])
 
   const agentOptions = useMemo(() => {
     const memberAgents = new Set(members.filter(m => m.actor_type === 'agent').map(m => m.actor_id))
@@ -172,6 +183,7 @@ export default function GroupDetail() {
       setError('Sender and content are required')
       return
     }
+    setSendingEvent(true)
     try {
       await api.appendGroupEvent(id, {
         event_type: 'message',
@@ -183,6 +195,15 @@ export default function GroupDetail() {
       load()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Send failed')
+    } finally {
+      setSendingEvent(false)
+    }
+  }
+
+  const handleEventKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      e.currentTarget.form?.requestSubmit()
     }
   }
 
@@ -409,34 +430,75 @@ export default function GroupDetail() {
         </aside>
 
         <div className="space-y-6 min-w-0">
-          <section className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--border)]">
-              <h2 className="text-sm font-medium text-[var(--text-primary)]">Events</h2>
-              <span className="text-xs text-[var(--text-tertiary)]">{events.length}</span>
-            </div>
-            <div className="max-h-[360px] overflow-auto divide-y divide-[var(--border)]">
-              {events.length === 0 ? (
-                <div className="p-6 text-sm text-[var(--text-tertiary)] text-center">No events</div>
-              ) : events.map(event => (
-                <div key={event.id || `${event.sender_id}-${event.created_at}`} className="p-4">
-                  <div className="flex items-center justify-between gap-3 mb-2">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className={`text-xs px-2 py-0.5 rounded-full ${actorColor(event.sender_type)}`}>{event.sender_type}</span>
-                      <span className="text-sm font-medium text-[var(--text-primary)] truncate">{event.sender_id}</span>
-                      <span className="text-xs text-[var(--text-tertiary)]">{event.event_type}</span>
-                    </div>
-                    <span className="text-xs text-[var(--text-tertiary)] shrink-0">{formatTime(event.created_at)}</span>
-                  </div>
-                  <p className="text-sm text-[var(--text-secondary)] whitespace-pre-wrap">{event.content}</p>
+          <section className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg overflow-hidden">
+            <div className="flex items-center justify-between gap-4 px-4 py-3 border-b border-[var(--border)] bg-[var(--bg-primary)]">
+              <div className="min-w-0">
+                <h2 className="text-sm font-medium text-[var(--text-primary)]">Group Chat</h2>
+                <div className="mt-0.5 text-xs text-[var(--text-tertiary)] truncate">
+                  {group.orchestration_mode === 'leader_led'
+                    ? 'Leader-led: messages trigger the leader and create task/trace records.'
+                    : 'Event-only for now: automatic agent orchestration is not enabled for this mode.'}
                 </div>
-              ))}
+              </div>
+              <span className="shrink-0 text-xs px-2 py-1 rounded-full bg-[var(--bg-tertiary)] text-[var(--text-secondary)]">{events.length} messages</span>
             </div>
-            <form onSubmit={handleSendEvent} className="p-4 border-t border-[var(--border)] space-y-3">
-              <div className="grid grid-cols-[120px_1fr] gap-2">
+            <div className="h-[min(42vh,520px)] min-h-[260px] overflow-y-auto overflow-x-hidden bg-[var(--bg-primary)] px-5 py-5">
+              {events.length === 0 ? (
+                <div className="flex h-full items-center justify-center text-sm text-[var(--text-tertiary)]">No messages yet</div>
+              ) : (
+                <div className="flex min-h-full flex-col justify-end">
+                  {events.map(event => (
+                    event.sender_type === 'system' || event.event_type === 'orchestration_error' ? (
+                      <div key={event.id || `${event.sender_id}-${event.created_at}`} className="my-4 flex justify-center">
+                        <div className="max-w-[80%] rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2 text-center">
+                          <div className="text-xs text-[var(--text-tertiary)]">{event.sender_id} · {formatTime(event.created_at)}</div>
+                          <div className="mt-1 whitespace-pre-wrap break-words text-sm text-[var(--text-secondary)]">{event.content}</div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div
+                        key={event.id || `${event.sender_id}-${event.created_at}`}
+                        className={`mb-5 flex min-w-0 items-end gap-3 ${event.sender_type === 'human' ? 'justify-end' : 'justify-start'}`}
+                      >
+                        {event.sender_type !== 'human' && (
+                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--info)]/15 text-xs font-medium text-[var(--info)]">
+                            {actorInitial(event.sender_id)}
+                          </div>
+                        )}
+                        <div className={`min-w-0 max-w-[min(720px,78%)] ${event.sender_type === 'human' ? 'items-end' : 'items-start'} flex flex-col`}>
+                          <div className={`mb-1 flex max-w-full items-center gap-2 px-1 text-xs text-[var(--text-tertiary)] ${event.sender_type === 'human' ? 'flex-row-reverse' : ''}`}>
+                            <span className="font-medium text-[var(--text-secondary)] truncate">{event.sender_id}</span>
+                            <span className={`px-1.5 py-0.5 rounded-full ${actorColor(event.sender_type)}`}>{event.sender_type}</span>
+                            <span className="shrink-0">{formatTime(event.created_at)}</span>
+                          </div>
+                          <div
+                            className={`max-w-full rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-sm whitespace-pre-wrap break-words ${
+                              event.sender_type === 'human'
+                                ? 'rounded-br-md bg-[var(--accent)] text-white'
+                                : 'rounded-bl-md border border-[var(--border)] bg-[var(--bg-secondary)] text-[var(--text-primary)]'
+                            }`}
+                          >
+                            {event.content}
+                          </div>
+                        </div>
+                        {event.sender_type === 'human' && (
+                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--accent)]/15 text-xs font-medium text-[var(--accent)]">
+                            {actorInitial(event.sender_id)}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  ))}
+                  <div ref={chatEndRef} />
+                </div>
+              )}
+            </div>
+            <form onSubmit={handleSendEvent} className="border-t border-[var(--border)] bg-[var(--bg-secondary)] p-4">
+              <div className="mb-3 flex flex-wrap items-center gap-2">
                 <select
                   value={eventForm.sender_type}
                   onChange={e => setEventForm(f => ({ ...f, sender_type: e.target.value }))}
-                  className="px-3 py-1.5 text-sm rounded-md border border-[var(--border)] bg-[var(--bg-primary)] text-[var(--text-primary)]"
+                  className="h-9 rounded-md border border-[var(--border)] bg-[var(--bg-primary)] px-3 text-sm text-[var(--text-primary)]"
                 >
                   <option value="human">human</option>
                   <option value="agent">agent</option>
@@ -445,18 +507,24 @@ export default function GroupDetail() {
                 <input
                   value={eventForm.sender_id}
                   onChange={e => setEventForm(f => ({ ...f, sender_id: e.target.value }))}
-                  className="px-3 py-1.5 text-sm rounded-md border border-[var(--border)] bg-[var(--bg-primary)] text-[var(--text-primary)]"
+                  className="h-9 min-w-[180px] flex-1 rounded-md border border-[var(--border)] bg-[var(--bg-primary)] px-3 text-sm text-[var(--text-primary)]"
                 />
               </div>
               <div className="flex gap-2">
                 <textarea
                   value={eventForm.content}
                   onChange={e => setEventForm(f => ({ ...f, content: e.target.value }))}
-                  rows={2}
-                  className="flex-1 px-3 py-2 text-sm rounded-md border border-[var(--border)] bg-[var(--bg-primary)] text-[var(--text-primary)] resize-none"
+                  onKeyDown={handleEventKeyDown}
+                  rows={1}
+                  placeholder={`Message ${group.name}...`}
+                  className="min-h-[52px] flex-1 resize-none rounded-xl border border-[var(--border)] bg-[var(--bg-primary)] px-4 py-3 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
                 />
-                <button className="self-stretch px-3 rounded-md bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)]" title="Send event">
-                  <Send size={16} />
+                <button
+                  disabled={sendingEvent}
+                  className="flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-xl bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] disabled:cursor-not-allowed disabled:opacity-50"
+                  title="Send message"
+                >
+                  {sendingEvent ? <RefreshCw size={16} className="animate-spin" /> : <Send size={16} />}
                 </button>
               </div>
             </form>
