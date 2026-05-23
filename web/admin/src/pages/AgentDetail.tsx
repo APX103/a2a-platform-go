@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { ArrowLeft, Trash2, Save } from 'lucide-react'
 import { api, Agent, AgentCard } from '../api/client'
+import { safeStorage } from '../utils/storage'
 
 function formatAgentCard(agent: Agent) {
   if (!agent.agent_card_json) {
@@ -33,7 +34,7 @@ export default function AgentDetail() {
   const [form, setForm] = useState({ url: '', context_mode: 'context', agent_card: '' })
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
-  const [token, setToken] = useState(() => localStorage.getItem('admin_token') || '')
+  const [token, setToken] = useState(() => safeStorage.getItem('admin_token'))
 
   useEffect(() => {
     if (!name) return
@@ -126,7 +127,7 @@ export default function AgentDetail() {
             <input
               type="password"
               value={token}
-              onChange={e => { setToken(e.target.value); localStorage.setItem('admin_token', e.target.value) }}
+              onChange={e => { setToken(e.target.value); safeStorage.setItem('admin_token', e.target.value) }}
               className="mt-1 w-full bg-[var(--bg-tertiary)] border border-[var(--border)] rounded-md px-3 py-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
             />
           </div>

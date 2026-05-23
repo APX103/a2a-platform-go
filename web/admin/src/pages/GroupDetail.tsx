@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, Bot, ExternalLink, FileText, GitBranch, KeyRound, RefreshCw, Send, Trash2, UserPlus, Users } from 'lucide-react'
+import { ArrowDown, ArrowLeft, ArrowUp, Bot, ExternalLink, FileText, GitBranch, KeyRound, ListOrdered, MessageSquare, RefreshCw, Save, Send, Trash2, UserPlus, Users } from 'lucide-react'
 import {
   Agent,
   api,
@@ -12,6 +12,7 @@ import {
   GroupOrchestrationState,
   GroupStreamEvent,
 } from '../api/client'
+import { safeStorage } from '../utils/storage'
 
 function formatTime(value?: string) {
   if (!value) return '-'
@@ -30,6 +31,56 @@ function tryFormatJson(value?: string) {
   } catch {
     return value
   }
+}
+
+type FlowStep = {
+  id: string
+  name: string
+  agent: string
+  role: string
+  system_prompt: string
+}
+
+function parseObjectJson(value?: string): Record<string, unknown> {
+  if (!value) return {}
+  try {
+    const parsed = JSON.parse(value)
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {}
+  } catch {
+    return {}
+  }
+}
+
+function workflowStepsFromRules(value?: string): FlowStep[] {
+  const rules = parseObjectJson(value)
+  const workflow = rules.workflow && typeof rules.workflow === 'object' && !Array.isArray(rules.workflow)
+    ? rules.workflow as Record<string, unknown>
+    : {}
+  const rawSteps = Array.isArray(workflow.steps)
+    ? workflow.steps
+    : Array.isArray(rules.steps)
+      ? rules.steps
+      : Array.isArray(rules.phases)
+        ? rules.phases
+        : []
+  return rawSteps.map((item, index) => {
+    const step = item && typeof item === 'object' ? item as Record<string, unknown> : {}
+    return {
+      id: String(step.id || `step-${index + 1}`),
+      name: String(step.name || step.phase || `Step ${index + 1}`),
+      agent: String(step.agent || step.actor || ''),
+      role: String(step.role || 'worker'),
+      system_prompt: String(step.system_prompt || step.prompt || ''),
+    }
+  })
+}
+
+function memoryPolicyForUpdate(value?: string) {
+  return Object.keys(parseObjectJson(value)).length > 0 ? parseObjectJson(value) : undefined
+}
+
+function isFlowMode(mode: string) {
+  return mode === 'roundtable' || mode === 'stateflow' || mode === 'research_long_horizon'
 }
 
 function modeLabel(mode: string) {
@@ -88,7 +139,7 @@ export default function GroupDetail() {
   const [agents, setAgents] = useState<Agent[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [token, setToken] = useState(() => localStorage.getItem('admin_token') || '')
+  const [token, setToken] = useState(() => safeStorage.getItem('admin_token'))
   const [memberForm, setMemberForm] = useState({ actor_id: '', role: 'member' })
   const [joinForm, setJoinForm] = useState({ client_id: 'human-local' })
   const [inviteJoinForm, setInviteJoinForm] = useState({ invite_token: '', actor_id: 'human-local' })
@@ -98,6 +149,9 @@ export default function GroupDetail() {
   const [inviteForm, setInviteForm] = useState({ actor_type_allowed: 'human', role: 'member', max_uses: 20 })
   const [newInviteToken, setNewInviteToken] = useState('')
   const [sendingEvent, setSendingEvent] = useState(false)
+  const [flowSteps, setFlowSteps] = useState<FlowStep[]>([])
+  const [selectedStep, setSelectedStep] = useState(0)
+  const [flowSaving, setFlowSaving] = useState(false)
   const chatEndRef = useRef<HTMLDivElement | null>(null)
   const streamingEventIdsRef = useRef<Record<string, number>>({})
 
@@ -136,8 +190,19 @@ export default function GroupDetail() {
       setMemberToken('')
       return
     }
-    setMemberToken(localStorage.getItem(`group_member_token_${id}`) || '')
+    setMemberToken(safeStorage.getItem(`group_member_token_${id}`))
   }, [id])
+
+  useEffect(() => {
+    if (!group || !isFlowMode(group.orchestration_mode)) {
+      setFlowSteps([])
+      setSelectedStep(0)
+      return
+    }
+    const nextSteps = workflowStepsFromRules(group.rules_json)
+    setFlowSteps(nextSteps)
+    setSelectedStep(0)
+  }, [group?.id, group?.orchestration_mode, group?.rules_json])
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ block: 'end' })
@@ -147,6 +212,11 @@ export default function GroupDetail() {
     const memberAgents = new Set(members.filter(m => m.actor_type === 'agent').map(m => m.actor_id))
     return agents.filter(agent => !memberAgents.has(agent.name))
   }, [agents, members])
+
+  const memberAgentNames = useMemo(
+    () => members.filter(member => member.actor_type === 'agent').map(member => member.actor_id),
+    [members],
+  )
 
   const handleAddAgent = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -218,7 +288,7 @@ export default function GroupDetail() {
         actor_id: inviteJoinForm.actor_id.trim(),
         capabilities: { ui: 'admin-human-session' },
       })
-      localStorage.setItem(`group_member_token_${id}`, joined.access_token)
+      safeStorage.setItem(`group_member_token_${id}`, joined.access_token)
       setMemberToken(joined.access_token)
       setEventForm(f => ({ ...f, sender_type: 'human', sender_id: joined.member.actor_id }))
       setArtifactForm(f => ({ ...f, created_by: joined.member.actor_id }))
@@ -400,9 +470,91 @@ export default function GroupDetail() {
     }
   }
 
+  const handleAddFlowStep = () => {
+    const nextIndex = flowSteps.length + 1
+    const nextStep = {
+      id: `step-${nextIndex}`,
+      name: `Step ${nextIndex}`,
+      agent: memberAgentNames[0] || '',
+      role: 'worker',
+      system_prompt: '',
+    }
+    setFlowSteps(prev => [...prev, nextStep])
+    setSelectedStep(flowSteps.length)
+  }
+
+  const updateFlowStep = (index: number, patch: Partial<FlowStep>) => {
+    setFlowSteps(prev => prev.map((step, i) => i === index ? { ...step, ...patch } : step))
+  }
+
+  const moveFlowStep = (index: number, direction: -1 | 1) => {
+    const target = index + direction
+    if (target < 0 || target >= flowSteps.length) return
+    setFlowSteps(prev => {
+      const next = [...prev]
+      const current = next[index]
+      next[index] = next[target]
+      next[target] = current
+      return next
+    })
+    setSelectedStep(target)
+  }
+
+  const deleteFlowStep = (index: number) => {
+    setFlowSteps(prev => prev.filter((_, i) => i !== index))
+    setSelectedStep(prev => Math.max(0, Math.min(prev, flowSteps.length - 2)))
+  }
+
+  const handleSaveFlow = async () => {
+    if (!id || !group) return
+    if (!token) {
+      setError('Admin token required')
+      return
+    }
+    setFlowSaving(true)
+    setError('')
+    try {
+      const rules = parseObjectJson(group.rules_json)
+      const workflow = rules.workflow && typeof rules.workflow === 'object' && !Array.isArray(rules.workflow)
+        ? rules.workflow as Record<string, unknown>
+        : {}
+      const normalizedSteps = flowSteps.map((step, index) => ({
+        id: step.id || `step-${index + 1}`,
+        name: step.name || `Step ${index + 1}`,
+        agent: step.agent,
+        role: step.role || 'worker',
+        system_prompt: step.system_prompt,
+      }))
+      const updatedRules = {
+        ...rules,
+        workflow: {
+          ...workflow,
+          type: 'manual',
+          steps: normalizedSteps,
+        },
+      }
+      await api.updateGroup(id, {
+        name: group.name,
+        description: group.description,
+        orchestration_mode: group.orchestration_mode,
+        rules: updatedRules,
+        memory_policy: memoryPolicyForUpdate(group.memory_policy_json),
+        status: group.status,
+      }, token)
+      load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Save flow failed')
+    } finally {
+      setFlowSaving(false)
+    }
+  }
+
   if (loading) return <div className="p-8 text-sm text-[var(--text-tertiary)]">Loading...</div>
   if (!group) return <div className="p-8 text-sm text-[var(--error)]">Group not found</div>
   const groupTracePath = `/traces/context/${encodeURIComponent(`group:${group.id}`)}`
+  const isP2PMode = group.orchestration_mode === 'p2p'
+  const flowMode = isFlowMode(group.orchestration_mode)
+  const selectedFlowStep = flowSteps[selectedStep]
 
   return (
     <div className="p-8 max-w-7xl">
@@ -517,7 +669,7 @@ export default function GroupDetail() {
               <input
                 type="password"
                 value={token}
-                onChange={e => { setToken(e.target.value); localStorage.setItem('admin_token', e.target.value) }}
+                onChange={e => { setToken(e.target.value); safeStorage.setItem('admin_token', e.target.value) }}
                 className="mt-1 w-full px-3 py-1.5 text-sm rounded-md border border-[var(--border)] bg-[var(--bg-primary)] text-[var(--text-primary)]"
               />
             </div>
@@ -650,158 +802,337 @@ export default function GroupDetail() {
         </aside>
 
         <div className="space-y-6 min-w-0">
-          <section className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg overflow-hidden">
-            <div className="flex items-center justify-between gap-4 px-4 py-3 border-b border-[var(--border)] bg-[var(--bg-primary)]">
-              <div className="min-w-0">
-                <h2 className="text-sm font-medium text-[var(--text-primary)]">Group Chat</h2>
-                <div className="mt-0.5 text-xs text-[var(--text-tertiary)] truncate">
-                  {modeHint(group.orchestration_mode)}
+          {isP2PMode ? (
+            <section className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg overflow-hidden">
+              <div className="flex items-center justify-between gap-4 px-4 py-3 border-b border-[var(--border)] bg-[var(--bg-primary)]">
+                <div className="min-w-0">
+                  <h2 className="text-sm font-medium text-[var(--text-primary)]">P2P Network</h2>
+                  <div className="mt-0.5 text-xs text-[var(--text-tertiary)] truncate">{modeHint(group.orchestration_mode)}</div>
                 </div>
+                <span className="shrink-0 text-xs px-2 py-1 rounded-full bg-[var(--bg-tertiary)] text-[var(--text-secondary)]">{memberAgentNames.length} agents</span>
               </div>
-              <span className="shrink-0 text-xs px-2 py-1 rounded-full bg-[var(--bg-tertiary)] text-[var(--text-secondary)]">{events.length} messages</span>
-            </div>
-            <div className="h-[min(42vh,520px)] min-h-[260px] overflow-y-auto overflow-x-hidden bg-[var(--bg-primary)] px-5 py-5">
-              {events.length === 0 ? (
-                <div className="flex h-full items-center justify-center text-sm text-[var(--text-tertiary)]">No messages yet</div>
-              ) : (
-                <div className="flex min-h-full flex-col justify-end">
-                  {events.map(event => (
-                    event.sender_type === 'system' || event.event_type === 'orchestration_error' ? (
-                      <div key={event.id || `${event.sender_id}-${event.created_at}`} className="my-4 flex justify-center">
-                        <div className="max-w-[80%] rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2 text-center">
-                          <div className="text-xs text-[var(--text-tertiary)]">{event.sender_id} · {formatTime(event.created_at)}</div>
-                          <div className="mt-1 whitespace-pre-wrap break-words text-sm text-[var(--text-secondary)]">{event.content}</div>
+              <div className="grid grid-cols-2 gap-4 p-5">
+                {members.filter(member => member.actor_type === 'agent').map(member => (
+                  <div key={member.actor_id} className="rounded-lg border border-[var(--border)] bg-[var(--bg-primary)] p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[var(--info)]/15 text-xs font-medium text-[var(--info)]">
+                            {actorInitial(member.actor_id)}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="truncate text-sm font-medium text-[var(--text-primary)]">{member.actor_id}</div>
+                            <div className="text-xs text-[var(--text-tertiary)]">{member.role}</div>
+                          </div>
                         </div>
                       </div>
-                    ) : (
-                      <div
-                        key={event.id || `${event.sender_id}-${event.created_at}`}
-                        className={`mb-5 flex min-w-0 items-end gap-3 ${event.sender_type === 'human' ? 'justify-end' : 'justify-start'}`}
+                      <Link
+                        to={`/chat/${encodeURIComponent(member.actor_id)}`}
+                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)]"
+                        title="Open direct chat"
                       >
-                        {event.sender_type !== 'human' && (
-                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--info)]/15 text-xs font-medium text-[var(--info)]">
-                            {actorInitial(event.sender_id)}
-                          </div>
-                        )}
-                        <div className={`min-w-0 max-w-[min(720px,78%)] ${event.sender_type === 'human' ? 'items-end' : 'items-start'} flex flex-col`}>
-                          <div className={`mb-1 flex max-w-full items-center gap-2 px-1 text-xs text-[var(--text-tertiary)] ${event.sender_type === 'human' ? 'flex-row-reverse' : ''}`}>
-                            <span className="font-medium text-[var(--text-secondary)] truncate">{event.sender_id}</span>
-                            <span className={`px-1.5 py-0.5 rounded-full ${actorColor(event.sender_type)}`}>{event.sender_type}</span>
-                            <span className="shrink-0">{formatTime(event.created_at)}</span>
-                          </div>
-                          <div
-                            className={`max-w-full rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-sm whitespace-pre-wrap break-words ${
-                              event.sender_type === 'human'
-                                ? 'rounded-br-md bg-[var(--accent)] text-white'
-                                : 'rounded-bl-md border border-[var(--border)] bg-[var(--bg-secondary)] text-[var(--text-primary)]'
-                            }`}
-                          >
-                            {event.content}
-                          </div>
-                        </div>
-                        {event.sender_type === 'human' && (
-                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--accent)]/15 text-xs font-medium text-[var(--accent)]">
-                            {actorInitial(event.sender_id)}
-                          </div>
-                        )}
-                      </div>
-                    )
-                  ))}
-                  <div ref={chatEndRef} />
-                </div>
-              )}
-            </div>
-            <form onSubmit={handleSendEvent} className="border-t border-[var(--border)] bg-[var(--bg-secondary)] p-4">
-              <div className="mb-3 flex flex-wrap items-center gap-2">
-                {memberToken && eventForm.sender_type === 'human' && (
-                  <span className="rounded-full bg-[var(--success)]/10 px-2 py-1 text-xs text-[var(--success)]">member token</span>
-                )}
-                <select
-                  value={eventForm.sender_type}
-                  onChange={e => setEventForm(f => ({ ...f, sender_type: e.target.value }))}
-                  className="h-9 rounded-md border border-[var(--border)] bg-[var(--bg-primary)] px-3 text-sm text-[var(--text-primary)]"
-                >
-                  <option value="human">human</option>
-                  <option value="agent">agent</option>
-                  <option value="system">system</option>
-                </select>
-                <input
-                  value={eventForm.sender_id}
-                  onChange={e => setEventForm(f => ({ ...f, sender_id: e.target.value }))}
-                  className="h-9 min-w-[180px] flex-1 rounded-md border border-[var(--border)] bg-[var(--bg-primary)] px-3 text-sm text-[var(--text-primary)]"
-                />
-              </div>
-              <div className="flex gap-2">
-                <textarea
-                  value={eventForm.content}
-                  onChange={e => setEventForm(f => ({ ...f, content: e.target.value }))}
-                  onKeyDown={handleEventKeyDown}
-                  rows={1}
-                  placeholder={`Message ${group.name}...`}
-                  className="min-h-[52px] flex-1 resize-none rounded-xl border border-[var(--border)] bg-[var(--bg-primary)] px-4 py-3 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
-                />
-                <button
-                  disabled={sendingEvent}
-                  className="flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-xl bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] disabled:cursor-not-allowed disabled:opacity-50"
-                  title="Send message"
-                >
-                  {sendingEvent ? <RefreshCw size={16} className="animate-spin" /> : <Send size={16} />}
-                </button>
-              </div>
-            </form>
-          </section>
-
-          <section className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--border)]">
-              <div className="flex items-center gap-2">
-                <FileText size={15} className="text-[var(--accent)]" />
-                <h2 className="text-sm font-medium text-[var(--text-primary)]">Artifacts</h2>
-              </div>
-              <span className="text-xs text-[var(--text-tertiary)]">{artifacts.length}</span>
-            </div>
-            <div className="grid grid-cols-2 gap-4 p-4">
-              <div className="space-y-3">
-                {artifacts.length === 0 ? (
-                  <div className="text-sm text-[var(--text-tertiary)]">No artifacts</div>
-                ) : artifacts.map(artifact => (
-                  <div key={artifact.id} className="border border-[var(--border)] rounded-md p-3">
-                    <div className="flex items-center justify-between gap-2 mb-1">
-                      <div className="text-sm font-medium text-[var(--text-primary)] truncate">{artifact.name}</div>
-                      <span className="text-xs text-[var(--text-tertiary)]">v{artifact.version}</span>
+                        <MessageSquare size={15} />
+                      </Link>
                     </div>
-                    <div className="flex items-center gap-2 text-xs text-[var(--text-tertiary)] mb-2">
-                      <span>{artifact.status}</span>
-                      {artifact.created_by && <span>by {artifact.created_by}</span>}
-                    </div>
-                    <pre className="max-h-36 overflow-auto whitespace-pre-wrap text-xs text-[var(--text-secondary)] bg-[var(--bg-tertiary)] rounded p-2">
-                      {artifact.content}
-                    </pre>
+                    {member.capabilities_json && (
+                      <pre className="mt-3 max-h-24 overflow-auto rounded bg-[var(--bg-tertiary)] p-2 text-xs text-[var(--text-secondary)]">
+                        {tryFormatJson(member.capabilities_json)}
+                      </pre>
+                    )}
                   </div>
                 ))}
+                {memberAgentNames.length === 0 && (
+                  <div className="col-span-2 rounded-lg border border-dashed border-[var(--border)] bg-[var(--bg-primary)] p-8 text-center text-sm text-[var(--text-tertiary)]">
+                    No agents in this network
+                  </div>
+                )}
               </div>
-              <form onSubmit={handleCreateArtifact} className="space-y-3">
-                <div className="grid grid-cols-2 gap-2">
+            </section>
+          ) : flowMode ? (
+            <section className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg overflow-hidden">
+              <div className="flex items-center justify-between gap-4 px-4 py-3 border-b border-[var(--border)] bg-[var(--bg-primary)]">
+                <div className="min-w-0">
+                  <h2 className="text-sm font-medium text-[var(--text-primary)]">Manual Flow</h2>
+                  <div className="mt-0.5 text-xs text-[var(--text-tertiary)] truncate">{modeHint(group.orchestration_mode)}</div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleAddFlowStep}
+                    className="flex items-center gap-1.5 rounded-md bg-[var(--bg-tertiary)] px-3 py-1.5 text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                  >
+                    <ListOrdered size={14} />
+                    Add Step
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSaveFlow}
+                    disabled={flowSaving}
+                    className="flex items-center gap-1.5 rounded-md bg-[var(--accent)] px-3 py-1.5 text-xs text-white hover:bg-[var(--accent-hover)] disabled:opacity-50"
+                  >
+                    {flowSaving ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
+                    Save Flow
+                  </button>
+                </div>
+              </div>
+              <div className="grid grid-cols-[280px_1fr] min-h-[460px]">
+                <div className="border-r border-[var(--border)] bg-[var(--bg-primary)] p-3">
+                  <div className="space-y-2">
+                    {flowSteps.map((step, index) => (
+                      <button
+                        key={`${step.id}-${index}`}
+                        type="button"
+                        onClick={() => setSelectedStep(index)}
+                        className={`w-full rounded-md border px-3 py-2 text-left transition-colors ${
+                          selectedStep === index
+                            ? 'border-[var(--accent)] bg-[var(--accent)]/10'
+                            : 'border-[var(--border)] bg-[var(--bg-secondary)] hover:bg-[var(--bg-tertiary)]/50'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--bg-tertiary)] text-xs text-[var(--text-secondary)]">{index + 1}</span>
+                          <span className="min-w-0 truncate text-sm font-medium text-[var(--text-primary)]">{step.name}</span>
+                        </div>
+                        <div className="mt-1 truncate pl-8 text-xs text-[var(--text-tertiary)]">{step.agent || 'unassigned'} · {step.role}</div>
+                      </button>
+                    ))}
+                    {flowSteps.length === 0 && (
+                      <div className="rounded-md border border-dashed border-[var(--border)] p-6 text-center text-sm text-[var(--text-tertiary)]">No steps</div>
+                    )}
+                  </div>
+                </div>
+                <div className="p-5">
+                  {selectedFlowStep ? (
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <div className="text-xs text-[var(--text-tertiary)]">Step {selectedStep + 1}</div>
+                          <h3 className="text-base font-medium text-[var(--text-primary)]">{selectedFlowStep.name}</h3>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <button type="button" onClick={() => moveFlowStep(selectedStep, -1)} className="flex h-8 w-8 items-center justify-center rounded-md bg-[var(--bg-tertiary)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]" title="Move up">
+                            <ArrowUp size={14} />
+                          </button>
+                          <button type="button" onClick={() => moveFlowStep(selectedStep, 1)} className="flex h-8 w-8 items-center justify-center rounded-md bg-[var(--bg-tertiary)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]" title="Move down">
+                            <ArrowDown size={14} />
+                          </button>
+                          <button type="button" onClick={() => deleteFlowStep(selectedStep)} className="flex h-8 w-8 items-center justify-center rounded-md bg-[var(--bg-tertiary)] text-[var(--text-tertiary)] hover:text-[var(--error)]" title="Delete step">
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="text-xs text-[var(--text-tertiary)]">Name</label>
+                          <input
+                            value={selectedFlowStep.name}
+                            onChange={e => updateFlowStep(selectedStep, { name: e.target.value })}
+                            className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg-primary)] px-3 py-2 text-sm text-[var(--text-primary)]"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-xs text-[var(--text-tertiary)]">Agent</label>
+                          <select
+                            value={selectedFlowStep.agent}
+                            onChange={e => updateFlowStep(selectedStep, { agent: e.target.value })}
+                            className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg-primary)] px-3 py-2 text-sm text-[var(--text-primary)]"
+                          >
+                            <option value="">Unassigned</option>
+                            {selectedFlowStep.agent && !memberAgentNames.includes(selectedFlowStep.agent) && (
+                              <option value={selectedFlowStep.agent}>{selectedFlowStep.agent} (not a member)</option>
+                            )}
+                            {memberAgentNames.map(name => <option key={name} value={name}>{name}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-xs text-[var(--text-tertiary)]">Role</label>
+                          <input
+                            value={selectedFlowStep.role}
+                            onChange={e => updateFlowStep(selectedStep, { role: e.target.value })}
+                            className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg-primary)] px-3 py-2 text-sm text-[var(--text-primary)]"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-xs text-[var(--text-tertiary)]">ID</label>
+                          <input
+                            value={selectedFlowStep.id}
+                            onChange={e => updateFlowStep(selectedStep, { id: e.target.value })}
+                            className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg-primary)] px-3 py-2 text-sm text-[var(--text-primary)]"
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="text-xs text-[var(--text-tertiary)]">System Prompt</label>
+                        <textarea
+                          value={selectedFlowStep.system_prompt}
+                          onChange={e => updateFlowStep(selectedStep, { system_prompt: e.target.value })}
+                          rows={12}
+                          className="mt-1 w-full resize-none rounded-md border border-[var(--border)] bg-[var(--bg-primary)] px-3 py-2 font-mono text-sm text-[var(--text-primary)]"
+                        />
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex h-full items-center justify-center rounded-lg border border-dashed border-[var(--border)] text-sm text-[var(--text-tertiary)]">Add a step to start</div>
+                  )}
+                </div>
+              </div>
+            </section>
+          ) : (
+            <section className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg overflow-hidden">
+              <div className="flex items-center justify-between gap-4 px-4 py-3 border-b border-[var(--border)] bg-[var(--bg-primary)]">
+                <div className="min-w-0">
+                  <h2 className="text-sm font-medium text-[var(--text-primary)]">Group Chat</h2>
+                  <div className="mt-0.5 text-xs text-[var(--text-tertiary)] truncate">
+                    {modeHint(group.orchestration_mode)}
+                  </div>
+                </div>
+                <span className="shrink-0 text-xs px-2 py-1 rounded-full bg-[var(--bg-tertiary)] text-[var(--text-secondary)]">{events.length} messages</span>
+              </div>
+              <div className="h-[min(42vh,520px)] min-h-[260px] overflow-y-auto overflow-x-hidden bg-[var(--bg-primary)] px-5 py-5">
+                {events.length === 0 ? (
+                  <div className="flex h-full items-center justify-center text-sm text-[var(--text-tertiary)]">No messages yet</div>
+                ) : (
+                  <div className="flex min-h-full flex-col justify-end">
+                    {events.map(event => (
+                      event.sender_type === 'system' || event.event_type === 'orchestration_error' ? (
+                        <div key={event.id || `${event.sender_id}-${event.created_at}`} className="my-4 flex justify-center">
+                          <div className="max-w-[80%] rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2 text-center">
+                            <div className="text-xs text-[var(--text-tertiary)]">{event.sender_id} · {formatTime(event.created_at)}</div>
+                            <div className="mt-1 whitespace-pre-wrap break-words text-sm text-[var(--text-secondary)]">{event.content}</div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div
+                          key={event.id || `${event.sender_id}-${event.created_at}`}
+                          className={`mb-5 flex min-w-0 items-end gap-3 ${event.sender_type === 'human' ? 'justify-end' : 'justify-start'}`}
+                        >
+                          {event.sender_type !== 'human' && (
+                            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--info)]/15 text-xs font-medium text-[var(--info)]">
+                              {actorInitial(event.sender_id)}
+                            </div>
+                          )}
+                          <div className={`min-w-0 max-w-[min(720px,78%)] ${event.sender_type === 'human' ? 'items-end' : 'items-start'} flex flex-col`}>
+                            <div className={`mb-1 flex max-w-full items-center gap-2 px-1 text-xs text-[var(--text-tertiary)] ${event.sender_type === 'human' ? 'flex-row-reverse' : ''}`}>
+                              <span className="font-medium text-[var(--text-secondary)] truncate">{event.sender_id}</span>
+                              <span className={`px-1.5 py-0.5 rounded-full ${actorColor(event.sender_type)}`}>{event.sender_type}</span>
+                              <span className="shrink-0">{formatTime(event.created_at)}</span>
+                            </div>
+                            <div
+                              className={`max-w-full rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-sm whitespace-pre-wrap break-words ${
+                                event.sender_type === 'human'
+                                  ? 'rounded-br-md bg-[var(--accent)] text-white'
+                                  : 'rounded-bl-md border border-[var(--border)] bg-[var(--bg-secondary)] text-[var(--text-primary)]'
+                              }`}
+                            >
+                              {event.content}
+                            </div>
+                          </div>
+                          {event.sender_type === 'human' && (
+                            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--accent)]/15 text-xs font-medium text-[var(--accent)]">
+                              {actorInitial(event.sender_id)}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    ))}
+                    <div ref={chatEndRef} />
+                  </div>
+                )}
+              </div>
+              <form onSubmit={handleSendEvent} className="border-t border-[var(--border)] bg-[var(--bg-secondary)] p-4">
+                <div className="mb-3 flex flex-wrap items-center gap-2">
+                  {memberToken && eventForm.sender_type === 'human' && (
+                    <span className="rounded-full bg-[var(--success)]/10 px-2 py-1 text-xs text-[var(--success)]">member token</span>
+                  )}
+                  <select
+                    value={eventForm.sender_type}
+                    onChange={e => setEventForm(f => ({ ...f, sender_type: e.target.value }))}
+                    className="h-9 rounded-md border border-[var(--border)] bg-[var(--bg-primary)] px-3 text-sm text-[var(--text-primary)]"
+                  >
+                    <option value="human">human</option>
+                    <option value="agent">agent</option>
+                    <option value="system">system</option>
+                  </select>
                   <input
-                    value={artifactForm.name}
-                    onChange={e => setArtifactForm(f => ({ ...f, name: e.target.value }))}
-                    className="px-3 py-1.5 text-sm rounded-md border border-[var(--border)] bg-[var(--bg-primary)] text-[var(--text-primary)]"
-                  />
-                  <input
-                    value={artifactForm.created_by}
-                    onChange={e => setArtifactForm(f => ({ ...f, created_by: e.target.value }))}
-                    className="px-3 py-1.5 text-sm rounded-md border border-[var(--border)] bg-[var(--bg-primary)] text-[var(--text-primary)]"
+                    value={eventForm.sender_id}
+                    onChange={e => setEventForm(f => ({ ...f, sender_id: e.target.value }))}
+                    className="h-9 min-w-[180px] flex-1 rounded-md border border-[var(--border)] bg-[var(--bg-primary)] px-3 text-sm text-[var(--text-primary)]"
                   />
                 </div>
-                <textarea
-                  value={artifactForm.content}
-                  onChange={e => setArtifactForm(f => ({ ...f, content: e.target.value }))}
-                  rows={11}
-                  className="w-full px-3 py-2 text-sm rounded-md border border-[var(--border)] bg-[var(--bg-primary)] text-[var(--text-primary)] resize-none font-mono"
-                />
-                <button className="w-full px-3 py-1.5 text-sm rounded-md bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)]">Create Artifact</button>
+                <div className="flex gap-2">
+                  <textarea
+                    value={eventForm.content}
+                    onChange={e => setEventForm(f => ({ ...f, content: e.target.value }))}
+                    onKeyDown={handleEventKeyDown}
+                    rows={1}
+                    placeholder={`Message ${group.name}...`}
+                    className="min-h-[52px] flex-1 resize-none rounded-xl border border-[var(--border)] bg-[var(--bg-primary)] px-4 py-3 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+                  />
+                  <button
+                    disabled={sendingEvent}
+                    className="flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-xl bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] disabled:cursor-not-allowed disabled:opacity-50"
+                    title="Send message"
+                  >
+                    {sendingEvent ? <RefreshCw size={16} className="animate-spin" /> : <Send size={16} />}
+                  </button>
+                </div>
               </form>
-            </div>
-          </section>
+            </section>
+          )}
+
+          {!isP2PMode && (
+            <section className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg">
+              <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--border)]">
+                <div className="flex items-center gap-2">
+                  <FileText size={15} className="text-[var(--accent)]" />
+                  <h2 className="text-sm font-medium text-[var(--text-primary)]">Artifacts</h2>
+                </div>
+                <span className="text-xs text-[var(--text-tertiary)]">{artifacts.length}</span>
+              </div>
+              <div className="grid grid-cols-2 gap-4 p-4">
+                <div className="space-y-3">
+                  {artifacts.length === 0 ? (
+                    <div className="text-sm text-[var(--text-tertiary)]">No artifacts</div>
+                  ) : artifacts.map(artifact => (
+                    <div key={artifact.id} className="border border-[var(--border)] rounded-md p-3">
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <div className="text-sm font-medium text-[var(--text-primary)] truncate">{artifact.name}</div>
+                        <span className="text-xs text-[var(--text-tertiary)]">v{artifact.version}</span>
+                      </div>
+                      <div className="flex items-center gap-2 text-xs text-[var(--text-tertiary)] mb-2">
+                        <span>{artifact.status}</span>
+                        {artifact.created_by && <span>by {artifact.created_by}</span>}
+                      </div>
+                      <pre className="max-h-36 overflow-auto whitespace-pre-wrap text-xs text-[var(--text-secondary)] bg-[var(--bg-tertiary)] rounded p-2">
+                        {artifact.content}
+                      </pre>
+                    </div>
+                  ))}
+                </div>
+                <form onSubmit={handleCreateArtifact} className="space-y-3">
+                  <div className="grid grid-cols-2 gap-2">
+                    <input
+                      value={artifactForm.name}
+                      onChange={e => setArtifactForm(f => ({ ...f, name: e.target.value }))}
+                      className="px-3 py-1.5 text-sm rounded-md border border-[var(--border)] bg-[var(--bg-primary)] text-[var(--text-primary)]"
+                    />
+                    <input
+                      value={artifactForm.created_by}
+                      onChange={e => setArtifactForm(f => ({ ...f, created_by: e.target.value }))}
+                      className="px-3 py-1.5 text-sm rounded-md border border-[var(--border)] bg-[var(--bg-primary)] text-[var(--text-primary)]"
+                    />
+                  </div>
+                  <textarea
+                    value={artifactForm.content}
+                    onChange={e => setArtifactForm(f => ({ ...f, content: e.target.value }))}
+                    rows={11}
+                    className="w-full px-3 py-2 text-sm rounded-md border border-[var(--border)] bg-[var(--bg-primary)] text-[var(--text-primary)] resize-none font-mono"
+                  />
+                  <button className="w-full px-3 py-1.5 text-sm rounded-md bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)]">Create Artifact</button>
+                </form>
+              </div>
+            </section>
+          )}
 
           <section className="grid grid-cols-2 gap-4">
             <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg p-4">

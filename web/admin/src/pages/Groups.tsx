@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Plus, Users, Archive, GitBranch } from 'lucide-react'
 import { api, Group } from '../api/client'
+import { safeStorage } from '../utils/storage'
 
 type GroupStatusFilter = 'active' | 'archived' | ''
 
@@ -30,19 +31,43 @@ function parseJsonField(value: string) {
   return JSON.parse(trimmed)
 }
 
+function defaultRulesForMode(mode: string) {
+  switch (mode) {
+    case 'p2p':
+      return '{\n  "p2p_only": true,\n  "auto_managed": false\n}'
+    case 'free_chat':
+      return '{\n  "max_speakers": 3,\n  "max_rounds": 1,\n  "auto_artifact": true,\n  "artifact_name": "group-discussion.md"\n}'
+    case 'stateflow':
+      return '{\n  "workflow": {\n    "type": "manual",\n    "steps": []\n  }\n}'
+    case 'roundtable':
+      return '{\n  "workflow": {\n    "type": "manual",\n    "steps": []\n  },\n  "required_votes": 2\n}'
+    case 'research_long_horizon':
+      return '{\n  "workflow": {\n    "type": "manual",\n    "steps": []\n  },\n  "checkpoint_interval": "manual"\n}'
+    default:
+      return '{\n  "max_rounds": 6\n}'
+  }
+}
+
+function defaultMemoryForMode(mode: string) {
+  if (mode === 'p2p') {
+    return '{\n  "hot_messages": 0,\n  "summary": false\n}'
+  }
+  return '{\n  "hot_messages": 20,\n  "summary": true\n}'
+}
+
 export default function Groups() {
   const [groups, setGroups] = useState<Group[]>([])
   const [loading, setLoading] = useState(true)
   const [statusFilter, setStatusFilter] = useState<GroupStatusFilter>('active')
   const [showCreate, setShowCreate] = useState(false)
   const [error, setError] = useState('')
-  const [token, setToken] = useState(() => localStorage.getItem('admin_token') || '')
+  const [token, setToken] = useState(() => safeStorage.getItem('admin_token'))
   const [form, setForm] = useState({
     name: '',
     description: '',
     orchestration_mode: 'leader_led',
-    rules: '{\n  "max_rounds": 6\n}',
-    memory_policy: '{\n  "hot_messages": 20,\n  "summary": true\n}',
+    rules: defaultRulesForMode('leader_led'),
+    memory_policy: defaultMemoryForMode('leader_led'),
   })
 
   const load = () => {
@@ -120,7 +145,7 @@ export default function Groups() {
         <input
           type="password"
           value={token}
-          onChange={e => { setToken(e.target.value); localStorage.setItem('admin_token', e.target.value) }}
+          onChange={e => { setToken(e.target.value); safeStorage.setItem('admin_token', e.target.value) }}
           placeholder="Enter admin token for mutations"
           className="mt-1 w-full px-3 py-1.5 text-sm rounded-md border border-[var(--border)] bg-[var(--bg-primary)] text-[var(--text-primary)]"
         />
@@ -159,7 +184,12 @@ export default function Groups() {
               <label className="text-xs text-[var(--text-tertiary)]">Mode</label>
               <select
                 value={form.orchestration_mode}
-                onChange={e => setForm(f => ({ ...f, orchestration_mode: e.target.value }))}
+                onChange={e => setForm(f => ({
+                  ...f,
+                  orchestration_mode: e.target.value,
+                  rules: defaultRulesForMode(e.target.value),
+                  memory_policy: defaultMemoryForMode(e.target.value),
+                }))}
                 className="mt-1 w-full px-3 py-1.5 text-sm rounded-md border border-[var(--border)] bg-[var(--bg-primary)] text-[var(--text-primary)]"
               >
                 {modes.map(mode => <option key={mode.value} value={mode.value}>{mode.label}</option>)}

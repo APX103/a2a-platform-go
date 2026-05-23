@@ -626,6 +626,10 @@ func (h *GroupEventHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		okJSON(w, events)
 	case http.MethodPost:
+		if group.OrchestrationMode == model.GroupModeP2P {
+			jsonError(w, "p2p groups do not accept group events; use direct agent chat", http.StatusConflict)
+			return
+		}
 		var req eventReq
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			jsonError(w, "invalid JSON", 400)

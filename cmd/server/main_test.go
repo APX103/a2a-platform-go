@@ -182,6 +182,33 @@ func TestGroupRoute_JoinAndEventReturnOrchestration(t *testing.T) {
 	}
 }
 
+func TestGroupRoute_P2PRejectsGroupEvents(t *testing.T) {
+	svcCtx, _ := setupGroupRouteTestContext(t)
+	group := &model.Group{
+		ID:                "p2p-route",
+		Name:              "p2p route",
+		OrchestrationMode: model.GroupModeP2P,
+	}
+	if err := svcCtx.Groups.Create(group); err != nil {
+		t.Fatalf("create p2p group: %v", err)
+	}
+
+	eventReq := httptest.NewRequest(http.MethodPost, "/api/groups/"+group.ID+"/events", strings.NewReader(`{"event_type":"message","sender_type":"human","sender_id":"human-route","content":"hello"}`))
+	eventRec := httptest.NewRecorder()
+	makeGroupRouteHandler(svcCtx).ServeHTTP(eventRec, eventReq)
+	if eventRec.Code != http.StatusConflict {
+		t.Fatalf("event status = %d, want 409, body=%s", eventRec.Code, eventRec.Body.String())
+	}
+
+	events, err := svcCtx.GroupEvents.List(group.ID, 10)
+	if err != nil {
+		t.Fatalf("list events: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("p2p events persisted = %d, want 0", len(events))
+	}
+}
+
 func TestSubagentRoute_UUIDContextListsSubagents(t *testing.T) {
 	svcCtx, parentContextId, _ := setupSubagentRouteTestContext(t)
 	req := httptest.NewRequest(http.MethodGet, "/api/subagents/"+parentContextId, nil)

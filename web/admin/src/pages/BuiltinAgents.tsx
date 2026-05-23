@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { api, BuiltinAgent, CreateBuiltinAgentReq } from '../api/client'
 import { Plus, Trash2, X, MessageSquare, Pencil, Copy } from 'lucide-react'
+import { safeStorage } from '../utils/storage'
 
 interface FormMode {
   type: 'create' | 'edit' | 'clone'
@@ -13,7 +14,7 @@ export default function BuiltinAgents() {
   const [loading, setLoading] = useState(true)
   const [formMode, setFormMode] = useState<FormMode | null>(null)
   const [error, setError] = useState('')
-  const [token, setToken] = useState(() => localStorage.getItem('admin_token') || '')
+  const [token, setToken] = useState(() => safeStorage.getItem('admin_token'))
 
   const load = async () => {
     try {
@@ -79,7 +80,7 @@ export default function BuiltinAgents() {
         <input
           type="password"
           value={token}
-          onChange={e => { setToken(e.target.value); localStorage.setItem('admin_token', e.target.value) }}
+          onChange={e => { setToken(e.target.value); safeStorage.setItem('admin_token', e.target.value) }}
           placeholder="Enter admin token for mutations"
           className="mt-1 w-full px-3 py-1.5 text-sm rounded-md border border-[var(--border)] bg-[var(--bg-primary)] text-[var(--text-primary)]"
         />

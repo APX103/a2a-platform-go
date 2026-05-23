@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from 'react';
 import { fetchEventSource } from '@microsoft/fetch-event-source';
 import { useChatStore } from '../stores/chatStore';
 import { api } from '../api/client';
+import { safeStorage } from '../utils/storage';
 import type { SSEEvent, ToolCall, ThinkingBlock, TaskSession } from '../types/chat';
 
 export function useChat(agentName: string) {
@@ -28,7 +29,7 @@ export function useChat(agentName: string) {
   const [thinkingBuffer, setThinkingBuffer] = useState<{ [taskId: string]: string }>({});
 
   const adminHeaders = useCallback((): Record<string, string> => {
-    const token = localStorage.getItem('admin_token') || '';
+    const token = safeStorage.getItem('admin_token');
     return token ? { 'X-Admin-Token': token } : {};
   }, []);
 

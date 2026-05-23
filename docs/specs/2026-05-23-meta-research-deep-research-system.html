@@ -1,0 +1,1703 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>元研究：通用深度研究体系设计</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --page: #f4f6f3;
+        --paper: #ffffff;
+        --paper-2: #f8faf7;
+        --ink: #17201b;
+        --muted: #66746b;
+        --line: #d8e0d9;
+        --line-strong: #aebbb1;
+        --teal: #1f7a6a;
+        --teal-soft: #e6f3ef;
+        --blue: #305f9f;
+        --blue-soft: #e8eff8;
+        --brick: #b44b3f;
+        --brick-soft: #faece9;
+        --amber: #a66a00;
+        --amber-soft: #fff4df;
+        --violet: #5b5aa7;
+        --violet-soft: #eeedfb;
+        --green: #23784b;
+        --green-soft: #e8f5ee;
+        --code-bg: #10201d;
+        --code-ink: #e7f2ee;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        color: var(--ink);
+        background: var(--page);
+        line-height: 1.68;
+      }
+
+      a {
+        color: var(--blue);
+        text-decoration: none;
+      }
+
+      a:hover {
+        text-decoration: underline;
+      }
+
+      header {
+        background: #17201b;
+        color: #fff;
+        border-bottom: 5px solid var(--teal);
+      }
+
+      .hero {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 56px 28px 48px;
+      }
+
+      .eyebrow {
+        display: inline-flex;
+        gap: 8px;
+        align-items: center;
+        margin-bottom: 18px;
+        color: #b9d8cf;
+        font-size: 13px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      h1 {
+        max-width: 940px;
+        margin: 0;
+        font-size: clamp(34px, 5vw, 60px);
+        line-height: 1.08;
+        letter-spacing: 0;
+      }
+
+      .subtitle {
+        max-width: 920px;
+        margin: 18px 0 0;
+        color: #dbe9e4;
+        font-size: 18px;
+      }
+
+      .hero-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
+        margin-top: 34px;
+      }
+
+      .hero-card {
+        min-height: 118px;
+        padding: 16px;
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        background: rgba(255, 255, 255, 0.06);
+        border-radius: 8px;
+      }
+
+      .hero-card strong {
+        display: block;
+        color: #fff;
+        font-size: 15px;
+        margin-bottom: 6px;
+      }
+
+      .hero-card span {
+        display: block;
+        color: #c7d8d2;
+        font-size: 13px;
+      }
+
+      .layout {
+        display: grid;
+        grid-template-columns: 260px minmax(0, 1fr);
+        gap: 24px;
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 28px;
+      }
+
+      nav {
+        position: sticky;
+        top: 18px;
+        align-self: start;
+        padding: 16px;
+        background: var(--paper);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+      }
+
+      nav h2 {
+        margin: 0 0 10px;
+        font-size: 14px;
+      }
+
+      nav a {
+        display: block;
+        padding: 7px 8px;
+        border-radius: 6px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      nav a:hover {
+        background: var(--paper-2);
+        color: var(--ink);
+        text-decoration: none;
+      }
+
+      main {
+        min-width: 0;
+      }
+
+      section {
+        margin: 0 0 22px;
+        padding: 28px;
+        background: var(--paper);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+      }
+
+      h2 {
+        margin: 0 0 14px;
+        font-size: 26px;
+        line-height: 1.25;
+        letter-spacing: 0;
+      }
+
+      h3 {
+        margin: 24px 0 10px;
+        font-size: 18px;
+        line-height: 1.3;
+        letter-spacing: 0;
+      }
+
+      h4 {
+        margin: 18px 0 8px;
+        font-size: 15px;
+        color: var(--ink);
+      }
+
+      p {
+        margin: 10px 0;
+      }
+
+      ul,
+      ol {
+        padding-left: 22px;
+      }
+
+      li {
+        margin: 7px 0;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 16px 0;
+        font-size: 14px;
+      }
+
+      th,
+      td {
+        padding: 11px 12px;
+        border: 1px solid var(--line);
+        text-align: left;
+        vertical-align: top;
+      }
+
+      th {
+        background: var(--paper-2);
+        color: #35443b;
+        font-weight: 700;
+      }
+
+      code {
+        padding: 2px 6px;
+        border-radius: 5px;
+        border: 1px solid #cbd8d0;
+        background: #f3f7f4;
+        color: #23352c;
+        font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+        font-size: 0.92em;
+      }
+
+      pre {
+        overflow: auto;
+        padding: 18px;
+        border: 1px solid #203c36;
+        border-radius: 8px;
+        background: var(--code-bg);
+        color: var(--code-ink);
+        line-height: 1.55;
+      }
+
+      pre code {
+        padding: 0;
+        border: 0;
+        background: transparent;
+        color: inherit;
+      }
+
+      .lead {
+        max-width: 920px;
+        color: #425148;
+        font-size: 17px;
+      }
+
+      .note {
+        margin: 16px 0;
+        padding: 13px 15px;
+        border-left: 4px solid var(--blue);
+        background: var(--blue-soft);
+        border-radius: 6px;
+      }
+
+      .note.ok {
+        border-left-color: var(--green);
+        background: var(--green-soft);
+      }
+
+      .note.warn {
+        border-left-color: var(--amber);
+        background: var(--amber-soft);
+      }
+
+      .note.danger {
+        border-left-color: var(--brick);
+        background: var(--brick-soft);
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 14px;
+      }
+
+      .grid.two {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .grid.four {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+      }
+
+      .card {
+        min-width: 0;
+        padding: 16px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--paper-2);
+      }
+
+      .card h3,
+      .card h4 {
+        margin-top: 0;
+      }
+
+      .tag {
+        display: inline-block;
+        margin: 2px 4px 2px 0;
+        padding: 3px 8px;
+        border-radius: 999px;
+        background: #edf3ef;
+        color: #3c5145;
+        font-size: 12px;
+        white-space: nowrap;
+      }
+
+      .tag.teal { background: var(--teal-soft); color: var(--teal); }
+      .tag.blue { background: var(--blue-soft); color: var(--blue); }
+      .tag.brick { background: var(--brick-soft); color: var(--brick); }
+      .tag.amber { background: var(--amber-soft); color: var(--amber); }
+      .tag.violet { background: var(--violet-soft); color: var(--violet); }
+      .tag.green { background: var(--green-soft); color: var(--green); }
+
+      .diagram {
+        margin: 16px 0;
+        padding: 18px;
+        overflow-x: auto;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #fbfcfa;
+      }
+
+      .layer-stack {
+        display: grid;
+        gap: 10px;
+      }
+
+      .layer {
+        display: grid;
+        grid-template-columns: 190px minmax(0, 1fr);
+        gap: 14px;
+        align-items: start;
+        padding: 12px;
+        border: 1px solid var(--line);
+        border-left: 5px solid var(--teal);
+        border-radius: 8px;
+        background: #fff;
+      }
+
+      .layer:nth-child(2) { border-left-color: var(--blue); }
+      .layer:nth-child(3) { border-left-color: var(--violet); }
+      .layer:nth-child(4) { border-left-color: var(--amber); }
+      .layer:nth-child(5) { border-left-color: var(--green); }
+      .layer:nth-child(6) { border-left-color: var(--brick); }
+
+      .layer-title {
+        font-weight: 800;
+      }
+
+      .flow {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(150px, 1fr));
+        gap: 12px;
+      }
+
+      .step {
+        position: relative;
+        min-height: 116px;
+        padding: 14px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #fff;
+      }
+
+      .step strong {
+        display: block;
+        margin-bottom: 6px;
+      }
+
+      .step span {
+        display: block;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .split {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+      }
+
+      .workspace {
+        display: grid;
+        grid-template-columns: 180px minmax(0, 1fr) 240px;
+        gap: 10px;
+        min-height: 520px;
+        padding: 10px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #edf2ef;
+      }
+
+      .pane {
+        min-width: 0;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #fff;
+      }
+
+      .pane-head {
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--line);
+        font-size: 13px;
+        font-weight: 800;
+      }
+
+      .pane-body {
+        padding: 12px;
+      }
+
+      .menu-item {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 8px;
+        margin-bottom: 6px;
+        border-radius: 6px;
+        background: var(--paper-2);
+        font-size: 13px;
+      }
+
+      .board {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .board-col {
+        min-height: 390px;
+        padding: 10px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #f7faf8;
+      }
+
+      .board-col h4 {
+        margin: 0 0 10px;
+        font-size: 13px;
+        color: var(--muted);
+      }
+
+      .work-card {
+        padding: 10px;
+        margin-bottom: 8px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #fff;
+        font-size: 13px;
+      }
+
+      .meter {
+        height: 8px;
+        margin-top: 8px;
+        overflow: hidden;
+        border-radius: 999px;
+        background: #e7ece8;
+      }
+
+      .meter i {
+        display: block;
+        height: 100%;
+        background: var(--teal);
+      }
+
+      .matrix {
+        display: grid;
+        grid-template-columns: 170px repeat(5, minmax(90px, 1fr));
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        overflow: hidden;
+        font-size: 13px;
+      }
+
+      .matrix div {
+        padding: 10px;
+        border-right: 1px solid var(--line);
+        border-bottom: 1px solid var(--line);
+        background: #fff;
+      }
+
+      .matrix div:nth-child(-n+6) {
+        background: var(--paper-2);
+        font-weight: 800;
+      }
+
+      .matrix div:nth-child(6n) {
+        border-right: 0;
+      }
+
+      .matrix div:nth-last-child(-n+6) {
+        border-bottom: 0;
+      }
+
+      details {
+        margin: 12px 0;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #fff;
+      }
+
+      summary {
+        cursor: pointer;
+        padding: 12px 14px;
+        font-weight: 800;
+      }
+
+      details .detail-body {
+        padding: 0 14px 14px;
+      }
+
+      footer {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 20px 28px 46px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      @media (max-width: 980px) {
+        .layout {
+          grid-template-columns: 1fr;
+        }
+
+        nav {
+          position: static;
+        }
+
+        .hero-grid,
+        .grid,
+        .grid.two,
+        .grid.four,
+        .flow,
+        .split,
+        .workspace,
+        .board {
+          grid-template-columns: 1fr;
+        }
+
+        .workspace {
+          min-height: auto;
+        }
+
+        .matrix {
+          grid-template-columns: 1fr;
+        }
+
+        .matrix div,
+        .matrix div:nth-child(6n),
+        .matrix div:nth-last-child(-n+6) {
+          border-right: 0;
+          border-bottom: 1px solid var(--line);
+        }
+
+        .layer {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="hero">
+        <div class="eyebrow">A2A Platform Research System · 2026-05-23</div>
+        <h1>元研究：面向深度研究的通用科研体系</h1>
+        <p class="subtitle">
+          这份 HTML 方案把“深度研究”定义为一个长期、可验证、可迭代的知识生产系统。它不是群聊界面，也不是一次性报告生成，而是面向科研单位、学校教师、实验室和企业研究团队的研究操作系统。
+        </p>
+        <div class="hero-grid">
+          <div class="hero-card">
+            <strong>研究对象化</strong>
+            <span>把问题、证据、假设、实验、结论、反例和知识节点变成可追踪对象。</span>
+          </div>
+          <div class="hero-card">
+            <strong>非固定循环</strong>
+            <span>研究流程不是线性流水线，而是可跳转、可暂停、可复盘的自适应状态机。</span>
+          </div>
+          <div class="hero-card">
+            <strong>可验证知识</strong>
+            <span>没有证据链和验证路径的输出不能进入知识库，只能停留为想法或假设。</span>
+          </div>
+          <div class="hero-card">
+            <strong>人机协同</strong>
+            <span>教师、PI、学生、专家和智能体共同完成探索、审查、实验和沉淀。</span>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <div class="layout">
+      <nav aria-label="目录">
+        <h2>目录</h2>
+        <a href="#definition">1. 定义与目标</a>
+        <a href="#principles">2. 设计原则</a>
+        <a href="#architecture">3. 总体架构</a>
+        <a href="#ontology">4. 研究对象模型</a>
+        <a href="#loop">5. 研究循环</a>
+        <a href="#verification">6. 可验证性体系</a>
+        <a href="#novelty">7. 新知识判定</a>
+        <a href="#agents">8. 智能体角色</a>
+        <a href="#workspace">9. 工作台 UI</a>
+        <a href="#protocol">10. 协议与状态机</a>
+        <a href="#data-model">11. 数据结构</a>
+        <a href="#implementation">12. 落地路线</a>
+        <a href="#governance">13. 治理与伦理</a>
+        <a href="#example">14. 示例研究</a>
+      </nav>
+
+      <main>
+        <section id="definition">
+          <h2>1. 定义与目标</h2>
+          <p class="lead">
+            元研究的目标，是设计一套能持续产生新知识的研究体系。它能接入公开信息、私有资料、数据库、代码执行、仿真、实体实验和人类专家判断，最终形成有证据、有边界、有验证状态的知识资产。
+          </p>
+          <div class="note ok">
+            <strong>核心判断：</strong>深度研究不是“让多个 agent 讨论很久”，而是“让多个研究角色围绕明确对象进行可验证的知识生产”。群聊是沟通形态，研究体系是认知和验证形态。
+          </div>
+
+          <h3>平台中的两个一等公民</h3>
+          <div class="grid two">
+            <div class="card">
+              <h3>P2P Network</h3>
+              <p>负责 agent 注册、发现、直连沟通、能力暴露和权限边界。它解决“谁能找到谁，谁能和谁协作”。</p>
+              <span class="tag teal">成员发现</span>
+              <span class="tag blue">直连消息</span>
+              <span class="tag green">能力注册</span>
+            </div>
+            <div class="card">
+              <h3>Research Program</h3>
+              <p>负责长期研究编排、对象管理、验证、知识沉淀和迭代。它解决“为什么协作，如何推进，什么算新知识”。</p>
+              <span class="tag amber">研究循环</span>
+              <span class="tag violet">证据链</span>
+              <span class="tag brick">验证协议</span>
+            </div>
+          </div>
+
+          <h3>预期产物</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>产物</th>
+                <th>说明</th>
+                <th>进入知识库条件</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>研究问题</td>
+                <td>一个有边界、有价值、有可回答路径的问题。</td>
+                <td>范围清楚，能拆成可执行步骤。</td>
+              </tr>
+              <tr>
+                <td>假设</td>
+                <td>对现象、机制、因果、结构或方法的候选解释。</td>
+                <td>必须绑定验证方式和可反驳条件。</td>
+              </tr>
+              <tr>
+                <td>证据</td>
+                <td>文献、网页、数据库记录、实验日志、代码输出、访谈记录、观察数据。</td>
+                <td>来源可追踪，可信度可评价。</td>
+              </tr>
+              <tr>
+                <td>知识声明</td>
+                <td>由证据和推理支持的结论，是知识库的最小入库单元。</td>
+                <td>通过批判审查，具备适用边界和验证状态。</td>
+              </tr>
+              <tr>
+                <td>研究报告</td>
+                <td>对一段研究过程的综合表达，包括结论、限制、下一步。</td>
+                <td>每个关键结论都能回链到 claim/evidence。</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section id="principles">
+          <h2>2. 设计原则</h2>
+          <div class="grid">
+            <div class="card">
+              <h3>对象优先</h3>
+              <p>研究过程里的关键内容都要对象化。消息只是事件，不能替代假设、证据、实验和结论。</p>
+            </div>
+            <div class="card">
+              <h3>验证优先</h3>
+              <p>任何结论都要附带验证方式、反例条件和证据链。不能验证的结论默认不进入知识库。</p>
+            </div>
+            <div class="card">
+              <h3>边界优先</h3>
+              <p>研究必须有范围。一个 claim 不仅要说“是什么”，还要说明“在哪些条件下成立”。</p>
+            </div>
+            <div class="card">
+              <h3>反驳优先</h3>
+              <p>系统要主动找反例和替代解释。没有经过反驳的结论只能叫候选结论。</p>
+            </div>
+            <div class="card">
+              <h3>迭代优先</h3>
+              <p>研究不是一次性报告，而是由阶段性发现驱动下一轮问题、实验和知识更新。</p>
+            </div>
+            <div class="card">
+              <h3>人类主权</h3>
+              <p>重要研究方向、昂贵实验、高风险结论和正式发布，都应有 PI 或人类负责人确认。</p>
+            </div>
+          </div>
+
+          <h3>反模式</h3>
+          <div class="note danger">
+            <ul>
+              <li>把深度研究做成一个超长聊天窗口。</li>
+              <li>把“多个 agent 回复”误认为“多角色科研协作”。</li>
+              <li>把总结、观点、推测直接当成知识。</li>
+              <li>没有证据版本、代码版本、实验环境和推理审查。</li>
+              <li>只生成漂亮报告，不沉淀可复用的研究对象。</li>
+            </ul>
+          </div>
+        </section>
+
+        <section id="architecture">
+          <h2>3. 总体架构</h2>
+          <p>通用深度研究体系可以分为六层：研究意图层、认识论协议层、编排执行层、工具实验层、知识底座层和治理审计层。</p>
+
+          <div class="diagram">
+            <div class="layer-stack">
+              <div class="layer">
+                <div class="layer-title">研究意图层</div>
+                <div>定义研究目标、领域范围、价值函数、资源预算、风险边界和人类负责人。</div>
+              </div>
+              <div class="layer">
+                <div class="layer-title">认识论协议层</div>
+                <div>定义什么是证据、什么是新知识、如何验证、如何反驳、如何计算置信度。</div>
+              </div>
+              <div class="layer">
+                <div class="layer-title">编排执行层</div>
+                <div>研究状态机、角色分配、任务队列、长期记忆、事件日志、暂停与恢复。</div>
+              </div>
+              <div class="layer">
+                <div class="layer-title">工具实验层</div>
+                <div>网页检索、论文库、内部知识库、数据库、代码运行、仿真、实体实验、人工任务。</div>
+              </div>
+              <div class="layer">
+                <div class="layer-title">知识底座层</div>
+                <div>Evidence Store、Claim Ledger、Experiment Registry、Knowledge Graph、Artifact Store。</div>
+              </div>
+              <div class="layer">
+                <div class="layer-title">治理审计层</div>
+                <div>权限、隐私、伦理审查、成本控制、引用合规、版本审计、发布审批。</div>
+              </div>
+            </div>
+          </div>
+
+          <h3>系统组件</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>组件</th>
+                <th>职责</th>
+                <th>关键输出</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Research Program Manager</td>
+                <td>管理研究项目生命周期、目标、范围、成员、预算和状态。</td>
+                <td>program、run、milestone、scope。</td>
+              </tr>
+              <tr>
+                <td>Research Orchestrator</td>
+                <td>根据研究状态、证据缺口和价值函数选择下一步。</td>
+                <td>step plan、task queue、role assignment。</td>
+              </tr>
+              <tr>
+                <td>Evidence Service</td>
+                <td>收集、清洗、去重、评级、引用和版本化证据。</td>
+                <td>evidence item、source profile、citation。</td>
+              </tr>
+              <tr>
+                <td>Hypothesis Engine</td>
+                <td>从问题、证据和知识图谱中生成假设和替代解释。</td>
+                <td>hypothesis、testable prediction。</td>
+              </tr>
+              <tr>
+                <td>Experiment Registry</td>
+                <td>登记实验计划、参数、样本、环境、执行结果和复现状态。</td>
+                <td>experiment plan、observation、replication record。</td>
+              </tr>
+              <tr>
+                <td>Verification Engine</td>
+                <td>对 claim 做证据链检查、反例搜索、复现检查和置信度评估。</td>
+                <td>verification report、confidence score。</td>
+              </tr>
+              <tr>
+                <td>Knowledge Ledger</td>
+                <td>沉淀经过审查的知识声明，保留版本、范围、反例和修订历史。</td>
+                <td>knowledge claim、knowledge node、revision。</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section id="ontology">
+          <h2>4. 研究对象模型</h2>
+          <p>深度研究要避免把所有内容都埋在聊天记录里。下面是最小但完整的研究对象体系。</p>
+
+          <div class="grid">
+            <div class="card">
+              <h3>Program</h3>
+              <p>长期研究项目。包含领域、目标、范围、PI、参与者、资源预算和知识库。</p>
+              <span class="tag teal">长期</span>
+              <span class="tag blue">可暂停</span>
+            </div>
+            <div class="card">
+              <h3>Question</h3>
+              <p>当前研究问题。可以有父子关系、优先级、预期价值和关闭条件。</p>
+              <span class="tag amber">驱动循环</span>
+            </div>
+            <div class="card">
+              <h3>Scope</h3>
+              <p>研究边界。定义对象、时间、空间、数据源、排除项和风险限制。</p>
+              <span class="tag brick">防止泛化</span>
+            </div>
+            <div class="card">
+              <h3>Hypothesis</h3>
+              <p>可被检验的候选解释。必须带预测、验证方式和反驳条件。</p>
+              <span class="tag violet">可反驳</span>
+            </div>
+            <div class="card">
+              <h3>Evidence</h3>
+              <p>支持或反对 claim 的材料，包括来源、可信度、摘要、原文片段和许可状态。</p>
+              <span class="tag green">可追溯</span>
+            </div>
+            <div class="card">
+              <h3>Experiment</h3>
+              <p>用于产生新观察的计划和执行记录，可以是代码实验、仿真、实体实验或人工研究。</p>
+              <span class="tag amber">可复现</span>
+            </div>
+            <div class="card">
+              <h3>Observation</h3>
+              <p>实验或调查得到的原始观察。它不是结论，需要分析和解释。</p>
+              <span class="tag blue">原始结果</span>
+            </div>
+            <div class="card">
+              <h3>Claim</h3>
+              <p>知识声明。系统最关键对象，必须绑定证据、边界、推理、反例和验证状态。</p>
+              <span class="tag teal">知识候选</span>
+            </div>
+            <div class="card">
+              <h3>Review</h3>
+              <p>批判审查记录。包括缺陷、反例、替代解释、风险、复现意见和通过/退回决定。</p>
+              <span class="tag brick">质量门</span>
+            </div>
+          </div>
+
+          <h3>对象关系</h3>
+          <div class="diagram">
+            <pre><code>ResearchProgram
+  -> Scope
+  -> Question*
+       -> Hypothesis*
+            -> VerificationPlan
+            -> Experiment*
+                 -> Observation*
+            -> EvidenceLink*
+            -> Claim*
+                 -> EvidenceLink*
+                 -> CounterEvidenceLink*
+                 -> Review*
+                 -> KnowledgeNode?
+  -> Artifact*
+  -> ResearchRun*
+       -> Step*
+       -> Decision*
+       -> TraceEvent*</code></pre>
+          </div>
+        </section>
+
+        <section id="loop">
+          <h2>5. 研究循环</h2>
+          <p>深度研究的循环不是固定流程，而是一组可动态跳转的研究状态。每个状态会产出对象，也会改变下一步策略。</p>
+
+          <div class="flow">
+            <div class="step">
+              <strong>1. 界定领域</strong>
+              <span>定义研究范围、问题地图、术语和排除项。</span>
+            </div>
+            <div class="step">
+              <strong>2. 收集上下文</strong>
+              <span>检索文献、内部资料、历史实验、专家经验和数据。</span>
+            </div>
+            <div class="step">
+              <strong>3. 形成假设</strong>
+              <span>提出机制解释、结构模型、因果假设或方法路线。</span>
+            </div>
+            <div class="step">
+              <strong>4. 设计验证</strong>
+              <span>选择文献验证、数据分析、实验、仿真、预测或专家审查。</span>
+            </div>
+            <div class="step">
+              <strong>5. 执行研究</strong>
+              <span>运行工具、查询数据、生成代码、安排实验或分配人工任务。</span>
+            </div>
+            <div class="step">
+              <strong>6. 提炼结论</strong>
+              <span>把观察和证据转化为有边界的 claim。</span>
+            </div>
+            <div class="step">
+              <strong>7. 批判审查</strong>
+              <span>寻找反例、漏洞、替代解释、偏差和不可复现因素。</span>
+            </div>
+            <div class="step">
+              <strong>8. 沉淀迭代</strong>
+              <span>升级知识、生成下一轮问题，或退回假设池。</span>
+            </div>
+          </div>
+
+          <h3>研究循环的调度依据</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>信号</th>
+                <th>含义</th>
+                <th>可能的下一步</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>证据缺口大</td>
+                <td>claim 依赖推测，缺少足够支持材料。</td>
+                <td>回到检索、数据收集或访谈。</td>
+              </tr>
+              <tr>
+                <td>反例强</td>
+                <td>已有证据或实验结果与假设冲突。</td>
+                <td>修正范围、拆分假设、寻找替代解释。</td>
+              </tr>
+              <tr>
+                <td>验证成本高</td>
+                <td>实验昂贵、危险、耗时或需要实体资源。</td>
+                <td>请求人类审批，先做低成本代理实验。</td>
+              </tr>
+              <tr>
+                <td>新颖性弱</td>
+                <td>产出可能只是已有知识的重复表达。</td>
+                <td>转向组合创新、方法创新或更细分范围。</td>
+              </tr>
+              <tr>
+                <td>置信度足够</td>
+                <td>claim 已经过多路径支持和反驳审查。</td>
+                <td>进入知识库，生成报告和下一轮问题。</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section id="verification">
+          <h2>6. 可验证性体系</h2>
+          <p class="lead">可验证性是深度研究系统里“知识”和“想法”的分界线。系统必须让每个结果都能回答：它从哪里来，为什么成立，什么情况下会错，如何被复现。</p>
+
+          <h3>验证阶梯</h3>
+          <div class="matrix">
+            <div>等级</div>
+            <div>名称</div>
+            <div>判定标准</div>
+            <div>证据要求</div>
+            <div>风险</div>
+            <div>系统动作</div>
+
+            <div>V0</div>
+            <div>Unverified Idea</div>
+            <div>只有想法或模型输出。</div>
+            <div>无证据或证据未登记。</div>
+            <div>幻觉、空洞类比。</div>
+            <div>只能留在草稿区。</div>
+
+            <div>V1</div>
+            <div>Source Supported</div>
+            <div>有来源支持，但尚未检查推理。</div>
+            <div>至少一个可追溯来源。</div>
+            <div>断章取义、来源质量低。</div>
+            <div>进入证据审查队列。</div>
+
+            <div>V2</div>
+            <div>Logically Reviewed</div>
+            <div>推理链经过 critic 审查。</div>
+            <div>支持证据和反对证据分离。</div>
+            <div>仍可能缺少独立验证。</div>
+            <div>允许进入候选 claim。</div>
+
+            <div>V3</div>
+            <div>Reproducible</div>
+            <div>数据、代码、环境或实验步骤可复现。</div>
+            <div>版本、参数、日志齐全。</div>
+            <div>样本偏差、外部有效性不足。</div>
+            <div>进入强候选知识。</div>
+
+            <div>V4</div>
+            <div>Experimentally Validated</div>
+            <div>通过实验、仿真、A/B 或实体观察验证。</div>
+            <div>原始观察和分析过程完整。</div>
+            <div>实验设计缺陷。</div>
+            <div>可入库为 validated knowledge。</div>
+
+            <div>V5</div>
+            <div>Predictively Validated</div>
+            <div>结论提前预测了未来观察，并被证实。</div>
+            <div>预测时间戳、验证结果、误差范围。</div>
+            <div>偶然命中或选择性报告。</div>
+            <div>作为高可信知识和理论节点。</div>
+          </div>
+
+          <h3>每个 claim 必须具备的验证字段</h3>
+          <pre><code>{
+  "claim": "在限定范围内的知识声明",
+  "scope": "适用边界",
+  "assumptions": ["成立前提"],
+  "evidence_ids": ["ev_001", "ev_002"],
+  "counter_evidence_ids": ["ev_009"],
+  "reasoning_summary": "从证据到结论的推理摘要",
+  "verification_method": "literature | data | experiment | replication | prediction | expert_review",
+  "falsification_conditions": ["如果观察到 X，则该 claim 需要降级或废弃"],
+  "confidence": 0.0,
+  "novelty_score": 0.0,
+  "verification_level": "V0-V5",
+  "review_status": "draft | under_review | revised | accepted | rejected",
+  "last_reviewed_at": "ISO-8601"
+}</code></pre>
+
+          <h3>验证检查清单</h3>
+          <div class="grid two">
+            <div class="card">
+              <h3>证据检查</h3>
+              <ul>
+                <li>来源是否可追踪。</li>
+                <li>引用是否指向原始材料，而不是二手转述。</li>
+                <li>是否存在高质量反对证据。</li>
+                <li>证据是否在 claim 的范围内。</li>
+                <li>时间、样本、上下文是否匹配。</li>
+              </ul>
+            </div>
+            <div class="card">
+              <h3>推理检查</h3>
+              <ul>
+                <li>是否把相关性误判为因果。</li>
+                <li>是否有概念偷换。</li>
+                <li>是否从小样本过度泛化。</li>
+                <li>是否忽略替代解释。</li>
+                <li>结论是否比证据支持范围更强。</li>
+              </ul>
+            </div>
+          </div>
+        </section>
+
+        <section id="novelty">
+          <h2>7. 新知识判定</h2>
+          <p>“新知识”不应该只按“世界上是否第一次出现”来定义。平台应该支持多层新颖性，因为科研单位、学校和企业研究团队的知识边界不同。</p>
+
+          <table>
+            <thead>
+              <tr>
+                <th>新颖性类型</th>
+                <th>定义</th>
+                <th>例子</th>
+                <th>评价方法</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>组织新颖性</td>
+                <td>对当前团队或机构是新的。</td>
+                <td>把外部已有方法引入本实验室流程。</td>
+                <td>与内部知识库和历史项目比较。</td>
+              </tr>
+              <tr>
+                <td>结构新颖性</td>
+                <td>对已有知识建立新的关系、分类或图谱结构。</td>
+                <td>发现两个方向共享同一个底层机制。</td>
+                <td>知识图谱差异和解释压缩度。</td>
+              </tr>
+              <tr>
+                <td>经验新颖性</td>
+                <td>通过新数据或新实验得到此前未知观察。</td>
+                <td>某条件下模型表现反常。</td>
+                <td>数据来源、实验日志、复现结果。</td>
+              </tr>
+              <tr>
+                <td>方法新颖性</td>
+                <td>提出新的研究方法、实验设计或工具链。</td>
+                <td>用 agent 编排降低实验设计时间。</td>
+                <td>与基线方法比较成本、效果、可复用性。</td>
+              </tr>
+              <tr>
+                <td>因果新颖性</td>
+                <td>提出或验证新的因果解释。</td>
+                <td>确认某变量是性能提升的关键因子。</td>
+                <td>对照实验、因果图、反事实验证。</td>
+              </tr>
+              <tr>
+                <td>生产性新颖性</td>
+                <td>能生成更深问题、实验或技术路线。</td>
+                <td>一个 claim 派生出三条高价值研究路径。</td>
+                <td>后续问题质量和研究收益。</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <h3>新知识入库规则</h3>
+          <div class="note warn">
+            新颖性高但可验证性低的内容，应该进入“高潜力假设池”；可验证性高但新颖性低的内容，应该进入“背景知识”；只有同时具备足够新颖性和可验证性的内容，才进入“研究贡献”。
+          </div>
+        </section>
+
+        <section id="agents">
+          <h2>8. 智能体角色</h2>
+          <p>深度研究中的 agent 不是普通群成员，而是承担具体认识论职责的研究角色。一个研究项目可以复用同一个 agent，也可以让多个 agent 竞争同一角色。</p>
+
+          <table>
+            <thead>
+              <tr>
+                <th>角色</th>
+                <th>职责</th>
+                <th>产物</th>
+                <th>失败风险</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Research Lead</td>
+                <td>定义目标、分配任务、控制预算、判断阶段结束。</td>
+                <td>计划、决策、里程碑。</td>
+                <td>过早收敛，忽略替代路线。</td>
+              </tr>
+              <tr>
+                <td>Domain Mapper</td>
+                <td>梳理概念、领域边界、术语、子问题和知识图谱。</td>
+                <td>领域地图、概念表。</td>
+                <td>范围过宽或分类粗糙。</td>
+              </tr>
+              <tr>
+                <td>Retriever</td>
+                <td>检索公开资料、论文、内部文档、数据库和历史实验。</td>
+                <td>证据候选、来源摘要。</td>
+                <td>来源重复、质量不稳定。</td>
+              </tr>
+              <tr>
+                <td>Theorist</td>
+                <td>提出模型、机制解释、因果图和可检验假设。</td>
+                <td>hypothesis、prediction。</td>
+                <td>理论漂亮但不可验证。</td>
+              </tr>
+              <tr>
+                <td>Experiment Designer</td>
+                <td>设计实验、控制变量、指标、样本、复现协议。</td>
+                <td>experiment plan。</td>
+                <td>实验成本过高或变量混淆。</td>
+              </tr>
+              <tr>
+                <td>Executor</td>
+                <td>执行代码、仿真、数据处理、工具调用或实体实验任务。</td>
+                <td>observation、log。</td>
+                <td>环境不一致，记录不完整。</td>
+              </tr>
+              <tr>
+                <td>Critic</td>
+                <td>寻找反例、漏洞、偏差、替代解释和过度泛化。</td>
+                <td>review、counter evidence。</td>
+                <td>过度保守，阻断探索。</td>
+              </tr>
+              <tr>
+                <td>Synthesizer</td>
+                <td>把研究对象组织成报告、论文草稿、图谱和知识库更新。</td>
+                <td>artifact、knowledge update。</td>
+                <td>写得漂亮但压平不确定性。</td>
+              </tr>
+              <tr>
+                <td>Ethics & Safety Reviewer</td>
+                <td>评估隐私、合规、实验风险、数据许可和发布边界。</td>
+                <td>risk report、approval gate。</td>
+                <td>规则滞后或范围过宽。</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <h3>人类角色</h3>
+          <div class="grid four">
+            <div class="card">
+              <h4>PI / 教师</h4>
+              <p>定义研究方向，批准关键实验和最终发布。</p>
+            </div>
+            <div class="card">
+              <h4>研究生 / 学生</h4>
+              <p>执行人工任务、标注、复核、补充领域直觉。</p>
+            </div>
+            <div class="card">
+              <h4>领域专家</h4>
+              <p>进行专家评审，指出系统难以发现的隐含前提。</p>
+            </div>
+            <div class="card">
+              <h4>平台管理员</h4>
+              <p>管理权限、工具接入、预算、审计和数据安全。</p>
+            </div>
+          </div>
+        </section>
+
+        <section id="workspace">
+          <h2>9. 工作台 UI</h2>
+          <p>研究工作台不是聊天页。它应该把研究对象和状态放在主屏，聊天或事件日志只作为辅助沟通和审计。</p>
+
+          <div class="workspace" aria-label="研究工作台原型">
+            <div class="pane">
+              <div class="pane-head">Research Navigator</div>
+              <div class="pane-body">
+                <div class="menu-item"><span>Questions</span><b>12</b></div>
+                <div class="menu-item"><span>Hypotheses</span><b>7</b></div>
+                <div class="menu-item"><span>Evidence</span><b>148</b></div>
+                <div class="menu-item"><span>Experiments</span><b>5</b></div>
+                <div class="menu-item"><span>Claims</span><b>9</b></div>
+                <div class="menu-item"><span>Reviews</span><b>18</b></div>
+                <div class="menu-item"><span>Artifacts</span><b>4</b></div>
+              </div>
+            </div>
+
+            <div class="pane">
+              <div class="pane-head">Research Board</div>
+              <div class="pane-body">
+                <div class="board">
+                  <div class="board-col">
+                    <h4>Explore</h4>
+                    <div class="work-card">
+                      <strong>Q-12 机制边界</strong>
+                      <p>哪些条件下当前方法会失效？</p>
+                      <span class="tag blue">question</span>
+                    </div>
+                    <div class="work-card">
+                      <strong>EV-44 文献证据</strong>
+                      <p>三篇论文对同一指标结论不一致。</p>
+                      <span class="tag green">evidence</span>
+                    </div>
+                  </div>
+                  <div class="board-col">
+                    <h4>Validate</h4>
+                    <div class="work-card">
+                      <strong>H-07 替代解释</strong>
+                      <p>性能差异可能来自样本选择偏差。</p>
+                      <div class="meter"><i style="width: 45%"></i></div>
+                    </div>
+                    <div class="work-card">
+                      <strong>EXP-03 复现实验</strong>
+                      <p>固定随机种子，重跑三个基线。</p>
+                      <span class="tag amber">running</span>
+                    </div>
+                  </div>
+                  <div class="board-col">
+                    <h4>Consolidate</h4>
+                    <div class="work-card">
+                      <strong>CL-09 候选知识</strong>
+                      <p>在低资源样本中，方法 A 的优势主要来自检索召回。</p>
+                      <span class="tag violet">V2</span>
+                    </div>
+                    <div class="work-card">
+                      <strong>Report v0.4</strong>
+                      <p>等待 critic 和 PI 审阅。</p>
+                      <span class="tag teal">artifact</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="pane">
+              <div class="pane-head">Object Inspector</div>
+              <div class="pane-body">
+                <h4>CL-09</h4>
+                <p>验证等级：<span class="tag violet">V2</span></p>
+                <p>置信度：0.62</p>
+                <p>新颖性：0.71</p>
+                <p>支持证据：7</p>
+                <p>反对证据：2</p>
+                <p>下一步：运行 EXP-03 复现。</p>
+              </div>
+            </div>
+          </div>
+
+          <h3>页面结构</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>区域</th>
+                <th>主要内容</th>
+                <th>为什么重要</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Research Header</td>
+                <td>目标、范围、当前阶段、负责人、预算、风险状态。</td>
+                <td>让所有研究活动围绕同一边界和价值函数展开。</td>
+              </tr>
+              <tr>
+                <td>Navigator</td>
+                <td>问题、假设、证据、实验、claim、review、artifact。</td>
+                <td>把研究从“消息流”转为“对象流”。</td>
+              </tr>
+              <tr>
+                <td>Research Board</td>
+                <td>探索、验证、沉淀三个阶段的任务看板。</td>
+                <td>给长期研究一个可管理的进度视图。</td>
+              </tr>
+              <tr>
+                <td>Object Inspector</td>
+                <td>选中对象的证据链、状态、评分、历史和下一步。</td>
+                <td>每个对象都可审计、可修改、可复盘。</td>
+              </tr>
+              <tr>
+                <td>Knowledge Map</td>
+                <td>claim 之间的支持、冲突、依赖和派生关系。</td>
+                <td>让知识不是列表，而是可生长的结构。</td>
+              </tr>
+              <tr>
+                <td>Trace Log</td>
+                <td>谁在什么时候基于什么证据做了什么决定。</td>
+                <td>保证科研过程可复盘和可问责。</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section id="protocol">
+          <h2>10. 协议与状态机</h2>
+          <p>研究协议规定每个状态的输入、输出、退出条件和可跳转状态。编排器不应该只靠自然语言“自由发挥”。</p>
+
+          <h3>Research Step 协议</h3>
+          <pre><code>{
+  "step_id": "step_001",
+  "state": "form_hypothesis",
+  "objective": "基于证据生成可验证假设",
+  "inputs": {
+    "question_ids": ["q_001"],
+    "evidence_ids": ["ev_001", "ev_002"],
+    "scope_id": "scope_001"
+  },
+  "assigned_roles": ["Research Lead", "Theorist", "Critic"],
+  "allowed_tools": ["knowledge_search", "paper_search", "claim_checker"],
+  "expected_outputs": ["hypothesis", "verification_plan"],
+  "exit_conditions": [
+    "至少 2 个互斥假设",
+    "每个假设都有可反驳条件",
+    "critic 完成第一轮审查"
+  ],
+  "next_state_policy": "根据证据缺口选择 collect_evidence 或 plan_experiment"
+}</code></pre>
+
+          <h3>状态跳转表</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>当前状态</th>
+                <th>完成条件</th>
+                <th>可跳转状态</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>map_domain</td>
+                <td>领域地图和术语表完成，排除项明确。</td>
+                <td>collect_context, form_question, ask_human</td>
+              </tr>
+              <tr>
+                <td>collect_context</td>
+                <td>证据覆盖达到最低阈值，来源质量可接受。</td>
+                <td>form_hypothesis, refine_scope, collect_context</td>
+              </tr>
+              <tr>
+                <td>form_hypothesis</td>
+                <td>至少一个可检验假设和一个替代解释。</td>
+                <td>plan_validation, critic_review, collect_context</td>
+              </tr>
+              <tr>
+                <td>plan_validation</td>
+                <td>验证方法、成本、风险和成功标准明确。</td>
+                <td>run_experiment, run_retrieval, ask_approval</td>
+              </tr>
+              <tr>
+                <td>run_experiment</td>
+                <td>实验产出 observation 和执行日志。</td>
+                <td>analyze_results, rerun_experiment, critic_review</td>
+              </tr>
+              <tr>
+                <td>extract_claims</td>
+                <td>claim 绑定证据、范围、推理摘要和反例条件。</td>
+                <td>critic_review, novelty_check, consolidate_knowledge</td>
+              </tr>
+              <tr>
+                <td>critic_review</td>
+                <td>完成漏洞、反例和替代解释审查。</td>
+                <td>revise_claim, plan_validation, reject_claim</td>
+              </tr>
+              <tr>
+                <td>consolidate_knowledge</td>
+                <td>claim 达到入库标准并生成后续问题。</td>
+                <td>publish_artifact, spawn_deeper_question, close_run</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section id="data-model">
+          <h2>11. 数据结构</h2>
+          <p>下面给出面向实现的最小数据模型。它可以先落在 SQL 表，也可以投影到事件流和知识图谱。</p>
+
+          <details open>
+            <summary>Research Program</summary>
+            <div class="detail-body">
+              <pre><code>{
+  "id": "rp_001",
+  "title": "研究项目名称",
+  "domain": "研究领域",
+  "scope": {
+    "inclusions": [],
+    "exclusions": [],
+    "time_range": "",
+    "data_sources": [],
+    "risk_limits": []
+  },
+  "owner": "human_or_org_id",
+  "participants": [],
+  "agent_roles": [],
+  "status": "active | paused | archived",
+  "budget": {
+    "tokens": 0,
+    "money": 0,
+    "human_hours": 0,
+    "experiment_quota": 0
+  },
+  "created_at": "",
+  "updated_at": ""
+}</code></pre>
+            </div>
+          </details>
+
+          <details>
+            <summary>Evidence Item</summary>
+            <div class="detail-body">
+              <pre><code>{
+  "id": "ev_001",
+  "program_id": "rp_001",
+  "source_type": "paper | web | database | file | experiment | interview | observation",
+  "source_uri": "",
+  "title": "",
+  "excerpt": "",
+  "summary": "",
+  "collected_by": "agent_or_human_id",
+  "quality_score": 0.0,
+  "independence_group": "source_family_id",
+  "license_status": "unknown | usable | restricted",
+  "metadata": {},
+  "created_at": ""
+}</code></pre>
+            </div>
+          </details>
+
+          <details>
+            <summary>Experiment</summary>
+            <div class="detail-body">
+              <pre><code>{
+  "id": "exp_001",
+  "program_id": "rp_001",
+  "hypothesis_id": "h_001",
+  "type": "code | simulation | lab | field | survey | human_review",
+  "plan": {
+    "objective": "",
+    "variables": [],
+    "controls": [],
+    "metrics": [],
+    "success_criteria": [],
+    "risk_review_required": false
+  },
+  "execution": {
+    "status": "planned | running | completed | failed | cancelled",
+    "environment": {},
+    "code_version": "",
+    "data_version": "",
+    "logs": [],
+    "started_at": "",
+    "finished_at": ""
+  },
+  "observations": []
+}</code></pre>
+            </div>
+          </details>
+
+          <details>
+            <summary>Knowledge Claim</summary>
+            <div class="detail-body">
+              <pre><code>{
+  "id": "cl_001",
+  "program_id": "rp_001",
+  "statement": "",
+  "scope": "",
+  "assumptions": [],
+  "evidence_links": [
+    {"evidence_id": "ev_001", "relation": "supports", "weight": 0.8}
+  ],
+  "counter_evidence_links": [],
+  "reasoning_summary": "",
+  "falsification_conditions": [],
+  "verification_level": "V0",
+  "confidence": 0.0,
+  "novelty": {
+    "organization": 0.0,
+    "structural": 0.0,
+    "empirical": 0.0,
+    "method": 0.0,
+    "causal": 0.0,
+    "productive": 0.0
+  },
+  "status": "draft | under_review | accepted | rejected | superseded",
+  "reviews": [],
+  "created_at": "",
+  "updated_at": ""
+}</code></pre>
+            </div>
+          </details>
+        </section>
+
+        <section id="implementation">
+          <h2>12. 落地路线</h2>
+          <p>建议分四个阶段落地。不要一开始就追求全自动科学发现，先把对象、验证和循环做扎实。</p>
+
+          <table>
+            <thead>
+              <tr>
+                <th>阶段</th>
+                <th>目标</th>
+                <th>关键能力</th>
+                <th>验收标准</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Phase 1：研究对象 MVP</td>
+                <td>把深度研究从聊天变成对象工作台。</td>
+                <td>Program、Question、Evidence、Hypothesis、Claim、Review、Artifact。</td>
+                <td>能完成一轮“问题 -> 假设 -> 证据 -> claim -> review”。</td>
+              </tr>
+              <tr>
+                <td>Phase 2：验证闭环</td>
+                <td>让 claim 具备可验证性和可反驳性。</td>
+                <td>验证等级、证据链、反例搜索、复现记录、置信度。</td>
+                <td>未验证 claim 不能进入知识库。</td>
+              </tr>
+              <tr>
+                <td>Phase 3：实验与工具接入</td>
+                <td>接入代码运行、数据库、论文检索、内部文档和实体实验任务。</td>
+                <td>Experiment Registry、tool permission、human approval。</td>
+                <td>实验结果能自动绑定到 hypothesis 和 claim。</td>
+              </tr>
+              <tr>
+                <td>Phase 4：机构级研究体系</td>
+                <td>支持实验室、学校、企业研究组织长期运行。</td>
+                <td>多项目知识图谱、团队权限、发布审批、指标看板。</td>
+                <td>多个研究项目共享知识并产生跨项目新问题。</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <h3>最小可用闭环</h3>
+          <ol>
+            <li>创建 Research Program，填写目标、范围、排除项和负责人。</li>
+            <li>选择 agent 角色模板，例如 Lead、Retriever、Theorist、Critic、Synthesizer。</li>
+            <li>系统生成第一版 Research Plan 和问题地图。</li>
+            <li>Retriever 收集证据，Evidence Service 做来源评级。</li>
+            <li>Theorist 生成假设，Critic 要求每个假设绑定反驳条件。</li>
+            <li>系统生成 claim 草稿，但默认状态是 draft。</li>
+            <li>Verification Engine 检查证据链、推理和反例。</li>
+            <li>PI 或人类负责人确认是否入库、退回或继续实验。</li>
+            <li>Synthesizer 生成阶段报告，并派生下一轮问题。</li>
+          </ol>
+        </section>
+
+        <section id="governance">
+          <h2>13. 治理与伦理</h2>
+          <p>深度研究系统越强，越需要清晰的治理机制，尤其是接入私有信息、实体实验、自动执行和发布环节时。</p>
+
+          <div class="grid">
+            <div class="card">
+              <h3>权限边界</h3>
+              <p>区分读取、写入、实验执行、外部发布和高成本工具权限。每个 Program 应有独立权限域。</p>
+            </div>
+            <div class="card">
+              <h3>隐私与数据许可</h3>
+              <p>Evidence 必须记录来源和许可状态。私有数据不能被自动带入公开报告。</p>
+            </div>
+            <div class="card">
+              <h3>实验风险审批</h3>
+              <p>涉及人体、动物、环境、设备、安全、财务或真实用户影响的实验必须有人类审批。</p>
+            </div>
+            <div class="card">
+              <h3>引用合规</h3>
+              <p>报告中的外部来源要能回链到证据条目，避免无来源总结和版权风险。</p>
+            </div>
+            <div class="card">
+              <h3>审计日志</h3>
+              <p>记录谁创建、修改、批准、执行和发布了研究对象，支持责任追踪。</p>
+            </div>
+            <div class="card">
+              <h3>不确定性表达</h3>
+              <p>报告必须保留置信度、反对证据和适用边界，不能把候选 claim 写成确定事实。</p>
+            </div>
+          </div>
+        </section>
+
+        <section id="example">
+          <h2>14. 示例研究</h2>
+          <p>下面用“研究 A2A 平台中的深度研究编排”作为示例，展示系统如何运行。</p>
+
+          <table>
+            <thead>
+              <tr>
+                <th>步骤</th>
+                <th>对象</th>
+                <th>示例内容</th>
+                <th>下一步</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>创建项目</td>
+                <td>Research Program</td>
+                <td>“设计可验证的多 agent 深度研究系统”。范围限定在科研协作、知识生产、验证协议。</td>
+                <td>生成问题地图。</td>
+              </tr>
+              <tr>
+                <td>提出问题</td>
+                <td>Question</td>
+                <td>“如何判断一个 agent 产出的结论是否是新知识？”</td>
+                <td>收集哲学、科研方法论、知识图谱和实验设计资料。</td>
+              </tr>
+              <tr>
+                <td>形成假设</td>
+                <td>Hypothesis</td>
+                <td>“新知识需要同时满足相对新颖性、解释压缩、可验证性和生产性。”</td>
+                <td>设计验证 rubric。</td>
+              </tr>
+              <tr>
+                <td>收集证据</td>
+                <td>Evidence</td>
+                <td>文献、案例、系统日志、团队已有研究产物。</td>
+                <td>绑定证据，寻找反例。</td>
+              </tr>
+              <tr>
+                <td>批判审查</td>
+                <td>Review</td>
+                <td>Critic 指出“解释压缩”可能难以量化，“相对新颖性”依赖知识库完整度。</td>
+                <td>修改 claim 的范围和指标。</td>
+              </tr>
+              <tr>
+                <td>沉淀知识</td>
+                <td>Claim</td>
+                <td>“在平台内，一个知识声明至少应满足证据链、适用边界和反驳条件，才能从 idea 升级为 claim。”</td>
+                <td>进入 V2，等待实验验证。</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <h3>最终研究报告结构</h3>
+          <pre><code># 研究报告
+
+## 研究问题
+## 范围与排除项
+## 方法与数据源
+## 关键证据
+## 候选假设
+## 实验与观察
+## 已接受知识声明
+## 未解决反例
+## 置信度与验证等级
+## 对领域的新增贡献
+## 下一轮研究问题</code></pre>
+
+          <div class="note ok">
+            这套体系的真正价值，不是一次性生成报告，而是让每次研究都留下可复用的对象：证据、假设、实验、claim、反例和知识图谱。下一次研究不是从空白 prompt 开始，而是从已有知识结构继续生长。
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <footer>
+      元研究 HTML 方案。建议后续拆分为产品规格、后端数据模型、研究编排协议和前端 Research Workspace 四个实现文档。
+    </footer>
+  </body>
+</html>

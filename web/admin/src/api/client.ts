@@ -1,8 +1,10 @@
+import { safeStorage } from '../utils/storage';
+
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL?.trim() ?? '';
 const BASE = API_BASE_URL.endsWith('/') ? API_BASE_URL.slice(0, -1) : API_BASE_URL;
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const token = localStorage.getItem('admin_token') || '';
+  const token = safeStorage.getItem('admin_token');
   const optionHeaders = headersToObject(options?.headers);
   const hasExplicitAuth = Object.keys(optionHeaders).some(key => {
     const normalized = key.toLowerCase();
@@ -33,7 +35,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 async function streamRequest(path: string, options: RequestInit, onEvent: (event: GroupStreamEvent) => void): Promise<void> {
-  const token = localStorage.getItem('admin_token') || '';
+  const token = safeStorage.getItem('admin_token');
   const optionHeaders = headersToObject(options.headers);
   const hasExplicitAuth = Object.keys(optionHeaders).some(key => {
     const normalized = key.toLowerCase();
