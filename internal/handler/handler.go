@@ -67,7 +67,6 @@ func (h *GetAgentHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "not found", 404)
 		return
 	}
-	conn := h.svcCtx.Registry.GetClient(name)
 	info := model.AgentInfo{
 		Name:         agent.Name,
 		Url:          "/agent/" + agent.Name,
@@ -76,12 +75,76 @@ func (h *GetAgentHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Skills:       svc.ParseSkillsJson(agent.SkillsJson),
 		ErrorMessage: agent.ErrorMessage,
 	}
+	if card, err := h.svcCtx.Registry.PublicAgentCard(name); err != nil {
+		errHTTP(w, err)
+		return
+	} else if card != nil {
+		info.Description = card.Description
+		info.Version = card.Version
+		info.ContextMode = card.ContextMode
+		info.Skills = svc.ParseSkillsJson(agent.SkillsJson)
+		if len(info.Skills) == 0 {
+			info.Skills = skillsFromAgentCard(card.Skills)
+		}
+		cardJSON, _ := json.Marshal(card)
+		info.AgentCardJson = string(cardJSON)
+	}
+	conn := h.svcCtx.Registry.GetClient(name)
 	if conn != nil {
 		ci := conn.Info()
 		info.Description = ci.Description
 		info.Version = ci.Version
+		info.ContextMode = ci.ContextMode
+		info.Skills = ci.Skills
 	}
 	okJSON(w, info)
+}
+
+// =====
+
+type UpdateAgentHandler struct {
+	svcCtx *svc.ServiceContext
+}
+
+func NewUpdateAgentHandler(svcCtx *svc.ServiceContext) *UpdateAgentHandler {
+	return &UpdateAgentHandler{svcCtx: svcCtx}
+}
+
+func (h *UpdateAgentHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	name := getPathParam(r, "name")
+	if name == "" {
+		jsonError(w, "missing agent name", 400)
+		return
+	}
+	var req model.RegisterAgentReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON", 400)
+		return
+	}
+	if req.Name != "" && req.Name != name {
+		jsonError(w, "agent name cannot be changed", 400)
+		return
+	}
+	if _, err := h.svcCtx.Registry.UpdateAgentMetadata(name, req.Url, req.Port, req.Skills, req.ContextMode, req.AgentCard); err != nil {
+		jsonError(w, err.Error(), 400)
+		return
+	}
+	handler := NewGetAgentHandler(h.svcCtx)
+	handler.ServeHTTP(w, r)
+}
+
+func skillsFromAgentCard(cardSkills []model.CardSkill) []model.Skill {
+	skills := make([]model.Skill, 0, len(cardSkills))
+	for _, skill := range cardSkills {
+		skills = append(skills, model.Skill{
+			Id:          skill.Id,
+			Name:        skill.Name,
+			Description: skill.Description,
+			Tags:        skill.Tags,
+			Examples:    skill.Examples,
+		})
+	}
+	return skills
 }
 
 // =====
@@ -135,13 +198,17 @@ func (h *DiscoveryHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "missing agent name", 400)
 		return
 	}
-	agent, err := h.svcCtx.Agents.Get(name)
-	if err != nil || agent == nil {
+	card, err := h.svcCtx.Registry.PublicAgentCard(name)
+	if err != nil {
+		errHTTP(w, err)
+		return
+	}
+	if card == nil {
 		jsonError(w, "not found", 404)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(agent.AgentCardJson))
+	json.NewEncoder(w).Encode(card)
 }
 
 // ===== Agent Proxy (core A2A message routing) =====

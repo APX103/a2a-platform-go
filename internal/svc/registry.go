@@ -42,6 +42,7 @@ func (c *AgentConnection) Info() model.AgentInfo {
 		Url:         "/agent/" + c.Card.Name,
 		Version:     c.Card.Version,
 		Skills:      skills,
+		ContextMode: normalizeContextMode(c.Card.ContextMode),
 	}
 }
 
@@ -78,21 +79,17 @@ func (r *AgentRegistry) ListAgents() ([]model.AgentInfo, error) {
 	}
 	result := make([]model.AgentInfo, 0, len(records))
 	for _, rec := range records {
-		info := model.AgentInfo{
-			Name:         rec.Name,
-			Url:          "/agent/" + rec.Name,
-			Status:       rec.Status,
-			Type:         rec.Type,
-			ContextMode:  contextModeFromCardJson(rec.AgentCardJson),
-			Skills:       ParseSkillsJson(rec.SkillsJson),
-			ErrorMessage: rec.ErrorMessage,
-		}
+		info := agentInfoFromRecord(rec)
 		conn := r.GetClient(rec.Name)
 		if conn != nil {
 			ci := conn.Info()
 			info.Description = ci.Description
 			info.Version = ci.Version
 			info.ContextMode = normalizeContextMode(conn.Card.ContextMode)
+			info.Skills = ci.Skills
+			card := hostedAgentCard(&conn.Card, rec.Name)
+			cardJSON, _ := json.Marshal(card)
+			info.AgentCardJson = string(cardJSON)
 		}
 		// If DB says connected but no live connection, fix status
 		if rec.Status == "connected" && conn == nil {
@@ -101,6 +98,28 @@ func (r *AgentRegistry) ListAgents() ([]model.AgentInfo, error) {
 		result = append(result, info)
 	}
 	return result, nil
+}
+
+func agentInfoFromRecord(rec *model.Agent) model.AgentInfo {
+	info := model.AgentInfo{
+		Name:         rec.Name,
+		Url:          "/agent/" + rec.Name,
+		Status:       rec.Status,
+		Type:         rec.Type,
+		ContextMode:  contextModeFromCardJson(rec.AgentCardJson),
+		Skills:       ParseSkillsJson(rec.SkillsJson),
+		ErrorMessage: rec.ErrorMessage,
+	}
+	if card, ok := parseAgentCard(rec.AgentCardJson); ok {
+		hosted := hostedAgentCard(card, rec.Name)
+		info.Description = hosted.Description
+		info.Version = hosted.Version
+		info.ContextMode = normalizeContextMode(hosted.ContextMode)
+		info.Skills = skillsFromCard(hosted.Skills)
+		cardJSON, _ := json.Marshal(hosted)
+		info.AgentCardJson = string(cardJSON)
+	}
+	return info
 }
 
 // RegisterAgent performs full self-registration: validate → discover/static card → persist → connect.
@@ -186,6 +205,92 @@ func (r *AgentRegistry) RegisterAgent(name, agentType, url string, port int, ski
 		r.EventBus.AgentRegistered(name, "connected", agentType)
 	}
 	return conn, nil
+}
+
+// UpdateAgentMetadata updates an external agent's upstream URL and hosted card.
+func (r *AgentRegistry) UpdateAgentMetadata(name, url string, port int, skills []model.Skill, contextMode string, providedCard *model.AgentCard) (*AgentConnection, error) {
+	existing, err := r.store.Get(name)
+	if err != nil {
+		return nil, fmt.Errorf("DB error: %w", err)
+	}
+	if existing == nil {
+		return nil, fmt.Errorf("agent %q not found", name)
+	}
+	if existing.Type == "builtin" {
+		return nil, fmt.Errorf("builtin agent metadata is managed by builtin agent config")
+	}
+	if strings.TrimSpace(url) == "" {
+		url = existing.Url
+	}
+	if port == 0 {
+		port = existing.Port
+	}
+
+	var card *model.AgentCard
+	if providedCard != nil {
+		c := *providedCard
+		card = &c
+	} else if stored, ok := parseAgentCard(existing.AgentCardJson); ok {
+		card = stored
+	} else {
+		card = &model.AgentCard{Name: name}
+	}
+	card.Static = true
+	card.ContextMode = mergeContextMode(contextMode, card.ContextMode)
+	normalizeAgentCard(card, name, url, skills)
+	if card.HealthUrl != "" {
+		if err := checkHealthURL(card.HealthUrl); err != nil {
+			return nil, fmt.Errorf("health check failed: %w", err)
+		}
+	}
+	if len(skills) == 0 {
+		skills = skillsFromCard(card.Skills)
+	}
+	skillsJson, _ := json.Marshal(skills)
+	cardJson, _ := json.Marshal(card)
+	now := time.Now().UTC().Format(time.RFC3339)
+	record := &model.Agent{
+		Name:          existing.Name,
+		Type:          existing.Type,
+		Url:           url,
+		Port:          port,
+		SkillsJson:    string(skillsJson),
+		Status:        "connected",
+		ConnectedAt:   &now,
+		AgentCardJson: string(cardJson),
+		Secret:        existing.Secret,
+	}
+	if err := r.store.Upsert(record); err != nil {
+		return nil, fmt.Errorf("DB persist error: %w", err)
+	}
+	conn := &AgentConnection{Card: *card, Url: url}
+	r.mu.Lock()
+	r.connections[name] = conn
+	r.mu.Unlock()
+	if r.EventBus != nil {
+		r.EventBus.AgentStatus(name, "connected", existing.Type)
+	}
+	return conn, nil
+}
+
+func (r *AgentRegistry) PublicAgentCard(name string) (*model.AgentCard, error) {
+	rec, err := r.store.Get(name)
+	if err != nil {
+		return nil, err
+	}
+	if rec == nil {
+		return nil, nil
+	}
+	if conn := r.GetClient(name); conn != nil {
+		conn.mu.RLock()
+		card := hostedAgentCard(&conn.Card, name)
+		conn.mu.RUnlock()
+		return card, nil
+	}
+	if card, ok := parseAgentCard(rec.AgentCardJson); ok {
+		return hostedAgentCard(card, name), nil
+	}
+	return hostedAgentCard(&model.AgentCard{Name: name}, name), nil
 }
 
 // RegisterBuiltinAgent registers an in-process agent without HTTP discovery.
@@ -509,9 +614,7 @@ func normalizeAgentCard(card *model.AgentCard, name, url string, skills []model.
 	if card.Name == "" {
 		card.Name = name
 	}
-	if card.Url == "" {
-		card.Url = url
-	}
+	card.Url = "/agent/" + name
 	if card.Version == "" {
 		card.Version = "1.0.0"
 	}
@@ -557,6 +660,30 @@ func parseStoredStaticCard(cardJson string) (*model.AgentCard, bool) {
 		return nil, false
 	}
 	return &card, true
+}
+
+func parseAgentCard(cardJson string) (*model.AgentCard, bool) {
+	if cardJson == "" {
+		return nil, false
+	}
+	var card model.AgentCard
+	if err := json.Unmarshal([]byte(cardJson), &card); err != nil {
+		return nil, false
+	}
+	return &card, true
+}
+
+func hostedAgentCard(card *model.AgentCard, name string) *model.AgentCard {
+	if card == nil {
+		card = &model.AgentCard{}
+	}
+	c := *card
+	if c.Name == "" {
+		c.Name = name
+	}
+	c.Url = "/agent/" + c.Name
+	c.ContextMode = normalizeContextMode(c.ContextMode)
+	return &c
 }
 
 func cardSkillsFromSkills(skills []model.Skill) []model.CardSkill {

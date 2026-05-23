@@ -24,11 +24,6 @@ admin_token: "a2a-admin-token"
 #     system_prompt: "You are a helpful assistant."
 #     max_tokens: 4096
 #     max_tool_rounds: 10
-#     mcp_servers:
-#       - name: filesystem
-#         transport: stdio
-#         command: npx
-#         args: ["-y", "@anthropic/mcp-filesystem"]
 
 # Example bridge agents (uncomment and configure to use):
 # bridge_agents:

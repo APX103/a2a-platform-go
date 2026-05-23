@@ -19,18 +19,18 @@ func NewBuiltinAgentStore(db *sql.DB) *BuiltinAgentStore {
 
 // BuiltinAgent represents a persisted builtin agent configuration.
 type BuiltinAgent struct {
-	ID             int64     `db:"id" json:"id"`
-	Name           string    `db:"name" json:"name"`
-	Provider       string    `db:"provider" json:"provider"`
-	BaseURL        string    `db:"base_url" json:"base_url"`
-	APIKey         string    `db:"api_key" json:"api_key"`
-	Model          string    `db:"model" json:"model"`
-	Description    string    `db:"description" json:"description"`
-	SystemPrompt   string    `db:"system_prompt" json:"system_prompt"`
+	ID            int64     `db:"id" json:"id"`
+	Name          string    `db:"name" json:"name"`
+	Provider      string    `db:"provider" json:"provider"`
+	BaseURL       string    `db:"base_url" json:"base_url"`
+	APIKey        string    `db:"api_key" json:"api_key"`
+	Model         string    `db:"model" json:"model"`
+	Description   string    `db:"description" json:"description"`
+	SystemPrompt  string    `db:"system_prompt" json:"system_prompt"`
 	MaxTokens     int       `db:"max_tokens" json:"max_tokens"`
-	MaxToolRounds  int       `db:"max_tool_rounds" json:"max_tool_rounds"`
-	CreatedAt      time.Time `db:"created_at" json:"created_at"`
-	UpdatedAt      time.Time `db:"updated_at" json:"updated_at"`
+	MaxToolRounds int       `db:"max_tool_rounds" json:"max_tool_rounds"`
+	CreatedAt     time.Time `db:"created_at" json:"created_at"`
+	UpdatedAt     time.Time `db:"updated_at" json:"updated_at"`
 }
 
 // ToConfig converts to config.BuiltinAgent.
@@ -45,7 +45,6 @@ func (b *BuiltinAgent) ToConfig() config.BuiltinAgent {
 		SystemPrompt:  b.SystemPrompt,
 		MaxTokens:     b.MaxTokens,
 		MaxToolRounds: b.MaxToolRounds,
-		MCPServers:    nil,
 	}
 }
 

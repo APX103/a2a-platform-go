@@ -1,38 +1,68 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { ArrowLeft, Trash2, Save } from 'lucide-react'
-import { api, Agent } from '../api/client'
+import { api, Agent, AgentCard } from '../api/client'
+
+function formatAgentCard(agent: Agent) {
+  if (!agent.agent_card_json) {
+    return JSON.stringify({
+      name: agent.name,
+      description: agent.description || '',
+      version: agent.version || '1.0.0',
+      url: agent.url || `/agent/${agent.name}`,
+      skills: [],
+      x_context_mode: agent.context_mode || 'context',
+    }, null, 2)
+  }
+  try {
+    return JSON.stringify(JSON.parse(agent.agent_card_json), null, 2)
+  } catch {
+    return agent.agent_card_json
+  }
+}
+
+function skillLabel(skill: string | { id?: string; name?: string; description?: string }) {
+  return typeof skill === 'string' ? skill : skill.name || skill.id || skill.description || 'skill'
+}
 
 export default function AgentDetail() {
   const { name } = useParams<{ name: string }>()
   const navigate = useNavigate()
   const [agent, setAgent] = useState<Agent | null>(null)
   const [editing, setEditing] = useState(false)
-  const [form, setForm] = useState({ url: '', description: '' })
+  const [form, setForm] = useState({ url: '', context_mode: 'context', agent_card: '' })
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
+  const [token, setToken] = useState(() => localStorage.getItem('admin_token') || '')
 
   useEffect(() => {
     if (!name) return
     api.getAgent(name)
       .then(a => {
         setAgent(a)
-        setForm({ url: a.url, description: a.description || '' })
+        setForm({ url: a.url, context_mode: a.context_mode || 'context', agent_card: formatAgentCard(a) })
       })
       .catch(() => setError('Agent not found'))
       .finally(() => setLoading(false))
   }, [name])
 
   const handleSave = async () => {
-    const token = prompt('Enter admin token:')
-    if (!token || !name) return
+    if (!token || !name) {
+      setError('Admin token required')
+      return
+    }
     try {
-      await api.deleteAgent(name, token)
-      await api.registerAgent({ name, url: form.url, description: form.description }, token)
+      const card = JSON.parse(form.agent_card) as AgentCard
+      const updated = await api.updateAgent(name, {
+        url: form.url,
+        context_mode: form.context_mode,
+        agent_card: card,
+      }, token)
       setEditing(false)
-      setAgent(prev => prev ? { ...prev, url: form.url, description: form.description } : null)
+      setAgent(updated)
+      setForm({ url: updated.url, context_mode: updated.context_mode || 'context', agent_card: formatAgentCard(updated) })
     } catch (err) {
-      setError(String(err))
+      setError(err instanceof Error ? err.message : String(err))
     }
   }
 
@@ -92,7 +122,16 @@ export default function AgentDetail() {
 
         <div className="space-y-4">
           <div>
-            <label className="text-xs text-[var(--text-tertiary)] uppercase tracking-wider">URL</label>
+            <label className="text-xs text-[var(--text-tertiary)] uppercase tracking-wider">Admin Token</label>
+            <input
+              type="password"
+              value={token}
+              onChange={e => { setToken(e.target.value); localStorage.setItem('admin_token', e.target.value) }}
+              className="mt-1 w-full bg-[var(--bg-tertiary)] border border-[var(--border)] rounded-md px-3 py-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-[var(--text-tertiary)] uppercase tracking-wider">Upstream URL</label>
             {editing ? (
               <input
                 value={form.url}
@@ -104,15 +143,18 @@ export default function AgentDetail() {
             )}
           </div>
           <div>
-            <label className="text-xs text-[var(--text-tertiary)] uppercase tracking-wider">Description</label>
+            <label className="text-xs text-[var(--text-tertiary)] uppercase tracking-wider">Context Mode</label>
             {editing ? (
-              <input
-                value={form.description}
-                onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+              <select
+                value={form.context_mode}
+                onChange={e => setForm(f => ({ ...f, context_mode: e.target.value }))}
                 className="mt-1 w-full bg-[var(--bg-tertiary)] border border-[var(--border)] rounded-md px-3 py-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
-              />
+              >
+                <option value="context">context</option>
+                <option value="stateless">stateless</option>
+              </select>
             ) : (
-              <p className="text-sm text-[var(--text-primary)] mt-1">{agent.description || '-'}</p>
+              <p className="text-sm text-[var(--text-primary)] mt-1">{agent.context_mode || '-'}</p>
             )}
           </div>
           {agent.skills && agent.skills.length > 0 && (
@@ -120,11 +162,24 @@ export default function AgentDetail() {
               <label className="text-xs text-[var(--text-tertiary)] uppercase tracking-wider">Skills</label>
               <div className="flex flex-wrap gap-1.5 mt-1">
                 {agent.skills.map(s => (
-                  <span key={s} className="text-xs px-2 py-0.5 bg-[var(--bg-tertiary)] text-[var(--text-secondary)] rounded">{s}</span>
+                  <span key={skillLabel(s)} className="text-xs px-2 py-0.5 bg-[var(--bg-tertiary)] text-[var(--text-secondary)] rounded">{skillLabel(s)}</span>
                 ))}
               </div>
             </div>
           )}
+          <div>
+            <label className="text-xs text-[var(--text-tertiary)] uppercase tracking-wider">Hosted AgentCard</label>
+            {editing ? (
+              <textarea
+                value={form.agent_card}
+                onChange={e => setForm(f => ({ ...f, agent_card: e.target.value }))}
+                rows={14}
+                className="mt-1 w-full bg-[var(--bg-tertiary)] border border-[var(--border)] rounded-md px-3 py-2 text-xs font-mono text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+              />
+            ) : (
+              <pre className="mt-1 max-h-80 overflow-auto text-xs bg-[var(--bg-tertiary)] text-[var(--text-secondary)] rounded-md p-3">{formatAgentCard(agent)}</pre>
+            )}
+          </div>
           {agent.registered_at && (
             <div>
               <label className="text-xs text-[var(--text-tertiary)] uppercase tracking-wider">Registered</label>

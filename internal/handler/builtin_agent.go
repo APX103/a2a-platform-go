@@ -10,16 +10,15 @@ import (
 )
 
 type builtinAgentReq struct {
-	Name          string             `json:"name"`
-	Provider      string             `json:"provider"`
-	BaseURL       string             `json:"base_url"`
-	APIKey        string             `json:"api_key"`
-	Model         string             `json:"model"`
-	Description   string             `json:"description"`
-	SystemPrompt  string             `json:"system_prompt"`
-	MaxTokens     int                `json:"max_tokens"`
-	MaxToolRounds int                `json:"max_tool_rounds"`
-	MCPServers    []config.MCPServer `json:"mcp_servers"`
+	Name          string `json:"name"`
+	Provider      string `json:"provider"`
+	BaseURL       string `json:"base_url"`
+	APIKey        string `json:"api_key"`
+	Model         string `json:"model"`
+	Description   string `json:"description"`
+	SystemPrompt  string `json:"system_prompt"`
+	MaxTokens     int    `json:"max_tokens"`
+	MaxToolRounds int    `json:"max_tool_rounds"`
 }
 
 func (r builtinAgentReq) toConfig() config.BuiltinAgent {
@@ -33,7 +32,6 @@ func (r builtinAgentReq) toConfig() config.BuiltinAgent {
 		SystemPrompt:  r.SystemPrompt,
 		MaxTokens:     r.MaxTokens,
 		MaxToolRounds: r.MaxToolRounds,
-		MCPServers:    r.MCPServers,
 	}
 	if cfg.MaxTokens == 0 {
 		cfg.MaxTokens = 4096

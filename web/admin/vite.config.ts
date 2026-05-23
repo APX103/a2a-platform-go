@@ -16,7 +16,7 @@ export default defineConfig({
       '/api': apiTarget,
       '/health': apiTarget,
       '/agent': apiTarget,
-      '/mcp': apiTarget,
+      '/.well-known': apiTarget,
     }
   }
 })

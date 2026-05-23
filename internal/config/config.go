@@ -86,26 +86,17 @@ type MySQL struct {
 }
 
 type BuiltinAgent struct {
-	Name              string      `yaml:"name" json:"name"`
-	Provider          string      `yaml:"provider" json:"provider"`
-	BaseURL           string      `yaml:"base_url" json:"base_url"`
-	APIKey            string      `yaml:"api_key" json:"-"`
-	Model             string      `yaml:"model" json:"model"`
-	Description       string      `yaml:"description" json:"description"`
-	SystemPrompt      string      `yaml:"system_prompt" json:"system_prompt"`
-	MaxTokens         int         `yaml:"max_tokens" json:"max_tokens"`
-	MaxToolRounds     int         `yaml:"max_tool_rounds" json:"max_tool_rounds"`
-	MaxTurns          int         `yaml:"max_turns" json:"max_turns"`
-	MaxToolResultSize int         `yaml:"max_tool_result_size" json:"max_tool_result_size"`
-	MCPServers        []MCPServer `yaml:"mcp_servers" json:"mcp_servers,omitempty"`
-}
-
-type MCPServer struct {
-	Name      string   `yaml:"name" json:"name"`
-	Transport string   `yaml:"transport" json:"transport"`
-	URL       string   `yaml:"url" json:"url,omitempty"`
-	Command   string   `yaml:"command" json:"command,omitempty"`
-	Args      []string `yaml:"args" json:"args,omitempty"`
+	Name              string `yaml:"name" json:"name"`
+	Provider          string `yaml:"provider" json:"provider"`
+	BaseURL           string `yaml:"base_url" json:"base_url"`
+	APIKey            string `yaml:"api_key" json:"-"`
+	Model             string `yaml:"model" json:"model"`
+	Description       string `yaml:"description" json:"description"`
+	SystemPrompt      string `yaml:"system_prompt" json:"system_prompt"`
+	MaxTokens         int    `yaml:"max_tokens" json:"max_tokens"`
+	MaxToolRounds     int    `yaml:"max_tool_rounds" json:"max_tool_rounds"`
+	MaxTurns          int    `yaml:"max_turns" json:"max_turns"`
+	MaxToolResultSize int    `yaml:"max_tool_result_size" json:"max_tool_result_size"`
 }
 
 var envVarRe = regexp.MustCompile(`\$\{([^}]+)\}`)

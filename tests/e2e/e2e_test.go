@@ -322,6 +322,75 @@ func TestAgentDetail_NotFound(t *testing.T) {
 	}
 }
 
+func TestExternalAgentCardHostingAndUpdate(t *testing.T) {
+	const name = "e2e-external-card-agent"
+	req(t, "DELETE", "/api/agents/"+name, "", auth())
+
+	body := fmt.Sprintf(`{
+		"name": %q,
+		"type": "external",
+		"url": "http://127.0.0.1:65530/a2a",
+		"context_mode": "stateless",
+		"agent_card": {
+			"description": "Original hosted card",
+			"version": "1.0.0",
+			"skills": [{"id":"chat","name":"Chat","description":"General chat"}]
+		}
+	}`, name)
+	code, data := req(t, "POST", "/api/agents", body, auth())
+	expect(t, code, 200)
+	if obj(t, data)["ok"] != true {
+		t.Fatalf("register response = %s", string(data))
+	}
+	defer req(t, "DELETE", "/api/agents/"+name, "", auth())
+
+	code, data = req(t, "GET", "/api/agents/"+name, "", auth())
+	expect(t, code, 200)
+	agent := obj(t, data)
+	if agent["url"] != "/agent/"+name {
+		t.Fatalf("public agent url = %v", agent["url"])
+	}
+	var card map[string]interface{}
+	if err := json.Unmarshal([]byte(agent["agent_card_json"].(string)), &card); err != nil {
+		t.Fatalf("decode card: %v", err)
+	}
+	if card["url"] != "/agent/"+name {
+		t.Fatalf("hosted card url = %v", card["url"])
+	}
+	if card["x_context_mode"] != "stateless" {
+		t.Fatalf("context mode = %v", card["x_context_mode"])
+	}
+
+	code, _ = req(t, "GET", "/.well-known/agent-card/"+name, "", nil)
+	expect(t, code, 401)
+	code, data = req(t, "GET", "/.well-known/agent-card/"+name, "", auth())
+	expect(t, code, 200)
+	card = obj(t, data)
+	if card["url"] != "/agent/"+name {
+		t.Fatalf("well-known card url = %v", card["url"])
+	}
+
+	update := fmt.Sprintf(`{
+		"url": "http://127.0.0.1:65531/a2a",
+		"context_mode": "context",
+		"agent_card": {
+			"name": %q,
+			"description": "Updated hosted card",
+			"version": "2.0.0",
+			"skills": [{"id":"review","name":"Review","description":"Review work"}]
+		}
+	}`, name)
+	code, data = req(t, "PUT", "/api/agents/"+name, update, auth())
+	expect(t, code, 200)
+	agent = obj(t, data)
+	if agent["description"] != "Updated hosted card" || agent["version"] != "2.0.0" {
+		t.Fatalf("updated agent = %#v", agent)
+	}
+	if agent["context_mode"] != "context" {
+		t.Fatalf("updated context mode = %v", agent["context_mode"])
+	}
+}
+
 // ===== 5. Builtin Agent Lifecycle =====
 
 func TestBuiltinAgentLifecycle(t *testing.T) {
@@ -701,197 +770,7 @@ func TestSSEEvents(t *testing.T) {
 	}
 }
 
-// ===== 10. MCP Protocol =====
-
-func TestMCP_SSE(t *testing.T) {
-	limiter.Wait(context.Background())
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	r, _ := http.NewRequestWithContext(ctx, "GET", baseURL+"/mcp/sse", nil)
-	r.Header.Set("X-Admin-Token", adminToken)
-	resp, err := httpClient.Do(r)
-	if err != nil {
-		if ctx.Err() != nil {
-			t.Skip("SSE timeout (expected)")
-		}
-		t.Fatalf("error: %v", err)
-	}
-	defer resp.Body.Close()
-	expect(t, resp.StatusCode, 200)
-
-	if ct := resp.Header.Get("Content-Type"); !strings.Contains(ct, "text/event-stream") {
-		t.Errorf("Content-Type = %s", ct)
-	}
-	scanner := bufio.NewScanner(resp.Body)
-	gotEndpoint := false
-	for scanner.Scan() {
-		if strings.Contains(scanner.Text(), "/mcp/messages") {
-			gotEndpoint = true
-			break
-		}
-	}
-	if !gotEndpoint {
-		t.Error("no endpoint event")
-	}
-}
-
-func mcpCall(t *testing.T, method string, params interface{}) (int, map[string]interface{}) {
-	t.Helper()
-	rpc := map[string]interface{}{"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
-	body, _ := json.Marshal(rpc)
-	code, resp := req(t, "POST", "/mcp/messages", string(body), auth())
-	return code, obj(t, resp)
-}
-
-func TestMCP_Initialize(t *testing.T) {
-	code, resp := mcpCall(t, "initialize", map[string]interface{}{
-		"protocolVersion": "2024-11-05",
-		"clientInfo":      map[string]string{"name": "e2e-test"},
-		"capabilities":    map[string]interface{}{},
-	})
-	expect(t, code, 200)
-	if resp["jsonrpc"] != "2.0" {
-		t.Error("missing jsonrpc")
-	}
-	result, ok := resp["result"].(map[string]interface{})
-	if !ok {
-		t.Fatal("missing result")
-	}
-	if result["protocolVersion"] != "2024-11-05" {
-		t.Errorf("protocolVersion = %v", result["protocolVersion"])
-	}
-	si, _ := result["serverInfo"].(map[string]interface{})
-	if si["name"] != "a2a-platform" {
-		t.Errorf("serverInfo.name = %v", si["name"])
-	}
-}
-
-func TestMCP_ToolsList(t *testing.T) {
-	code, resp := mcpCall(t, "tools/list", map[string]interface{}{})
-	expect(t, code, 200)
-	result, _ := resp["result"].(map[string]interface{})
-	tools, _ := result["tools"].([]interface{})
-	if len(tools) == 0 {
-		t.Fatal("no tools")
-	}
-	names := map[string]bool{}
-	for _, tool := range tools {
-		tm, _ := tool.(map[string]interface{})
-		if n, ok := tm["name"].(string); ok {
-			names[n] = true
-		}
-	}
-	for _, want := range []string{"list_groups", "list_agents", "send_to_agent", "get_agent_info"} {
-		if !names[want] {
-			t.Errorf("missing tool %q", want)
-		}
-	}
-}
-
-func TestMCP_Ping(t *testing.T) {
-	code, resp := mcpCall(t, "ping", nil)
-	expect(t, code, 200)
-	if resp["error"] != nil {
-		t.Errorf("error: %v", resp["error"])
-	}
-}
-
-func TestMCP_UnknownMethod(t *testing.T) {
-	code, resp := mcpCall(t, "unknown/method", nil)
-	expect(t, code, 200)
-	if resp["error"] == nil {
-		t.Error("expected error")
-	}
-	rpcErr, _ := resp["error"].(map[string]interface{})
-	if c, _ := rpcErr["code"].(float64); c != -32601 {
-		t.Errorf("code = %v, want -32601", c)
-	}
-}
-
-func TestMCP_ToolCall_ListAgents(t *testing.T) {
-	code, resp := mcpCall(t, "tools/call", map[string]interface{}{
-		"name": "list_agents", "arguments": map[string]interface{}{},
-	})
-	expect(t, code, 200)
-	result, _ := resp["result"].(map[string]interface{})
-	content, _ := result["content"].([]interface{})
-	if len(content) == 0 {
-		t.Fatal("empty content")
-	}
-	item, _ := content[0].(map[string]interface{})
-	if item["type"] != "text" {
-		t.Errorf("type = %v", item["type"])
-	}
-	if item["text"] == nil || item["text"] == "" {
-		t.Error("empty text")
-	}
-}
-
-func TestMCP_ToolCall_GetAgentInfo(t *testing.T) {
-	_, agentsBody := req(t, "GET", "/api/agents", "", auth())
-	agents := arr(t, agentsBody)
-	if len(agents) == 0 {
-		t.Skip("no agents")
-	}
-	agentName := agents[0].(map[string]interface{})["name"].(string)
-
-	code, resp := mcpCall(t, "tools/call", map[string]interface{}{
-		"name": "get_agent_info", "arguments": map[string]interface{}{"agent_name": agentName},
-	})
-	expect(t, code, 200)
-	if resp["error"] != nil {
-		t.Errorf("error: %v", resp["error"])
-	}
-}
-
-func TestMCP_ToolCall_GetAgentInfo_NotFound(t *testing.T) {
-	code, resp := mcpCall(t, "tools/call", map[string]interface{}{
-		"name": "get_agent_info", "arguments": map[string]interface{}{"agent_name": "nonexistent-xyz-999"},
-	})
-	expect(t, code, 200)
-	if resp["error"] == nil {
-		t.Error("expected error")
-	}
-}
-
-func TestMCP_ResourcesList(t *testing.T) {
-	code, resp := mcpCall(t, "resources/list", map[string]interface{}{})
-	expect(t, code, 200)
-	result, _ := resp["result"].(map[string]interface{})
-	resources, _ := result["resources"].([]interface{})
-	if len(resources) == 0 {
-		t.Fatal("no resources")
-	}
-	r0, _ := resources[0].(map[string]interface{})
-	if r0["uri"] != "a2a://agents" {
-		t.Errorf("uri = %v", r0["uri"])
-	}
-}
-
-func TestMCP_ResourcesRead(t *testing.T) {
-	code, resp := mcpCall(t, "resources/read", map[string]interface{}{"uri": "a2a://agents"})
-	expect(t, code, 200)
-	result, _ := resp["result"].(map[string]interface{})
-	contents, _ := result["contents"].([]interface{})
-	if len(contents) == 0 {
-		t.Fatal("empty contents")
-	}
-	c0, _ := contents[0].(map[string]interface{})
-	if c0["uri"] != "a2a://agents" {
-		t.Errorf("uri = %v", c0["uri"])
-	}
-	if c0["text"] == nil || c0["text"] == "" {
-		t.Error("empty text")
-	}
-}
-
-func TestMCP_ResourcesRead_Unknown(t *testing.T) {
-	code, resp := mcpCall(t, "resources/read", map[string]interface{}{"uri": "unknown://foo"})
-	expect(t, code, 200)
-	if resp["error"] == nil {
-		t.Error("expected error")
-	}
-}
+// ===== 10. External agents use HTTP API directly.
 
 // ===== 11. Cross-API: Delete via /api/agents cleans engine =====
 

@@ -1,6 +1,6 @@
 # A2A Platform (Go)
 
-Go 实现的 [Agent-to-Agent (A2A)](https://github.com/google/A2A) 协议平台。负责 Agent 注册、发现、消息路由、任务追踪，并内置 LLM Agent 引擎和 MCP 端点。
+Go 实现的 [Agent-to-Agent (A2A)](https://github.com/google/A2A) 协议平台。负责 Agent 注册、发现、消息路由、任务追踪，并内置 LLM Agent 引擎。
 
 ## 架构概览
 
@@ -8,12 +8,12 @@ Go 实现的 [Agent-to-Agent (A2A)](https://github.com/google/A2A) 协议平台�
 ┌─────────────────────────────────────────────────────────────┐
 │                  A2A Platform (:18090)                       │
 │                                                             │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌───────────┐  │
-│  │ Admin UI │  │ REST API │  │ A2A Proxy│  │ MCP Server│  │
-│  │ /        │  │ /api/*   │  │ /agent/* │  │ /mcp/*    │  │
-│  └──────────┘  └────┬─────┘  └────┬─────┘  └─────┬─────┘  │
-│                      │              │              │         │
-│  ┌───────────────────┴──────────────┴──────────────┴────┐   │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐                │
+│  │ Admin UI │  │ REST API │  │ A2A Proxy│                │
+│  │ /        │  │ /api/*   │  │ /agent/* │                │
+│  └──────────┘  └────┬─────┘  └────┬─────┘                │
+│                      │              │                     │
+│  ┌───────────────────┴──────────────┴─────────────────┐   │
 │  │              Agent Registry (内存 + DB)               │   │
 │  └────────────────────┬─────────────────────────────────┘   │
 │                       │                                     │
@@ -24,7 +24,7 @@ Go 实现的 [Agent-to-Agent (A2A)](https://github.com/google/A2A) 协议平台�
 │                                                             │
 │  ┌──────────────────────────────────────────┐               │
 │  │         Builtin Agent Engine             │               │
-│  │   OpenAI / Anthropic + MCP Tool Calling  │               │
+│  │   OpenAI / Anthropic + Platform Tools    │               │
 │  └──────────────────────────────────────────┘               │
 └─────────────────────────────────────────────────────────────┘
               │ 代理转发（外部 Agent）
@@ -41,11 +41,10 @@ Go 实现的 [Agent-to-Agent (A2A)](https://github.com/google/A2A) 协议平台�
 
 | 功能 | 说明 |
 |------|------|
-| **内建 LLM Agent** | 直接配置 OpenAI/Anthropic API，无需外部 Bridge，支持多轮对话 + MCP 工具调用 |
+| **内建 LLM Agent** | 直接配置 OpenAI/Anthropic API，无需外部 Bridge，支持多轮对话 + 平台工具调用 |
 | **Bridge Agent** | 配置式 HTTP/CLI 桥接，将任意 API 包装为 A2A Agent，无需编写代码 |
 | **Agent 注册/发现** | 支持发现式注册（自动抓取 AgentCard）和静态注册（提交 AgentCard 由平台托管） |
 | **A2A 消息代理** | `POST /agent/{name}` 透明转发 JSON-RPC，支持 SSE 流式 |
-| **MCP 端点** | `POST /mcp/messages` 暴露 `list_agents` / `send_to_agent` / `get_agent_info` 工具 |
 | **任务追踪** | 每条消息自动创建 Task，记录状态流转 |
 | **调用链追踪** | traces 表记录完整的 send → stream → response 调用链 |
 | **Admin Web UI** | 内嵌 React 管理界面，单二进制部署 |
@@ -255,15 +254,14 @@ Task 会记录 `source_agent -> target_agent`；旧字段 `agent_name` 仍保留
 
 认证：需要 `X-Admin-Token` header 或 `Authorization: Bearer <token>`。
 
-### MCP Tools
+### Platform Tools
 
 | 工具 | 说明 |
 |------|------|
-| `list_agents` | 列出所有已注册 Agent |
-| `send_to_agent` | 向 Agent 发消息并等待回复 |
-| `get_agent_info` | 获取 Agent 详情 |
-
-MCP SSE 端点：`http://localhost:18090/mcp/sse`
+| `list_groups` | 列出当前 agent 可见的协作群 |
+| `list_agents` | 按 group_id 列出群内可见 Agent |
+| `send_to_agent` | 在群边界内向 Agent 发消息并等待回复 |
+| `get_agent_info` | 获取群内可见 Agent 详情 |
 
 ## 项目结构
 
@@ -277,13 +275,11 @@ MCP SSE 端点：`http://localhost:18090/mcp/sse`
 │   │   ├── cli.go               # CLI Skill 调用
 │   │   └── template.go          # {{var}} 模板渲染 + 响应提取
 │   ├── config/config.go         # YAML 配置（双数据库自动检测）
-│   ├── engine/engine.go         # 内建 Agent 引擎（LLM + MCP 工具循环）
+│   ├── engine/engine.go         # 内建 Agent 引擎（LLM + 平台工具循环）
 │   ├── llm/                     # LLM Provider（OpenAI、Anthropic）
-│   ├── mcpclient/client.go      # MCP 客户端（stdio + SSE）
 │   ├── handler/
 │   │   ├── handler.go           # REST handlers
 │   │   ├── builtin_agent.go     # 内建 Agent CRUD
-│   │   ├── mcp_sse.go           # MCP SSE server
 │   │   └── stats.go             # 统计
 │   ├── model/types.go           # 数据模型
 │   └── svc/
@@ -380,11 +376,6 @@ builtin_agents:
     system_prompt: "You are a helpful assistant."
     max_tokens: 4096
     max_tool_rounds: 10
-    mcp_servers:
-      - name: filesystem
-        transport: stdio
-        command: npx
-        args: ["-y", "@anthropic/mcp-filesystem"]
 ```
 
 支持 `${ENV_VAR}` 环境变量展开。

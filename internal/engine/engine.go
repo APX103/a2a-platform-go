@@ -12,7 +12,6 @@ import (
 
 	"a2a-platform/internal/config"
 	"a2a-platform/internal/llm"
-	"a2a-platform/internal/mcpclient"
 	"a2a-platform/internal/model"
 	"a2a-platform/internal/tools"
 )
@@ -38,10 +37,9 @@ type Deps struct {
 }
 
 type BuiltinAgent struct {
-	Config     config.BuiltinAgent
-	Provider   llm.Provider
-	MCPClients []*mcpclient.Client
-	Tools      []llm.ToolDef
+	Config   config.BuiltinAgent
+	Provider llm.Provider
+	Tools    []llm.ToolDef
 }
 
 type ToolExecutionContext struct {
@@ -96,29 +94,9 @@ func (e *Engine) RegisterAgent(cfg config.BuiltinAgent) error {
 		Provider: provider,
 	}
 
-	// Connect MCP servers
 	var allTools []llm.ToolDef
-	for _, mcp := range cfg.MCPServers {
-		var client *mcpclient.Client
-		var err error
-		switch mcp.Transport {
-		case "sse":
-			client, err = mcpclient.ConnectSSE(mcp.Name, mcp.URL)
-		case "stdio":
-			client, err = mcpclient.ConnectStdio(mcp.Name, mcp.Command, mcp.Args)
-		default:
-			slog.Warn("Unknown MCP transport", "name", mcp.Name, "transport", mcp.Transport)
-			continue
-		}
-		if err != nil {
-			slog.Error("Failed to connect MCP server", "name", mcp.Name, "error", err)
-			continue
-		}
-		agent.MCPClients = append(agent.MCPClients, client)
-		allTools = append(allTools, client.Tools...)
-	}
-
-	// Add builtin tools (including A2A platform tools)
+	// Add platform tools. External tool servers are intentionally not attached
+	// here; external agents should integrate through the platform HTTP API.
 	for _, builtinTool := range tools.GetAllTools() {
 		// Convert ToolParameter to InputSchema
 		properties := make(map[string]interface{})
@@ -170,11 +148,7 @@ func (e *Engine) RegisterAgent(cfg config.BuiltinAgent) error {
 
 func (e *Engine) RemoveAgent(name string) {
 	e.mu.Lock()
-	agent, ok := e.agents[name]
-	if ok {
-		for _, c := range agent.MCPClients {
-			c.Close()
-		}
+	if _, ok := e.agents[name]; ok {
 		delete(e.agents, name)
 	}
 	e.mu.Unlock()
@@ -629,20 +603,7 @@ func (e *Engine) callToolWithTimeout(ctx context.Context, agent *BuiltinAgent, n
 }
 
 func (e *Engine) defaultCallTool(agent *BuiltinAgent, name string, arguments string, execCtx ToolExecutionContext) (string, error) {
-	// Check MCP tools first
-	for _, c := range agent.MCPClients {
-		for _, t := range c.Tools {
-			if t.Name == name {
-				result, err := c.CallTool(name, arguments)
-				if err != nil {
-					return fmt.Sprintf("Error: %v", err), err
-				}
-				return result, nil
-			}
-		}
-	}
-
-	// Check builtin tools
+	// Check platform tools
 	for _, tool := range tools.GetAllTools() {
 		if tool.Name == name {
 			var args map[string]any

@@ -39,12 +39,25 @@ export interface Agent {
   name: string;
   url: string;
   description?: string;
-  skills?: string[] | null;
+  skills?: Array<string | { id?: string; name?: string; description?: string }> | null;
   status?: string;
   type?: string;
   version?: string;
+  context_mode?: string;
+  agent_card_json?: string;
   registered_at?: string;
   last_seen?: string;
+}
+
+export interface AgentCard {
+  name?: string;
+  description?: string;
+  version?: string;
+  url?: string;
+  skills?: Array<{ id?: string; name?: string; description?: string; tags?: string[]; examples?: string[] }>;
+  health_url?: string;
+  x_static?: boolean;
+  x_context_mode?: string;
 }
 
 export interface Task {
@@ -228,6 +241,12 @@ export const api = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Admin-Token': token },
       body: JSON.stringify(agent),
+    }),
+  updateAgent: (name: string, req: { url?: string; port?: number; context_mode?: string; agent_card?: AgentCard }, token: string) =>
+    request<Agent>(`/api/agents/${name}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Token': token },
+      body: JSON.stringify(req),
     }),
   deleteAgent: (name: string, token: string) =>
     request<void>(`/api/agents/${name}`, {

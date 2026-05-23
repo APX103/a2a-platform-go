@@ -94,6 +94,7 @@ func main() {
 
 	// Single agent operations
 	mux.HandleFunc("/api/agents/", makeAgentDetailHandler(svcCtx))
+	mux.HandleFunc("/.well-known/agent-card/", makeHostedAgentCardHandler(svcCtx))
 
 	// Agent proxy — core A2A message routing
 	mux.HandleFunc("/agent/", makeAgentProxyRoute(svcCtx))
@@ -129,7 +130,6 @@ func main() {
 	// Stats endpoint
 	mux.HandleFunc("/api/stats", handler.NewStatsHandler(svcCtx).ServeHTTP)
 
-	// MCP SSE server
 	hostURL := ""
 	if cfg.Host == "0.0.0.0" || cfg.Host == "" {
 		hostURL = fmt.Sprintf("http://localhost:%d", cfg.Port)
@@ -140,10 +140,6 @@ func main() {
 	// Set platform base URL for A2A tools
 	tools.SetPlatformBaseURL(hostURL)
 	tools.SetPlatformAdminToken(cfg.AdminToken)
-
-	mcpHandler := handler.NewMCPSSEHandler(svcCtx, hostURL)
-	mux.HandleFunc("/mcp/sse", mcpHandler.ServeSSE)
-	mux.HandleFunc("/mcp/messages", mcpHandler.ServeMessages)
 
 	// Embedded admin frontend (SPA)
 	distFS, _ := fs.Sub(web.AdminFS, web.AdminDir)
@@ -184,7 +180,6 @@ func main() {
 
 	slog.Info("A2A Platform (Go) starting", "addr", addr)
 	slog.Info("  API:      http://" + addr + "/api/agents")
-	slog.Info("  MCP SSE:  http://" + addr + "/mcp/sse")
 	slog.Info("  Proxy:    http://" + addr + "/agent/{{name}}")
 
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -243,7 +238,9 @@ func makeAgentListHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 
 func makeAgentDetailHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		name := pathTail(r.URL.Path, "/api/agents/")
+		tail := pathTail(r.URL.Path, "/api/agents/")
+		parts := strings.Split(tail, "/")
+		name := parts[0]
 		if name == "" {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(400)
@@ -252,9 +249,24 @@ func makeAgentDetailHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 		}
 		// Store path param in a header for handler to read
 		r.Header.Set("X-Path-Param-Name", name)
+		if len(parts) == 2 && parts[1] == "card" {
+			switch r.Method {
+			case http.MethodGet:
+				handler.NewDiscoveryHandler(svcCtx).ServeHTTP(w, r)
+			default:
+				jsonError(w, "method not allowed", 405)
+			}
+			return
+		}
+		if len(parts) != 1 {
+			jsonError(w, "not found", 404)
+			return
+		}
 		switch r.Method {
 		case http.MethodGet:
 			handler.NewGetAgentHandler(svcCtx).ServeHTTP(w, r)
+		case http.MethodPut:
+			handler.NewUpdateAgentHandler(svcCtx).ServeHTTP(w, r)
 		case http.MethodDelete:
 			agent, err := svcCtx.Agents.Get(name)
 			if err != nil {
@@ -268,6 +280,23 @@ func makeAgentDetailHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 				_ = svcCtx.BuiltinAgents.Delete(name)
 			}
 			w.WriteHeader(204)
+		default:
+			jsonError(w, "method not allowed", 405)
+		}
+	}
+}
+
+func makeHostedAgentCardHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		name := pathTail(r.URL.Path, "/.well-known/agent-card/")
+		if name == "" {
+			jsonError(w, "missing agent name", 400)
+			return
+		}
+		r.Header.Set("X-Path-Param-Name", name)
+		switch r.Method {
+		case http.MethodGet:
+			handler.NewDiscoveryHandler(svcCtx).ServeHTTP(w, r)
 		default:
 			jsonError(w, "method not allowed", 405)
 		}
@@ -572,6 +601,27 @@ func authMiddleware(next http.Handler, svcCtx *svc.ServiceContext) http.Handler 
 			return
 		}
 
+		if strings.HasPrefix(path, "/.well-known/agent-card/") {
+			if memberToken == nil {
+				jsonError(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			target := pathTail(path, "/.well-known/agent-card/")
+			if target == "" {
+				jsonError(w, "missing agent name", http.StatusBadRequest)
+				return
+			}
+			member, err := svcCtx.GroupMembers.Get(memberToken.GroupID, model.GroupActorAgent, target)
+			if err != nil {
+				jsonError(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if member == nil {
+				jsonError(w, "target agent is not in caller group", http.StatusForbidden)
+				return
+			}
+		}
+
 		if groupID, ok := scopedGroupID(path, method); ok {
 			if memberToken == nil {
 				jsonError(w, "unauthorized", http.StatusUnauthorized)
@@ -659,9 +709,6 @@ func requiresAdmin(path, method string) bool {
 		return true
 	}
 	if strings.HasPrefix(path, "/api/tasks") || strings.HasPrefix(path, "/api/traces") || strings.HasPrefix(path, "/api/contexts") || strings.HasPrefix(path, "/api/subagents") || path == "/api/events" {
-		return true
-	}
-	if strings.HasPrefix(path, "/mcp/") {
 		return true
 	}
 	if method == http.MethodPost && path == "/api/groups" {
