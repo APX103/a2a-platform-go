@@ -68,6 +68,7 @@ export type SSEEventType =
   | 'tool.call_start'
   | 'tool.call_delta'
   | 'tool.call_end'
+  | 'tool.progress'
   | 'tool.result'
   | 'task.status'
   | 'subagent.started'

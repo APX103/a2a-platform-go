@@ -97,6 +97,7 @@ export function useChat(agentName: string) {
         }
         await fetchEventSource(`/agent/${agentName}`, {
           method: 'POST',
+          openWhenHidden: true,
           headers: {
             'Content-Type': 'application/json',
             ...headers,
@@ -172,6 +173,32 @@ export function useChat(agentName: string) {
                   updateToolCall(taskId, data.tool.id, {
                     arguments: data.tool.arguments,
                   });
+                }
+                break;
+
+              case 'tool.progress':
+                if (data.tool && data.tool.id) {
+                  const toolId = data.tool.id;
+                  const existing = toolCallBufferRef.current[toolId];
+                  const progressTool = data.tool as ToolCall & { elapsed_seconds?: number };
+                  const metadata = {
+                    ...(existing?.metadata || {}),
+                    ...(data.tool.metadata || {}),
+                    ...(typeof progressTool.elapsed_seconds === 'number'
+                      ? { elapsed_seconds: progressTool.elapsed_seconds }
+                      : {}),
+                  };
+                  updateToolCall(taskId, toolId, {
+                    status: 'started',
+                    metadata,
+                  });
+                  if (existing) {
+                    toolCallBufferRef.current[toolId] = {
+                      ...existing,
+                      status: 'started',
+                      metadata,
+                    };
+                  }
                 }
                 break;
 

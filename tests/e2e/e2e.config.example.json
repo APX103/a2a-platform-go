@@ -6,5 +6,10 @@
     "agent_names": [],
     "min_builtin_agents": 3,
     "prompt": "编排 e2e 测试：请群内每个 agent 各用一句中文说明自己在这个问题讨论中能承担的角色。不要调用工具，不要输出 NO_REPLY。"
+  },
+  "nested_send": {
+    "enabled": false,
+    "agent_names": [],
+    "min_builtin_agents": 3
   }
 }

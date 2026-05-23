@@ -24,11 +24,14 @@ const (
 	sseEventToolCallDelta    = "tool.call_delta"
 	sseEventToolCallEnd      = "tool.call_end"
 	sseEventToolResult       = "tool.result"
+	sseEventToolProgress     = "tool.progress"
 	sseEventSubagentStarted  = "subagent.started"
 	sseEventSubagentComplete = "subagent.completed"
 	sseEventSubagentError    = "subagent.error"
 	toolCallTimeout          = 120 * time.Second
 )
+
+var toolProgressInterval = 5 * time.Second
 
 type Deps struct {
 	LoadHistory func(contextId string) ([]*model.Message, error)
@@ -418,7 +421,7 @@ func (e *Engine) runLoop(
 					ParentToolCallId: tcall.ID,
 					GroupId:          groupId,
 				}
-				res, err := e.callToolWithTimeout(ctx, agent, tcall.Name, tcall.Arguments, execCtx)
+				res, err := e.callToolWithTimeout(ctx, agent, tcall.Name, tcall.Arguments, execCtx, nil)
 				if err != nil {
 					res = fmt.Sprintf("Error: %s", err)
 				}
@@ -459,6 +462,18 @@ func (e *Engine) runLoop(
 
 			var result string
 			var err error
+			emitProgress := func(elapsed time.Duration) {
+				writeSSE(w, flusher, sseEventToolProgress, map[string]interface{}{
+					"taskId": taskId,
+					"tool": map[string]interface{}{
+						"id":              tc.ID,
+						"name":            tc.Name,
+						"arguments":       tc.Arguments,
+						"status":          "started",
+						"elapsed_seconds": int(elapsed.Seconds()),
+					},
+				})
+			}
 
 			// Inline handling for spawn_agent to emit subagent SSE events
 			if tc.Name == "spawn_agent" && e.subagentEngine != nil {
@@ -504,7 +519,7 @@ func (e *Engine) runLoop(
 						ParentToolCallId: tc.ID,
 						GroupId:          groupId,
 					}
-					result, err = e.callToolWithTimeout(ctx, agent, tc.Name, tc.Arguments, execCtx)
+					result, err = e.callToolWithTimeout(ctx, agent, tc.Name, tc.Arguments, execCtx, emitProgress)
 					if err != nil {
 						result = fmt.Sprintf("Error: %s", err)
 					}
@@ -522,7 +537,7 @@ func (e *Engine) runLoop(
 					ParentToolCallId: tc.ID,
 					GroupId:          groupId,
 				}
-				result, err = e.callToolWithTimeout(ctx, agent, tc.Name, tc.Arguments, execCtx)
+				result, err = e.callToolWithTimeout(ctx, agent, tc.Name, tc.Arguments, execCtx, emitProgress)
 				if err != nil {
 					result = fmt.Sprintf("Error: %s", err)
 				}
@@ -580,10 +595,7 @@ func (e *Engine) runLoop(
 	return "", fmt.Errorf("max tool rounds (%d) exceeded", maxRounds)
 }
 
-func (e *Engine) callToolWithTimeout(ctx context.Context, agent *BuiltinAgent, name string, arguments string, execCtx ToolExecutionContext) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, toolCallTimeout)
-	defer cancel()
-
+func (e *Engine) callToolWithTimeout(ctx context.Context, agent *BuiltinAgent, name string, arguments string, execCtx ToolExecutionContext, onProgress func(time.Duration)) (string, error) {
 	type result struct {
 		text string
 		err  error
@@ -594,11 +606,29 @@ func (e *Engine) callToolWithTimeout(ctx context.Context, agent *BuiltinAgent, n
 		done <- result{text: text, err: err}
 	}()
 
-	select {
-	case res := <-done:
-		return res.text, res.err
-	case <-ctx.Done():
-		return "", fmt.Errorf("tool %q timed out after %s", name, toolCallTimeout)
+	timeout := time.NewTimer(toolCallTimeout)
+	defer timeout.Stop()
+
+	var progressC <-chan time.Time
+	var ticker *time.Ticker
+	if onProgress != nil && toolProgressInterval > 0 {
+		ticker = time.NewTicker(toolProgressInterval)
+		defer ticker.Stop()
+		progressC = ticker.C
+	}
+	startedAt := time.Now()
+
+	for {
+		select {
+		case res := <-done:
+			return res.text, res.err
+		case <-progressC:
+			onProgress(time.Since(startedAt))
+		case <-ctx.Done():
+			return "", fmt.Errorf("tool %q canceled while waiting for result: %w", name, ctx.Err())
+		case <-timeout.C:
+			return "", fmt.Errorf("tool %q timed out after %s", name, toolCallTimeout)
+		}
 	}
 }
 

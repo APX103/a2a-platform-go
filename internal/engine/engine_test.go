@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"a2a-platform/internal/config"
 	"a2a-platform/internal/llm"
@@ -349,6 +350,62 @@ func TestRunLoop_PassesRootAndParentToTool(t *testing.T) {
 	}
 	if got.SourceAgent != "mi-1" || got.RootContextId != "root-1" || got.ParentTaskId != "task-1" || got.ParentToolCallId != "tool-1" || got.GroupId != "group-1" {
 		t.Fatalf("tool exec context = %#v", got)
+	}
+}
+
+func TestRunLoop_EmitsToolProgressDuringLongToolCall(t *testing.T) {
+	eng := New()
+	originalInterval := toolProgressInterval
+	toolProgressInterval = 10 * time.Millisecond
+	defer func() { toolProgressInterval = originalInterval }()
+
+	agent := &BuiltinAgent{
+		Config: config.BuiltinAgent{
+			Name:          "mi-1",
+			Provider:      "openai",
+			Model:         "gpt-4",
+			MaxToolRounds: 5,
+		},
+		Provider: &mockProvider{
+			events: []llm.StreamEvent{
+				{Type: "tool_call", ToolCall: &llm.ToolCall{ID: "tool-1", Name: "send_to_agent", Arguments: `{"agent":"mi-2","message":"hi"}`}},
+				{Type: "done"},
+				{Type: "text", Text: "done"},
+				{Type: "done"},
+			},
+		},
+		Tools: []llm.ToolDef{
+			{Name: "send_to_agent", Description: "Send", InputSchema: map[string]interface{}{"type": "object"}},
+		},
+	}
+
+	eng.callTool = func(a *BuiltinAgent, name string, arguments string, execCtx ToolExecutionContext) (string, error) {
+		time.Sleep(35 * time.Millisecond)
+		return "ok", nil
+	}
+
+	deps := &Deps{
+		LoadHistory: func(cid string) ([]*model.Message, error) { return nil, nil },
+		RecordTrace: func(e *model.TraceEvent) error { return nil },
+		SaveMessage: func(m *model.Message) error { return nil },
+	}
+	rec := httptest.NewRecorder()
+	flusher := &mockFlusher{recorder: rec}
+
+	result, err := eng.runLoop(context.Background(), agent, []llm.ChatMessage{{Role: "user", Content: "hi"}}, rec, flusher, "task-1", "ctx-1", "root-1", "group-1", deps)
+	if err != nil {
+		t.Fatalf("runLoop failed: %v", err)
+	}
+	if result != "done" {
+		t.Fatalf("result = %q, want done", result)
+	}
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "event: tool.progress") {
+		t.Fatalf("expected tool.progress in SSE, got: %s", body)
+	}
+	if !strings.Contains(body, "event: tool.result") {
+		t.Fatalf("expected tool.result in SSE, got: %s", body)
 	}
 }
 

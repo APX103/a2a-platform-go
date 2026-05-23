@@ -22,6 +22,7 @@ export default function ToolCallCard({ tool }: ToolCallCardProps) {
   }[tool.status] || 'text-gray-500';
 
   const argsObj = tool.arguments_obj || parseArguments(tool.arguments);
+  const elapsedSeconds = typeof tool.metadata?.elapsed_seconds === 'number' ? tool.metadata.elapsed_seconds : undefined;
 
   return (
     <div className="my-2 border border-gray-300 dark:border-gray-700 rounded-lg overflow-hidden bg-gray-200 dark:bg-gray-800">
@@ -32,6 +33,9 @@ export default function ToolCallCard({ tool }: ToolCallCardProps) {
         {statusIcon}
         <span className="text-xs font-mono font-semibold text-gray-900 dark:text-gray-100">{tool.name}</span>
         <span className={`text-xs ${statusColor}`}>{tool.status}</span>
+        {tool.status === 'started' && elapsedSeconds !== undefined && (
+          <span className="text-xs text-gray-500 dark:text-gray-400">{elapsedSeconds}s</span>
+        )}
         <ChevronRight
           size={14}
           className={`ml-auto text-gray-500 transition-transform ${expanded ? 'rotate-90' : ''}`}

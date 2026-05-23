@@ -33,9 +33,10 @@ var (
 // ===== Helpers =====
 
 type e2eConfig struct {
-	BaseURL    string            `json:"base_url"`
-	AdminToken string            `json:"admin_token"`
-	FreeChat   e2eFreeChatConfig `json:"free_chat"`
+	BaseURL    string              `json:"base_url"`
+	AdminToken string              `json:"admin_token"`
+	FreeChat   e2eFreeChatConfig   `json:"free_chat"`
+	NestedSend e2eNestedSendConfig `json:"nested_send"`
 }
 
 type e2eFreeChatConfig struct {
@@ -45,6 +46,12 @@ type e2eFreeChatConfig struct {
 	Prompt           string   `json:"prompt"`
 }
 
+type e2eNestedSendConfig struct {
+	Enabled          bool     `json:"enabled"`
+	AgentNames       []string `json:"agent_names"`
+	MinBuiltinAgents int      `json:"min_builtin_agents"`
+}
+
 func loadE2EConfig() e2eConfig {
 	cfg := e2eConfig{
 		BaseURL:    defaultBaseURL,
@@ -52,6 +59,9 @@ func loadE2EConfig() e2eConfig {
 		FreeChat: e2eFreeChatConfig{
 			MinBuiltinAgents: 3,
 			Prompt:           "编排 e2e 测试：请群内每个 agent 各用一句中文说明自己在这个问题讨论中能承担的角色。不要调用工具，不要输出 NO_REPLY。",
+		},
+		NestedSend: e2eNestedSendConfig{
+			MinBuiltinAgents: 3,
 		},
 	}
 	for _, path := range e2eConfigPaths() {
@@ -74,6 +84,9 @@ func loadE2EConfig() e2eConfig {
 	if env := strings.TrimSpace(os.Getenv("ADMIN_TOKEN")); env != "" {
 		cfg.AdminToken = env
 	}
+	if env := strings.TrimSpace(os.Getenv("A2A_E2E_NESTED_SEND")); env != "" {
+		cfg.NestedSend.Enabled = env == "1" || strings.EqualFold(env, "true")
+	}
 	if strings.TrimSpace(cfg.BaseURL) == "" {
 		cfg.BaseURL = defaultBaseURL
 	}
@@ -82,6 +95,9 @@ func loadE2EConfig() e2eConfig {
 	}
 	if cfg.FreeChat.MinBuiltinAgents <= 0 {
 		cfg.FreeChat.MinBuiltinAgents = 3
+	}
+	if cfg.NestedSend.MinBuiltinAgents <= 0 {
+		cfg.NestedSend.MinBuiltinAgents = 3
 	}
 	if strings.TrimSpace(cfg.FreeChat.Prompt) == "" {
 		cfg.FreeChat.Prompt = "编排 e2e 测试：请群内每个 agent 各用一句中文说明自己在这个问题讨论中能承担的角色。不要调用工具，不要输出 NO_REPLY。"
@@ -179,6 +195,64 @@ func streamReq(t *testing.T, path, body string, headers map[string]string) []map
 	return events
 }
 
+func streamAgentReq(t *testing.T, agent, body string, headers map[string]string, timeout time.Duration) []map[string]interface{} {
+	t.Helper()
+	limiter.Wait(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	r, err := http.NewRequestWithContext(ctx, "POST", baseURL+"/agent/"+agent, strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("create agent stream request: %v", err)
+	}
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Accept", "text/event-stream")
+	for k, v := range headers {
+		r.Header.Set(k, v)
+	}
+	resp, err := httpClient.Do(r)
+	if err != nil {
+		t.Fatalf("stream POST /agent/%s: %v", agent, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		data, _ := io.ReadAll(resp.Body)
+		t.Fatalf("agent stream status = %d, want 200: %s", resp.StatusCode, string(data))
+	}
+	if ct := resp.Header.Get("Content-Type"); !strings.Contains(ct, "text/event-stream") {
+		t.Fatalf("agent stream content-type = %s, want text/event-stream", ct)
+	}
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	events := []map[string]interface{}{}
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		var item map[string]interface{}
+		if err := json.Unmarshal([]byte(strings.TrimSpace(strings.TrimPrefix(line, "data:"))), &item); err != nil {
+			t.Fatalf("invalid agent SSE data: %v", err)
+		}
+		events = append(events, item)
+		if item["type"] == "task.status" {
+			status, _ := item["status"].(map[string]interface{})
+			switch status["state"] {
+			case "completed":
+				return events
+			case "failed":
+				t.Fatalf("agent stream failed: %#v", item)
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("read agent stream: %v", err)
+	}
+	if len(events) == 0 {
+		t.Fatal("no agent SSE events")
+	}
+	return events
+}
+
 func obj(t *testing.T, data []byte) map[string]interface{} {
 	t.Helper()
 	var m map[string]interface{}
@@ -235,6 +309,19 @@ func freeChatE2EAgents(t *testing.T) []string {
 	cfg := testConfig.FreeChat
 	if !cfg.Enabled {
 		t.Skip("free_chat e2e disabled; copy tests/e2e/e2e.config.example.json to e2e.config.json and set free_chat.enabled=true")
+	}
+	if len(cfg.AgentNames) > 0 {
+		return cfg.AgentNames
+	}
+	agents := connectedBuiltinAgents(t, cfg.MinBuiltinAgents)
+	return agents[:cfg.MinBuiltinAgents]
+}
+
+func nestedSendE2EAgents(t *testing.T) []string {
+	t.Helper()
+	cfg := testConfig.NestedSend
+	if !cfg.Enabled {
+		t.Skip("nested_send e2e disabled; set nested_send.enabled=true in tests/e2e/e2e.config.json or A2A_E2E_NESTED_SEND=1")
 	}
 	if len(cfg.AgentNames) > 0 {
 		return cfg.AgentNames
@@ -659,6 +746,117 @@ func TestGroupFreeChatInvokesBuiltinAgents(t *testing.T) {
 	}
 
 	assertGroupTraceRecorded(t, groupID)
+}
+
+func TestNestedSendToAgentCompletesToolLifecycle(t *testing.T) {
+	agents := nestedSendE2EAgents(t)
+	if len(agents) < 3 {
+		t.Fatalf("nested_send agents = %v, want at least 3", agents)
+	}
+
+	rootContextID := fmt.Sprintf("e2e-nested-send-%d", time.Now().UnixNano())
+	relayPrompt := fmt.Sprintf(
+		`请严格执行：调用一次 send_to_agent，agent=%q，group_id="default-p2p"，message="E2E_NESTED_PING"。收到工具结果后，用一句中文回复。`,
+		agents[2],
+	)
+	parentPrompt := fmt.Sprintf(
+		`请严格执行：调用一次 send_to_agent，agent=%q，group_id="default-p2p"，message=%q。工具返回后，最终只输出 E2E_NESTED_DONE。`,
+		agents[1],
+		relayPrompt,
+	)
+	body := fmt.Sprintf(
+		`{"jsonrpc":"2.0","method":"SendStreamingMessage","id":"e2e-nested-send","params":{"rootContextId":%q,"message":{"role":"ROLE_USER","parts":[{"text":%q}]}}}`,
+		rootContextID,
+		parentPrompt,
+	)
+	headers := auth()
+	headers["X-A2A-Group-ID"] = "default-p2p"
+	headers["X-A2A-Root-Context-Id"] = rootContextID
+
+	events := streamAgentReq(t, agents[0], body, headers, 240*time.Second)
+	started := map[string]bool{}
+	ended := map[string]bool{}
+	results := map[string]string{}
+	progressCount := 0
+	completed := false
+	for _, evt := range events {
+		switch evt["type"] {
+		case "tool.call_start":
+			tool, _ := evt["tool"].(map[string]interface{})
+			if tool["name"] == "send_to_agent" {
+				if id, _ := tool["id"].(string); id != "" {
+					started[id] = true
+				}
+			}
+		case "tool.call_end":
+			tool, _ := evt["tool"].(map[string]interface{})
+			if tool["name"] == "send_to_agent" {
+				if id, _ := tool["id"].(string); id != "" {
+					ended[id] = true
+				}
+			}
+		case "tool.progress":
+			tool, _ := evt["tool"].(map[string]interface{})
+			if tool["name"] == "send_to_agent" {
+				progressCount++
+			}
+		case "tool.result":
+			tool, _ := evt["tool"].(map[string]interface{})
+			if tool["name"] == "send_to_agent" {
+				id, _ := tool["id"].(string)
+				result := fmt.Sprint(tool["result"])
+				if strings.Contains(result, "timed out after 2m0s") || strings.Contains(result, "context canceled") {
+					t.Fatalf("send_to_agent returned cancellation/timeout result: %s", result)
+				}
+				if id != "" {
+					results[id] = result
+				}
+			}
+		case "task.status":
+			status, _ := evt["status"].(map[string]interface{})
+			if status["state"] == "completed" {
+				completed = true
+			}
+		}
+	}
+	if !completed {
+		t.Fatalf("parent task did not complete: %#v", events)
+	}
+	if len(started) == 0 {
+		t.Fatalf("parent stream did not start a send_to_agent call: %#v", events)
+	}
+	for id := range started {
+		if !ended[id] {
+			t.Fatalf("send_to_agent %s started but did not emit tool.call_end: %#v", id, events)
+		}
+		if strings.TrimSpace(results[id]) == "" {
+			t.Fatalf("send_to_agent %s started but did not emit non-empty tool.result: %#v", id, events)
+		}
+	}
+	if progressCount == 0 {
+		t.Log("send_to_agent completed before a heartbeat interval; lifecycle still completed with result")
+	}
+
+	code, data := req(t, "GET", "/api/tasks/root/"+rootContextID, "", auth())
+	expect(t, code, 200)
+	tasks := arr(t, data)
+	seenChild := false
+	seenGrandchild := false
+	for _, item := range tasks {
+		task, _ := item.(map[string]interface{})
+		if task["source_agent"] == agents[0] && task["target_agent"] == agents[1] {
+			seenChild = true
+		}
+		if task["source_agent"] == agents[1] && task["target_agent"] == agents[2] {
+			seenGrandchild = true
+		}
+	}
+	if !seenChild {
+		t.Fatalf("root task chain missing child send %s -> %s: %#v", agents[0], agents[1], tasks)
+	}
+	if !seenGrandchild {
+		t.Fatalf("root task chain missing nested send %s -> %s: %#v", agents[1], agents[2], tasks)
+	}
 }
 
 // ===== 4. Agent List & Detail =====
