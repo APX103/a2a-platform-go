@@ -7,6 +7,7 @@ import {
   Group,
   GroupArtifact,
   GroupEvent,
+  GroupInvite,
   GroupMember,
   GroupOrchestrationState,
 } from '../api/client'
@@ -55,6 +56,7 @@ export default function GroupDetail() {
   const [members, setMembers] = useState<GroupMember[]>([])
   const [events, setEvents] = useState<GroupEvent[]>([])
   const [artifacts, setArtifacts] = useState<GroupArtifact[]>([])
+  const [invites, setInvites] = useState<GroupInvite[]>([])
   const [orchestration, setOrchestration] = useState<GroupOrchestrationState | null>(null)
   const [agents, setAgents] = useState<Agent[]>([])
   const [loading, setLoading] = useState(true)
@@ -64,18 +66,21 @@ export default function GroupDetail() {
   const [joinForm, setJoinForm] = useState({ client_id: 'human-local' })
   const [eventForm, setEventForm] = useState({ sender_type: 'human', sender_id: 'human-local', content: '' })
   const [artifactForm, setArtifactForm] = useState({ name: 'proposal.md', content: '', created_by: 'human-local' })
+  const [inviteForm, setInviteForm] = useState({ actor_type_allowed: 'human', role: 'member', max_uses: 20 })
+  const [newInviteToken, setNewInviteToken] = useState('')
 
   const load = async () => {
     if (!id) return
     setLoading(true)
     setError('')
     try {
-      const [g, m, e, a, o, agentList] = await Promise.all([
+      const [g, m, e, a, o, inviteList, agentList] = await Promise.all([
         api.getGroup(id),
         api.listGroupMembers(id),
         api.listGroupEvents(id, 80),
         api.listGroupArtifacts(id),
         api.getGroupOrchestration(id),
+        api.listGroupInvites(id).catch(() => []),
         api.listAgents().catch(() => []),
       ])
       setGroup(g)
@@ -83,6 +88,7 @@ export default function GroupDetail() {
       setEvents(Array.isArray(e) ? e : [])
       setArtifacts(Array.isArray(a) ? a : [])
       setOrchestration(o)
+      setInvites(Array.isArray(inviteList) ? inviteList : [])
       setAgents(Array.isArray(agentList) ? agentList : [])
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load group')
@@ -130,12 +136,32 @@ export default function GroupDetail() {
       return
     }
     try {
-      await api.joinGroup(id, { client_id: joinForm.client_id.trim(), capabilities: { ui: 'admin' } })
+      await api.joinGroup(id, { client_id: joinForm.client_id.trim(), capabilities: { ui: 'admin' } }, token)
       setEventForm(f => ({ ...f, sender_type: 'human', sender_id: joinForm.client_id.trim() }))
       setArtifactForm(f => ({ ...f, created_by: joinForm.client_id.trim() }))
       load()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Join failed')
+    }
+  }
+
+  const handleCreateInvite = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!id) return
+    if (!token) {
+      setError('Admin token required')
+      return
+    }
+    try {
+      const invite = await api.createGroupInvite(id, {
+        actor_type_allowed: inviteForm.actor_type_allowed || undefined,
+        role: inviteForm.role,
+        max_uses: inviteForm.max_uses,
+      }, token)
+      setNewInviteToken(invite.token || '')
+      load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Create invite failed')
     }
   }
 
@@ -324,6 +350,61 @@ export default function GroupDetail() {
                 Join as Human
               </button>
             </form>
+          </section>
+
+          <section className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <UserPlus size={15} className="text-[var(--accent)]" />
+              <h2 className="text-sm font-medium text-[var(--text-primary)]">Invites</h2>
+            </div>
+            {newInviteToken && (
+              <div className="mb-3 p-2 rounded-md bg-[var(--success)]/10 border border-[var(--success)]/25">
+                <div className="text-xs text-[var(--text-tertiary)] mb-1">New token</div>
+                <code className="block text-xs break-all text-[var(--text-primary)]">{newInviteToken}</code>
+              </div>
+            )}
+            <form onSubmit={handleCreateInvite} className="space-y-2">
+              <div className="grid grid-cols-2 gap-2">
+                <select
+                  value={inviteForm.actor_type_allowed}
+                  onChange={e => setInviteForm(f => ({ ...f, actor_type_allowed: e.target.value }))}
+                  className="px-2 py-1.5 text-sm rounded-md border border-[var(--border)] bg-[var(--bg-primary)] text-[var(--text-primary)]"
+                >
+                  <option value="">any</option>
+                  <option value="human">human</option>
+                  <option value="agent">agent</option>
+                </select>
+                <select
+                  value={inviteForm.role}
+                  onChange={e => setInviteForm(f => ({ ...f, role: e.target.value }))}
+                  className="px-2 py-1.5 text-sm rounded-md border border-[var(--border)] bg-[var(--bg-primary)] text-[var(--text-primary)]"
+                >
+                  <option value="member">member</option>
+                  <option value="reviewer">reviewer</option>
+                  <option value="observer">observer</option>
+                </select>
+              </div>
+              <input
+                type="number"
+                min={1}
+                value={inviteForm.max_uses}
+                onChange={e => setInviteForm(f => ({ ...f, max_uses: Number(e.target.value) || 1 }))}
+                className="w-full px-3 py-1.5 text-sm rounded-md border border-[var(--border)] bg-[var(--bg-primary)] text-[var(--text-primary)]"
+              />
+              <button className="flex items-center justify-center gap-1.5 w-full px-3 py-1.5 text-sm rounded-md bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)]">
+                Generate Invite
+              </button>
+            </form>
+            <div className="mt-3 space-y-1">
+              {invites.length === 0 ? (
+                <div className="text-xs text-[var(--text-tertiary)]">No invites</div>
+              ) : invites.slice(0, 5).map(invite => (
+                <div key={invite.id} className="flex items-center justify-between gap-2 text-xs text-[var(--text-tertiary)]">
+                  <span>{invite.actor_type_allowed || 'any'} / {invite.role}</span>
+                  <span>{invite.used_count}/{invite.max_uses}</span>
+                </div>
+              ))}
+            </div>
           </section>
         </aside>
 

@@ -18,7 +18,7 @@ An A2A group is the boundary for:
 
 `groups`
 
-- `id`: stable group id; human clients can join with this id
+- `id`: stable group id; it is not a join credential
 - `orchestration_mode`: `leader_led`, `roundtable`, `stateflow`, `research_long_horizon`
 - `rules_json`: mode-specific rules, such as max rounds, required reviewers, phase order
 - `memory_policy_json`: hot-window, summary, artifact, and retrieval policies
@@ -78,4 +78,4 @@ Long-running work is modeled as group orchestration with stronger state: workstr
 
 ## Security Notes
 
-Group creation, direct member management, group update, group archive, and artifact updates are admin-token protected. Human client joins are intentionally lightweight in this first version: a client joins by `group_id` and `client_id`. A later version should add group invite tokens or scoped client tokens before public deployment.
+Group creation, direct member management, group update, group archive, and invite creation are admin-token protected. Human and agent clients join with opaque invite tokens through `POST /api/group-joins`; the platform returns a group-scoped member access token. Group details, members, events, artifacts, and orchestration reads require either the admin token or the matching member token. Knowing a `group_id` is not enough to discover participants or conversation content.

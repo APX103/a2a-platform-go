@@ -27,7 +27,7 @@ export default function Room({
   const refresh = async () => {
     setError('')
     try {
-      const next = await loadRoom(session.group_id)
+      const next = await loadRoom(session.group_id, session.access_token)
       setSnapshot(next)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load room')
@@ -56,7 +56,7 @@ export default function Room({
     setSending(true)
     setError('')
     try {
-      await api.sendMessage(session.group_id, session.client_id, content)
+      await api.sendMessage(session.group_id, session.access_token, session.client_id, content)
       setMessage('')
       await refresh()
     } catch (err) {

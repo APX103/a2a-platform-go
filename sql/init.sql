@@ -164,6 +164,34 @@ CREATE TABLE IF NOT EXISTS group_members (
     INDEX idx_group_members_actor (actor_type, actor_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+CREATE TABLE IF NOT EXISTS group_invites (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    group_id VARCHAR(36) NOT NULL,
+    token_hash VARCHAR(64) NOT NULL UNIQUE,
+    actor_type_allowed VARCHAR(32),
+    role VARCHAR(64) NOT NULL DEFAULT 'member',
+    max_uses INT NOT NULL DEFAULT 1,
+    used_count INT NOT NULL DEFAULT 0,
+    expires_at TIMESTAMP NULL,
+    status VARCHAR(32) NOT NULL DEFAULT 'active',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_group_invites_group (group_id),
+    INDEX idx_group_invites_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS group_member_tokens (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    group_id VARCHAR(36) NOT NULL,
+    actor_type VARCHAR(32) NOT NULL,
+    actor_id VARCHAR(255) NOT NULL,
+    token_hash VARCHAR(64) NOT NULL UNIQUE,
+    expires_at TIMESTAMP NULL,
+    revoked_at TIMESTAMP NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_group_member_tokens_group (group_id),
+    INDEX idx_group_member_tokens_actor (actor_type, actor_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS group_events (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     group_id VARCHAR(36) NOT NULL,

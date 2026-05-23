@@ -63,6 +63,11 @@ async function handleAPI(req, res, url) {
     return
   }
 
+  if (url.pathname === '/api/group-joins' && req.method === 'POST') {
+    await proxyPlatform(req, res, '/api/group-joins')
+    return
+  }
+
   const match = url.pathname.match(/^\/api\/groups\/([^/]+)(?:\/([^/]+))?$/)
   if (!match) {
     sendJSON(res, 404, { error: 'not found' })
@@ -105,7 +110,7 @@ async function handleAPI(req, res, url) {
       sendJSON(res, 400, { error: 'sender_id and content are required' })
       return
     }
-    await proxyPlatformJSON(res, `/api/groups/${groupId}/events`, 'POST', payload)
+    await proxyPlatformJSON(req, res, `/api/groups/${groupId}/events`, 'POST', payload)
     return
   }
 
@@ -127,6 +132,12 @@ async function proxyPlatform(req, res, platformPath) {
   const headers = {
     'content-type': req.headers['content-type'] || 'application/json',
   }
+  if (req.headers.authorization) {
+    headers.authorization = req.headers.authorization
+  }
+  if (req.headers['x-group-member-token']) {
+    headers['x-group-member-token'] = req.headers['x-group-member-token']
+  }
   if (clientToken) {
     headers['x-client-token'] = clientToken
   }
@@ -139,8 +150,14 @@ async function proxyPlatform(req, res, platformPath) {
   await forwardResponse(res, upstream)
 }
 
-async function proxyPlatformJSON(res, platformPath, method, payload) {
+async function proxyPlatformJSON(req, res, platformPath, method, payload) {
   const headers = { 'content-type': 'application/json' }
+  if (req.headers.authorization) {
+    headers.authorization = req.headers.authorization
+  }
+  if (req.headers['x-group-member-token']) {
+    headers['x-group-member-token'] = req.headers['x-group-member-token']
+  }
   if (clientToken) {
     headers['x-client-token'] = clientToken
   }

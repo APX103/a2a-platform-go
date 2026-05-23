@@ -19,6 +19,7 @@ interface LocalGroup {
   name: string
   orchestration_mode: string
   status: string
+  access_token: string
   joined_at: string
 }
 
@@ -28,7 +29,7 @@ function loadGroups(clientId: string): LocalGroup[] {
   if (!raw) return []
   try {
     const parsed = JSON.parse(raw) as LocalGroup[]
-    return Array.isArray(parsed) ? parsed.filter(item => item.id && item.name) : []
+    return Array.isArray(parsed) ? parsed.filter(item => item.id && item.name && item.access_token) : []
   } catch {
     return []
   }
@@ -39,12 +40,13 @@ function saveGroups(clientId: string, groups: LocalGroup[]) {
   localStorage.setItem(groupsKey(clientId), JSON.stringify(groups))
 }
 
-function toLocalGroup(group: Group): LocalGroup {
+function toLocalGroup(group: Group, accessToken: string): LocalGroup {
   return {
     id: group.id,
     name: group.name,
     orchestration_mode: group.orchestration_mode,
     status: group.status,
+    access_token: accessToken,
     joined_at: new Date().toISOString(),
   }
 }
@@ -95,14 +97,12 @@ export default function App() {
     setJoining(true)
     setError('')
     try {
-      // First version treats the token as a group id. Later this should exchange an invite token.
-      const group = await api.getGroup(token)
-      await api.joinGroup(group.id, clientId)
+      const join = await api.joinWithInvite(token, clientId)
       setGroups(prev => {
-        const next = [toLocalGroup(group), ...prev.filter(item => item.id !== group.id)]
+        const next = [toLocalGroup(join.group, join.access_token), ...prev.filter(item => item.id !== join.group.id)]
         return next
       })
-      setActiveGroupId(group.id)
+      setActiveGroupId(join.group.id)
       setGroupToken('')
       setJoinOpen(false)
     } catch (err) {
@@ -154,7 +154,7 @@ export default function App() {
             <input
               value={groupToken}
               onChange={event => setGroupToken(event.target.value)}
-              placeholder="group token / id"
+              placeholder="invite token"
             />
             <button disabled={joining}>{joining ? 'Joining...' : 'Join'}</button>
           </form>
@@ -183,7 +183,7 @@ export default function App() {
       </aside>
 
       {activeGroup ? (
-        <Room session={{ client_id: clientId, group_id: activeGroup.id } satisfies Session} />
+        <Room session={{ client_id: clientId, group_id: activeGroup.id, access_token: activeGroup.access_token } satisfies Session} />
       ) : (
         <section className="empty-room">
           <h1>Select or join a group</h1>

@@ -13,6 +13,8 @@ func TestGroupStores_Lifecycle(t *testing.T) {
 	members := NewGroupMemberStore(db)
 	events := NewGroupEventStore(db)
 	artifacts := NewGroupArtifactStore(db)
+	invites := NewGroupInviteStore(db)
+	tokens := NewGroupMemberTokenStore(db)
 
 	group := &model.Group{
 		Name:              "proposal review",
@@ -39,6 +41,38 @@ func TestGroupStores_Lifecycle(t *testing.T) {
 	}
 	if len(memberList) != 2 {
 		t.Fatalf("members len = %d, want 2", len(memberList))
+	}
+
+	invite := &model.GroupInvite{GroupID: group.ID, ActorTypeAllowed: model.GroupActorHuman, Role: "member", MaxUses: 2}
+	plainInvite, err := invites.Create(invite)
+	if err != nil {
+		t.Fatalf("create invite: %v", err)
+	}
+	if plainInvite == "" || invite.TokenHash == "" {
+		t.Fatal("invite token was not generated")
+	}
+	loadedInvite, err := invites.GetByToken(plainInvite)
+	if err != nil {
+		t.Fatalf("get invite by token: %v", err)
+	}
+	if !InviteUsable(loadedInvite, model.GroupActorHuman, loadedInvite.CreatedAt) {
+		t.Fatalf("invite should be usable: %#v", loadedInvite)
+	}
+	if InviteUsable(loadedInvite, model.GroupActorAgent, loadedInvite.CreatedAt) {
+		t.Fatal("human-only invite was usable by agent")
+	}
+
+	memberToken := &model.GroupMemberToken{GroupID: group.ID, ActorType: model.GroupActorHuman, ActorID: "client-1"}
+	plainAccess, err := tokens.Create(memberToken)
+	if err != nil {
+		t.Fatalf("create member token: %v", err)
+	}
+	loadedToken, err := tokens.GetByToken(plainAccess)
+	if err != nil {
+		t.Fatalf("get member token: %v", err)
+	}
+	if !MemberTokenUsable(loadedToken, loadedToken.CreatedAt) {
+		t.Fatalf("member token should be usable: %#v", loadedToken)
 	}
 
 	if err := events.Append(&model.GroupEvent{GroupID: group.ID, EventType: "message", SenderType: model.GroupActorHuman, SenderID: "client-1", Content: "please review"}); err != nil {

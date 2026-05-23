@@ -176,9 +176,9 @@ func TestAuth(t *testing.T) {
 		code, _ := req(t, "DELETE", "/api/builtin-agents/x", "", nil)
 		expect(t, code, 401)
 	})
-	t.Run("GET_builtin_no_auth_needed", func(t *testing.T) {
+	t.Run("GET_builtin_requires_token", func(t *testing.T) {
 		code, _ := req(t, "GET", "/api/builtin-agents", "", nil)
-		expect(t, code, 200)
+		expect(t, code, 401)
 	})
 	t.Run("Bearer_auth", func(t *testing.T) {
 		code, _ := req(t, "POST", "/api/builtin-agents",
@@ -218,15 +218,33 @@ func TestGroupOrchestrationLifecycle(t *testing.T) {
 		`{"actor_type":"agent","actor_id":"planner","role":"leader","capabilities":{"skills":["plan"]}}`, auth())
 	expect(t, code, 200)
 
-	code, data = req(t, "POST", "/api/groups/"+groupID+"/join",
-		`{"client_id":"human-e2e","capabilities":{"ui":"browser"}}`, nil)
+	code, data = req(t, "POST", "/api/groups/"+groupID+"/invites",
+		`{"actor_type_allowed":"human","role":"member","max_uses":2}`, auth())
 	expect(t, code, 200)
-	joined := obj(t, data)
-	if joined["actor_type"] != "human" || joined["actor_id"] != "human-e2e" {
-		t.Fatalf("unexpected join response: %s", string(data))
+	invite := obj(t, data)
+	inviteToken, _ := invite["token"].(string)
+	if inviteToken == "" {
+		t.Fatalf("invite token missing: %s", string(data))
 	}
 
+	code, data = req(t, "POST", "/api/groups/"+groupID+"/members", "", nil)
+	expect(t, code, 401)
+
 	code, data = req(t, "GET", "/api/groups/"+groupID+"/members", "", nil)
+	expect(t, code, 401)
+
+	code, data = req(t, "POST", "/api/group-joins",
+		fmt.Sprintf(`{"invite_token":%q,"actor_type":"human","actor_id":"human-e2e","capabilities":{"ui":"browser"}}`, inviteToken), nil)
+	expect(t, code, 200)
+	joined := obj(t, data)
+	member, _ := joined["member"].(map[string]interface{})
+	accessToken, _ := joined["access_token"].(string)
+	if member["actor_type"] != "human" || member["actor_id"] != "human-e2e" || accessToken == "" {
+		t.Fatalf("unexpected join response: %s", string(data))
+	}
+	memberAuth := map[string]string{"Authorization": "Bearer " + accessToken}
+
+	code, data = req(t, "GET", "/api/groups/"+groupID+"/members", "", memberAuth)
 	expect(t, code, 200)
 	members := arr(t, data)
 	if len(members) < 2 {
@@ -234,7 +252,11 @@ func TestGroupOrchestrationLifecycle(t *testing.T) {
 	}
 
 	code, data = req(t, "POST", "/api/groups/"+groupID+"/events",
-		`{"event_type":"message","sender_type":"human","sender_id":"human-e2e","content":"please review the proposal"}`, nil)
+		`{"event_type":"message","sender_type":"human","sender_id":"intruder","content":"please review the proposal"}`, memberAuth)
+	expect(t, code, 403)
+
+	code, data = req(t, "POST", "/api/groups/"+groupID+"/events",
+		`{"event_type":"message","sender_type":"human","sender_id":"human-e2e","content":"please review the proposal"}`, memberAuth)
 	expect(t, code, 200)
 	eventResp := obj(t, data)
 	orch, ok := eventResp["orchestration"].(map[string]interface{})
@@ -246,7 +268,7 @@ func TestGroupOrchestrationLifecycle(t *testing.T) {
 	}
 
 	code, data = req(t, "POST", "/api/groups/"+groupID+"/artifacts",
-		`{"name":"proposal.md","artifact_type":"document","content":"# Proposal\n\nInitial draft","created_by":"human-e2e"}`, nil)
+		`{"name":"proposal.md","artifact_type":"document","content":"# Proposal\n\nInitial draft","created_by":"human-e2e"}`, memberAuth)
 	expect(t, code, 200)
 	artifact := obj(t, data)
 	artifactID, _ := artifact["id"].(string)
@@ -262,7 +284,7 @@ func TestGroupOrchestrationLifecycle(t *testing.T) {
 		t.Fatalf("artifact version = %v, want 2", updatedArtifact["version"])
 	}
 
-	code, data = req(t, "GET", "/api/groups/"+groupID+"/orchestration", "", nil)
+	code, data = req(t, "GET", "/api/groups/"+groupID+"/orchestration", "", memberAuth)
 	expect(t, code, 200)
 	state := obj(t, data)
 	if state["mode"] != "roundtable" {
@@ -273,7 +295,10 @@ func TestGroupOrchestrationLifecycle(t *testing.T) {
 // ===== 4. Agent List & Detail =====
 
 func TestAgentList(t *testing.T) {
-	code, body := req(t, "GET", "/api/agents", "", nil)
+	code, _ := req(t, "GET", "/api/agents", "", nil)
+	expect(t, code, 401)
+
+	code, body := req(t, "GET", "/api/agents", "", auth())
 	expect(t, code, 200)
 	agents := arr(t, body)
 	for _, item := range agents {
@@ -290,7 +315,7 @@ func TestAgentList(t *testing.T) {
 }
 
 func TestAgentDetail_NotFound(t *testing.T) {
-	code, body := req(t, "GET", "/api/agents/nonexistent-xyz-999", "", nil)
+	code, body := req(t, "GET", "/api/agents/nonexistent-xyz-999", "", auth())
 	expect(t, code, 404)
 	if obj(t, body)["error"] != "not found" {
 		t.Error("expected 'not found'")
@@ -322,7 +347,7 @@ func TestBuiltinAgentLifecycle(t *testing.T) {
 	})
 
 	t.Run("02_ListBuiltin", func(t *testing.T) {
-		code, body := req(t, "GET", "/api/builtin-agents", "", nil)
+		code, body := req(t, "GET", "/api/builtin-agents", "", auth())
 		expect(t, code, 200)
 		found := false
 		for _, item := range arr(t, body) {
@@ -343,7 +368,7 @@ func TestBuiltinAgentLifecycle(t *testing.T) {
 	})
 
 	t.Run("03_InMainList", func(t *testing.T) {
-		code, body := req(t, "GET", "/api/agents", "", nil)
+		code, body := req(t, "GET", "/api/agents", "", auth())
 		expect(t, code, 200)
 		found := false
 		for _, item := range arr(t, body) {
@@ -364,7 +389,7 @@ func TestBuiltinAgentLifecycle(t *testing.T) {
 	})
 
 	t.Run("04_GetDetail", func(t *testing.T) {
-		code, body := req(t, "GET", "/api/agents/"+name, "", nil)
+		code, body := req(t, "GET", "/api/agents/"+name, "", auth())
 		expect(t, code, 200)
 		m := obj(t, body)
 		if m["name"] != name {
@@ -382,6 +407,7 @@ func TestBuiltinAgentLifecycle(t *testing.T) {
 		body := `{"jsonrpc":"2.0","method":"message/send","id":1,"params":{"message":{"role":"user","parts":[{"text":"Hello e2e"}]}}}`
 		r, _ := http.NewRequestWithContext(ctx, "POST", baseURL+"/agent/"+name, strings.NewReader(body))
 		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("X-Admin-Token", adminToken)
 		resp, err := httpClient.Do(r)
 		if err != nil {
 			t.Fatalf("proxy: %v", err)
@@ -429,7 +455,7 @@ func TestBuiltinAgentLifecycle(t *testing.T) {
 		if taskId == "" {
 			t.Skip("no taskId")
 		}
-		code, body := req(t, "GET", "/api/tasks/"+taskId, "", nil)
+		code, body := req(t, "GET", "/api/tasks/"+taskId, "", auth())
 		expect(t, code, 200)
 		m := obj(t, body)
 		task, ok := m["task"].(map[string]interface{})
@@ -448,7 +474,7 @@ func TestBuiltinAgentLifecycle(t *testing.T) {
 		if taskId == "" {
 			t.Skip("no taskId")
 		}
-		code, body := req(t, "GET", "/api/traces/task/"+taskId, "", nil)
+		code, body := req(t, "GET", "/api/traces/task/"+taskId, "", auth())
 		expect(t, code, 200)
 		if len(arr(t, body)) == 0 {
 			t.Error("no traces for task")
@@ -459,7 +485,7 @@ func TestBuiltinAgentLifecycle(t *testing.T) {
 		if contextId == "" {
 			t.Skip("no contextId")
 		}
-		code, body := req(t, "GET", "/api/traces/context/"+contextId, "", nil)
+		code, body := req(t, "GET", "/api/traces/context/"+contextId, "", auth())
 		expect(t, code, 200)
 		if len(arr(t, body)) == 0 {
 			t.Error("no traces for context")
@@ -467,7 +493,7 @@ func TestBuiltinAgentLifecycle(t *testing.T) {
 	})
 
 	t.Run("09_TaskListFilter", func(t *testing.T) {
-		code, body := req(t, "GET", "/api/tasks?agent_name="+name, "", nil)
+		code, body := req(t, "GET", "/api/tasks?agent_name="+name, "", auth())
 		expect(t, code, 200)
 		m := obj(t, body)
 		items, _ := m["items"].([]interface{})
@@ -482,7 +508,7 @@ func TestBuiltinAgentLifecycle(t *testing.T) {
 			"api_key":"sk-dummy-2","model":"gpt-4o-mini","description":"Updated"
 		}`, name), auth())
 		expect(t, code, 200)
-		_, body := req(t, "GET", "/api/builtin-agents", "", nil)
+		_, body := req(t, "GET", "/api/builtin-agents", "", auth())
 		for _, item := range arr(t, body) {
 			a, _ := item.(map[string]interface{})
 			if a["name"] == name {
@@ -502,7 +528,7 @@ func TestBuiltinAgentLifecycle(t *testing.T) {
 	})
 
 	t.Run("12_VerifyDeleted", func(t *testing.T) {
-		_, body := req(t, "GET", "/api/builtin-agents", "", nil)
+		_, body := req(t, "GET", "/api/builtin-agents", "", auth())
 		for _, item := range arr(t, body) {
 			a, _ := item.(map[string]interface{})
 			if a["name"] == name {
@@ -538,7 +564,7 @@ func TestBuiltinAgent_Errors(t *testing.T) {
 		}
 	})
 	t.Run("MethodNotAllowed", func(t *testing.T) {
-		code, _ := req(t, "PUT", "/api/builtin-agents", "", nil)
+		code, _ := req(t, "PUT", "/api/builtin-agents", "", auth())
 		expect(t, code, 405)
 	})
 }
@@ -547,7 +573,7 @@ func TestBuiltinAgent_Errors(t *testing.T) {
 
 func TestProxy_NotFound(t *testing.T) {
 	code, body := req(t, "POST", "/agent/nonexistent-xyz-999",
-		`{"jsonrpc":"2.0","method":"message/send","id":1,"params":{"message":{"role":"user","parts":[{"text":"hi"}]}}}`, nil)
+		`{"jsonrpc":"2.0","method":"message/send","id":1,"params":{"message":{"role":"user","parts":[{"text":"hi"}]}}}`, auth())
 	expect(t, code, 404)
 	if obj(t, body)["error"] == nil {
 		t.Error("expected error")
@@ -555,7 +581,7 @@ func TestProxy_NotFound(t *testing.T) {
 }
 
 func TestProxy_MethodNotAllowed(t *testing.T) {
-	code, _ := req(t, "GET", "/agent/any-agent", "", nil)
+	code, _ := req(t, "GET", "/agent/any-agent", "", auth())
 	expect(t, code, 405)
 }
 
@@ -563,7 +589,7 @@ func TestProxy_MethodNotAllowed(t *testing.T) {
 
 func TestTaskList(t *testing.T) {
 	t.Run("Default", func(t *testing.T) {
-		code, body := req(t, "GET", "/api/tasks", "", nil)
+		code, body := req(t, "GET", "/api/tasks", "", auth())
 		expect(t, code, 200)
 		m := obj(t, body)
 		for _, k := range []string{"items", "total", "page", "size"} {
@@ -573,7 +599,7 @@ func TestTaskList(t *testing.T) {
 		}
 	})
 	t.Run("Pagination", func(t *testing.T) {
-		code, body := req(t, "GET", "/api/tasks?page=1&size=3", "", nil)
+		code, body := req(t, "GET", "/api/tasks?page=1&size=3", "", auth())
 		expect(t, code, 200)
 		m := obj(t, body)
 		if sz, _ := m["size"].(float64); sz != 3 {
@@ -584,11 +610,11 @@ func TestTaskList(t *testing.T) {
 		}
 	})
 	t.Run("StateFilter", func(t *testing.T) {
-		code, _ := req(t, "GET", "/api/tasks?state=RESPONDED", "", nil)
+		code, _ := req(t, "GET", "/api/tasks?state=RESPONDED", "", auth())
 		expect(t, code, 200)
 	})
 	t.Run("AgentFilter", func(t *testing.T) {
-		code, body := req(t, "GET", "/api/tasks?agent_name=nonexistent", "", nil)
+		code, body := req(t, "GET", "/api/tasks?agent_name=nonexistent", "", auth())
 		expect(t, code, 200)
 		m := obj(t, body)
 		if total, _ := m["total"].(float64); total != 0 {
@@ -596,13 +622,13 @@ func TestTaskList(t *testing.T) {
 		}
 	})
 	t.Run("Search", func(t *testing.T) {
-		code, _ := req(t, "GET", "/api/tasks?search=e2e", "", nil)
+		code, _ := req(t, "GET", "/api/tasks?search=e2e", "", auth())
 		expect(t, code, 200)
 	})
 }
 
 func TestTaskDetail_NotFound(t *testing.T) {
-	code, body := req(t, "GET", "/api/tasks/nonexistent-task-id", "", nil)
+	code, body := req(t, "GET", "/api/tasks/nonexistent-task-id", "", auth())
 	expect(t, code, 404)
 	if obj(t, body)["error"] != "not found" {
 		t.Error("expected 'not found'")
@@ -613,24 +639,24 @@ func TestTaskDetail_NotFound(t *testing.T) {
 
 func TestTraces(t *testing.T) {
 	t.Run("ListRecent", func(t *testing.T) {
-		code, body := req(t, "GET", "/api/traces", "", nil)
+		code, body := req(t, "GET", "/api/traces", "", auth())
 		expect(t, code, 200)
 		arr(t, body) // verify it's an array
 	})
 	t.Run("ListContexts", func(t *testing.T) {
-		code, body := req(t, "GET", "/api/traces/contexts", "", nil)
+		code, body := req(t, "GET", "/api/traces/contexts", "", auth())
 		expect(t, code, 200)
 		arr(t, body)
 	})
 	t.Run("ByTask_Empty", func(t *testing.T) {
-		code, body := req(t, "GET", "/api/traces/task/nonexistent", "", nil)
+		code, body := req(t, "GET", "/api/traces/task/nonexistent", "", auth())
 		expect(t, code, 200)
 		if len(arr(t, body)) != 0 {
 			t.Error("expected empty")
 		}
 	})
 	t.Run("ByContext_Empty", func(t *testing.T) {
-		code, body := req(t, "GET", "/api/traces/context/nonexistent", "", nil)
+		code, body := req(t, "GET", "/api/traces/context/nonexistent", "", auth())
 		expect(t, code, 200)
 		if len(arr(t, body)) != 0 {
 			t.Error("expected empty")
@@ -646,6 +672,7 @@ func TestSSEEvents(t *testing.T) {
 	defer cancel()
 	r, _ := http.NewRequestWithContext(ctx, "GET", baseURL+"/api/events", nil)
 	r.Header.Set("Accept", "text/event-stream")
+	r.Header.Set("X-Admin-Token", adminToken)
 	resp, err := httpClient.Do(r)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -681,6 +708,7 @@ func TestMCP_SSE(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	r, _ := http.NewRequestWithContext(ctx, "GET", baseURL+"/mcp/sse", nil)
+	r.Header.Set("X-Admin-Token", adminToken)
 	resp, err := httpClient.Do(r)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -711,7 +739,7 @@ func mcpCall(t *testing.T, method string, params interface{}) (int, map[string]i
 	t.Helper()
 	rpc := map[string]interface{}{"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
 	body, _ := json.Marshal(rpc)
-	code, resp := req(t, "POST", "/mcp/messages", string(body), nil)
+	code, resp := req(t, "POST", "/mcp/messages", string(body), auth())
 	return code, obj(t, resp)
 }
 
@@ -800,7 +828,7 @@ func TestMCP_ToolCall_ListAgents(t *testing.T) {
 }
 
 func TestMCP_ToolCall_GetAgentInfo(t *testing.T) {
-	_, agentsBody := req(t, "GET", "/api/agents", "", nil)
+	_, agentsBody := req(t, "GET", "/api/agents", "", auth())
 	agents := arr(t, agentsBody)
 	if len(agents) == 0 {
 		t.Skip("no agents")
@@ -877,7 +905,7 @@ func TestAgentDelete_CleansEngine(t *testing.T) {
 	code, _ = req(t, "DELETE", "/api/agents/"+name, "", auth())
 	expect(t, code, 204)
 
-	_, body := req(t, "GET", "/api/builtin-agents", "", nil)
+	_, body := req(t, "GET", "/api/builtin-agents", "", auth())
 	for _, item := range arr(t, body) {
 		a, _ := item.(map[string]interface{})
 		if a["name"] == name {
@@ -890,7 +918,7 @@ func TestAgentDelete_CleansEngine(t *testing.T) {
 
 func TestMethodNotAllowed(t *testing.T) {
 	t.Run("PUT_agents", func(t *testing.T) {
-		code, _ := req(t, "PUT", "/api/agents", "", nil)
+		code, _ := req(t, "PUT", "/api/agents", "", auth())
 		expect(t, code, 405)
 	})
 	t.Run("POST_stats", func(t *testing.T) {

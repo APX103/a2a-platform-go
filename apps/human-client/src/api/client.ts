@@ -1,6 +1,7 @@
 export interface Session {
   client_id: string
   group_id: string
+  access_token: string
 }
 
 export interface Group {
@@ -66,13 +67,26 @@ export interface RoomSnapshot {
   orchestration: GroupOrchestrationState
 }
 
+export interface GroupJoinResponse {
+  group: Group
+  member: GroupMember
+  access_token: string
+  orchestration: GroupOrchestrationState
+}
+
 const PLATFORM_BASE = trimSlash(import.meta.env.VITE_A2A_PLATFORM_URL?.trim() || '')
 const directPlatform = PLATFORM_BASE !== ''
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
+async function request<T>(path: string, options?: RequestInit & { accessToken?: string }): Promise<T> {
+  const headers = {
+    'content-type': 'application/json',
+    ...(options?.accessToken ? { Authorization: `Bearer ${options.accessToken}` } : {}),
+    ...(options?.headers || {}),
+  }
+  const { accessToken: _accessToken, ...fetchOptions } = options || {}
   const res = await fetch(`${PLATFORM_BASE}${path}`, {
-    headers: { 'content-type': 'application/json' },
-    ...options,
+    ...fetchOptions,
+    headers,
   })
   if (!res.ok) {
     const text = await res.text()
@@ -89,21 +103,28 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ client_id: clientId }),
     }),
-  getGroup: (groupId: string) => request<Group>(`/api/groups/${encodeURIComponent(groupId)}`),
-  joinGroup: (groupId: string, clientId: string) => request<GroupMember>(`/api/groups/${encodeURIComponent(groupId)}/join`, {
+  getGroup: (groupId: string, accessToken: string) => request<Group>(`/api/groups/${encodeURIComponent(groupId)}`, { accessToken }),
+  joinWithInvite: (inviteToken: string, clientId: string) => request<GroupJoinResponse>('/api/group-joins', {
     method: 'POST',
-    body: JSON.stringify({ client_id: clientId, capabilities: { ui: 'human-client' } }),
+    body: JSON.stringify({
+      invite_token: inviteToken,
+      actor_type: 'human',
+      actor_id: clientId,
+      client_id: clientId,
+      capabilities: { ui: 'human-client' },
+    }),
   }),
-  listMembers: (groupId: string) => request<GroupMember[]>(`/api/groups/${encodeURIComponent(groupId)}/members`),
-  listEvents: (groupId: string) => request<GroupEvent[]>(`/api/groups/${encodeURIComponent(groupId)}/events?limit=100`),
-  listArtifacts: (groupId: string) => request<GroupArtifact[]>(`/api/groups/${encodeURIComponent(groupId)}/artifacts`),
-  getOrchestration: (groupId: string) => request<GroupOrchestrationState>(`/api/groups/${encodeURIComponent(groupId)}/orchestration`),
-  sendMessage: (groupId: string, clientId: string, content: string) => {
+  listMembers: (groupId: string, accessToken: string) => request<GroupMember[]>(`/api/groups/${encodeURIComponent(groupId)}/members`, { accessToken }),
+  listEvents: (groupId: string, accessToken: string) => request<GroupEvent[]>(`/api/groups/${encodeURIComponent(groupId)}/events?limit=100`, { accessToken }),
+  listArtifacts: (groupId: string, accessToken: string) => request<GroupArtifact[]>(`/api/groups/${encodeURIComponent(groupId)}/artifacts`, { accessToken }),
+  getOrchestration: (groupId: string, accessToken: string) => request<GroupOrchestrationState>(`/api/groups/${encodeURIComponent(groupId)}/orchestration`, { accessToken }),
+  sendMessage: (groupId: string, accessToken: string, clientId: string, content: string) => {
     const path = directPlatform
       ? `/api/groups/${encodeURIComponent(groupId)}/events`
       : `/api/groups/${encodeURIComponent(groupId)}/messages`
     return request<{ event: GroupEvent; orchestration: GroupOrchestrationState }>(path, {
       method: 'POST',
+      accessToken,
       body: JSON.stringify({
         event_type: 'message',
         sender_type: 'human',
@@ -114,13 +135,13 @@ export const api = {
   },
 }
 
-export async function loadRoom(groupId: string): Promise<RoomSnapshot> {
+export async function loadRoom(groupId: string, accessToken: string): Promise<RoomSnapshot> {
   const [group, members, events, artifacts, orchestration] = await Promise.all([
-    api.getGroup(groupId),
-    api.listMembers(groupId),
-    api.listEvents(groupId),
-    api.listArtifacts(groupId),
-    api.getOrchestration(groupId),
+    api.getGroup(groupId, accessToken),
+    api.listMembers(groupId, accessToken),
+    api.listEvents(groupId, accessToken),
+    api.listArtifacts(groupId, accessToken),
+    api.getOrchestration(groupId, accessToken),
   ])
   return { group, members, events, artifacts, orchestration }
 }

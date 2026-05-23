@@ -27,6 +27,11 @@ export function useChat(agentName: string) {
   const toolCallBufferRef = useRef<Record<string, ToolCall>>({});
   const [thinkingBuffer, setThinkingBuffer] = useState<{ [taskId: string]: string }>({});
 
+  const adminHeaders = useCallback((): Record<string, string> => {
+    const token = localStorage.getItem('admin_token') || '';
+    return token ? { 'X-Admin-Token': token } : {};
+  }, []);
+
   // Clean up SSE connection
   const disconnect = useCallback(() => {
     if (controllerRef.current) {
@@ -84,9 +89,13 @@ export function useChat(agentName: string) {
       };
 
       try {
+        const headers = adminHeaders();
+        if (!headers['X-Admin-Token']) {
+          throw new Error('Admin token required for direct agent chat');
+        }
         await fetchEventSource(`/agent/${agentName}`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...headers },
           body: JSON.stringify(requestBody),
           signal: controller.signal,
           onmessage: (event) => {
@@ -273,7 +282,7 @@ export function useChat(agentName: string) {
       setContextId(contextId);
       try {
         const [ctxRes, subRes] = await Promise.all([
-          fetch(`/api/contexts/${contextId}`),
+          fetch(`/api/contexts/${contextId}`, { headers: adminHeaders() }),
           api.listSubagents(contextId),
         ]);
         if (!ctxRes.ok) throw new Error('Failed to load context');
@@ -294,7 +303,7 @@ export function useChat(agentName: string) {
         setError(err instanceof Error ? err.message : 'Failed to load messages');
       }
     },
-    [setContextId, setMessages, setError, setSubagents]
+    [setContextId, setMessages, setError, setSubagents, adminHeaders]
   );
 
   return {

@@ -197,6 +197,30 @@ type GroupMember struct {
 	JoinedAt         time.Time `db:"joined_at" json:"joined_at"`
 }
 
+type GroupInvite struct {
+	ID               int64      `db:"id" json:"id"`
+	GroupID          string     `db:"group_id" json:"group_id"`
+	TokenHash        string     `db:"token_hash" json:"-"`
+	ActorTypeAllowed string     `db:"actor_type_allowed" json:"actor_type_allowed,omitempty"`
+	Role             string     `db:"role" json:"role"`
+	MaxUses          int        `db:"max_uses" json:"max_uses"`
+	UsedCount        int        `db:"used_count" json:"used_count"`
+	ExpiresAt        *time.Time `db:"expires_at" json:"expires_at,omitempty"`
+	Status           string     `db:"status" json:"status"`
+	CreatedAt        time.Time  `db:"created_at" json:"created_at"`
+}
+
+type GroupMemberToken struct {
+	ID        int64      `db:"id" json:"id"`
+	GroupID   string     `db:"group_id" json:"group_id"`
+	ActorType string     `db:"actor_type" json:"actor_type"`
+	ActorID   string     `db:"actor_id" json:"actor_id"`
+	TokenHash string     `db:"token_hash" json:"-"`
+	ExpiresAt *time.Time `db:"expires_at" json:"expires_at,omitempty"`
+	RevokedAt *time.Time `db:"revoked_at" json:"revoked_at,omitempty"`
+	CreatedAt time.Time  `db:"created_at" json:"created_at"`
+}
+
 type GroupEvent struct {
 	ID           int64     `db:"id" json:"id"`
 	GroupID      string    `db:"group_id" json:"group_id"`

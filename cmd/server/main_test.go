@@ -85,6 +85,28 @@ func setupGroupRouteTestContext(t *testing.T) (*svc.ServiceContext, string) {
 		joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		UNIQUE(group_id, actor_type, actor_id)
 	);
+	CREATE TABLE group_invites (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		group_id TEXT NOT NULL,
+		token_hash TEXT NOT NULL UNIQUE,
+		actor_type_allowed TEXT,
+		role TEXT NOT NULL DEFAULT 'member',
+		max_uses INTEGER NOT NULL DEFAULT 1,
+		used_count INTEGER NOT NULL DEFAULT 0,
+		expires_at TIMESTAMP,
+		status TEXT NOT NULL DEFAULT 'active',
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	);
+	CREATE TABLE group_member_tokens (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		group_id TEXT NOT NULL,
+		actor_type TEXT NOT NULL,
+		actor_id TEXT NOT NULL,
+		token_hash TEXT NOT NULL UNIQUE,
+		expires_at TIMESTAMP,
+		revoked_at TIMESTAMP,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	);
 	CREATE TABLE group_events (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		group_id TEXT NOT NULL,
@@ -114,6 +136,8 @@ func setupGroupRouteTestContext(t *testing.T) (*svc.ServiceContext, string) {
 	ctx := &svc.ServiceContext{
 		Groups:         svc.NewGroupStore(db),
 		GroupMembers:   svc.NewGroupMemberStore(db),
+		GroupInvites:   svc.NewGroupInviteStore(db),
+		GroupTokens:    svc.NewGroupMemberTokenStore(db),
 		GroupEvents:    svc.NewGroupEventStore(db),
 		GroupArtifacts: svc.NewGroupArtifactStore(db),
 	}
@@ -247,5 +271,82 @@ func TestAuthMiddlewareProtectsGroupManagement(t *testing.T) {
 
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("authorized status = %d, want 204", rec.Code)
+	}
+}
+
+func TestAuthMiddlewareRequiresGroupMembershipForGroupReads(t *testing.T) {
+	svcCtx, groupID := setupGroupRouteTestContext(t)
+	svcCtx.Config = &config.Config{AdminToken: "secret"}
+
+	protected := authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}), svcCtx)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/groups/"+groupID+"/members", nil)
+	rec := httptest.NewRecorder()
+	protected.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("no token status = %d, want 401", rec.Code)
+	}
+
+	accessToken, err := svcCtx.GroupTokens.Create(&model.GroupMemberToken{
+		GroupID:   groupID,
+		ActorType: model.GroupActorHuman,
+		ActorID:   "human-route",
+	})
+	if err != nil {
+		t.Fatalf("create member token: %v", err)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/groups/"+groupID+"/members", nil)
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	rec = httptest.NewRecorder()
+	protected.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("member status = %d, want 204", rec.Code)
+	}
+	if got := req.Header.Get(authPrincipalHeader); got != "member" {
+		t.Fatalf("principal = %q, want member", got)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/groups/other-group/members", nil)
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	rec = httptest.NewRecorder()
+	protected.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("other group status = %d, want 403", rec.Code)
+	}
+}
+
+func TestAuthMiddlewareRestrictsAgentProxyToSameGroup(t *testing.T) {
+	svcCtx, groupID := setupGroupRouteTestContext(t)
+	svcCtx.Config = &config.Config{AdminToken: "secret"}
+
+	accessToken, err := svcCtx.GroupTokens.Create(&model.GroupMemberToken{
+		GroupID:   groupID,
+		ActorType: model.GroupActorHuman,
+		ActorID:   "human-route",
+	})
+	if err != nil {
+		t.Fatalf("create member token: %v", err)
+	}
+	protected := authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}), svcCtx)
+
+	req := httptest.NewRequest(http.MethodPost, "/agent/leader-agent", nil)
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	rec := httptest.NewRecorder()
+	protected.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("same group agent status = %d, want 204", rec.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/agent/not-in-room", nil)
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	rec = httptest.NewRecorder()
+	protected.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("other agent status = %d, want 403", rec.Code)
 	}
 }

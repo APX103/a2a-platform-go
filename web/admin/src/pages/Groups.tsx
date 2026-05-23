@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom'
 import { Plus, Users, Archive, GitBranch } from 'lucide-react'
 import { api, Group } from '../api/client'
 
+type GroupStatusFilter = 'active' | 'archived' | ''
+
 const modes = [
   { value: 'leader_led', label: 'Leader-led' },
   { value: 'roundtable', label: 'Roundtable' },
@@ -29,6 +31,7 @@ function parseJsonField(value: string) {
 export default function Groups() {
   const [groups, setGroups] = useState<Group[]>([])
   const [loading, setLoading] = useState(true)
+  const [statusFilter, setStatusFilter] = useState<GroupStatusFilter>('active')
   const [showCreate, setShowCreate] = useState(false)
   const [error, setError] = useState('')
   const [token, setToken] = useState(() => localStorage.getItem('admin_token') || '')
@@ -42,13 +45,13 @@ export default function Groups() {
 
   const load = () => {
     setLoading(true)
-    api.listGroups()
+    api.listGroups(statusFilter || undefined)
       .then(data => setGroups(Array.isArray(data) ? data : []))
       .catch(err => setError(err instanceof Error ? err.message : 'Failed to load groups'))
       .finally(() => setLoading(false))
   }
 
-  useEffect(load, [])
+  useEffect(load, [statusFilter])
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -119,6 +122,23 @@ export default function Groups() {
           placeholder="Enter admin token for mutations"
           className="mt-1 w-full px-3 py-1.5 text-sm rounded-md border border-[var(--border)] bg-[var(--bg-primary)] text-[var(--text-primary)]"
         />
+      </div>
+
+      <div className="mb-4 inline-flex rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-0.5">
+        {[
+          { value: 'active', label: 'Active' },
+          { value: 'archived', label: 'Archived' },
+          { value: '', label: 'All' },
+        ].map(item => (
+          <button
+            key={item.label}
+            type="button"
+            onClick={() => setStatusFilter(item.value as GroupStatusFilter)}
+            className={`px-3 py-1.5 text-xs rounded ${statusFilter === item.value ? 'bg-[var(--accent)] text-white' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}`}
+          >
+            {item.label}
+          </button>
+        ))}
       </div>
 
       {showCreate && (
@@ -204,13 +224,15 @@ export default function Groups() {
                       <span>{formatTime(group.updated_at)}</span>
                     </div>
                   </Link>
-                  <button
-                    onClick={() => handleArchive(group)}
-                    className="p-1.5 text-[var(--text-tertiary)] hover:text-[var(--warning)] rounded transition-colors"
-                    title="Archive group"
-                  >
-                    <Archive size={15} />
-                  </button>
+                  {group.status !== 'archived' && (
+                    <button
+                      onClick={() => handleArchive(group)}
+                      className="p-1.5 text-[var(--text-tertiary)] hover:text-[var(--warning)] rounded transition-colors"
+                      title="Archive group"
+                    >
+                      <Archive size={15} />
+                    </button>
+                  )}
                 </div>
               </div>
             ))

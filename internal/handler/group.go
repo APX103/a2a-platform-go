@@ -5,9 +5,17 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"a2a-platform/internal/model"
 	"a2a-platform/internal/svc"
+)
+
+const (
+	authPrincipalHeader = "X-A2A-Principal"
+	authGroupIDHeader   = "X-A2A-Group-ID"
+	authActorTypeHeader = "X-A2A-Actor-Type"
+	authActorIDHeader   = "X-A2A-Actor-ID"
 )
 
 type groupReq struct {
@@ -26,6 +34,33 @@ type memberReq struct {
 	Role         string          `json:"role"`
 	Capabilities json.RawMessage `json:"capabilities"`
 	ClientID     string          `json:"client_id"`
+}
+
+type inviteReq struct {
+	ActorTypeAllowed string `json:"actor_type_allowed"`
+	Role             string `json:"role"`
+	MaxUses          int    `json:"max_uses"`
+	ExpiresAt        string `json:"expires_at"`
+}
+
+type inviteResp struct {
+	*model.GroupInvite
+	Token string `json:"token,omitempty"`
+}
+
+type groupJoinReq struct {
+	InviteToken  string          `json:"invite_token"`
+	ActorType    string          `json:"actor_type"`
+	ActorID      string          `json:"actor_id"`
+	ClientID     string          `json:"client_id"`
+	Capabilities json.RawMessage `json:"capabilities"`
+}
+
+type groupJoinResp struct {
+	Group         *model.Group                  `json:"group"`
+	Member        *model.GroupMember            `json:"member"`
+	AccessToken   string                        `json:"access_token"`
+	Orchestration model.GroupOrchestrationState `json:"orchestration"`
 }
 
 type eventReq struct {
@@ -62,7 +97,13 @@ func (h *GroupListHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		status := r.URL.Query().Get("status")
-		groups, err := h.svcCtx.Groups.List(status)
+		var groups []*model.Group
+		var err error
+		if isMemberPrincipal(r) {
+			groups, err = h.svcCtx.Groups.ListByActor(r.Header.Get(authActorTypeHeader), r.Header.Get(authActorIDHeader), status)
+		} else {
+			groups, err = h.svcCtx.Groups.List(status)
+		}
 		if err != nil {
 			errHTTP(w, err)
 			return
@@ -90,6 +131,156 @@ func (h *GroupListHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		jsonError(w, "method not allowed", 405)
 	}
+}
+
+type GroupInviteHandler struct {
+	svcCtx *svc.ServiceContext
+}
+
+func NewGroupInviteHandler(svcCtx *svc.ServiceContext) *GroupInviteHandler {
+	return &GroupInviteHandler{svcCtx: svcCtx}
+}
+
+func (h *GroupInviteHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	groupID := getPathParam(r, "GroupId")
+	group, err := h.svcCtx.Groups.Get(groupID)
+	if err != nil {
+		errHTTP(w, err)
+		return
+	}
+	if group == nil {
+		jsonError(w, "group not found", 404)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		invites, err := h.svcCtx.GroupInvites.List(group.ID)
+		if err != nil {
+			errHTTP(w, err)
+			return
+		}
+		if invites == nil {
+			invites = []*model.GroupInvite{}
+		}
+		okJSON(w, invites)
+	case http.MethodPost:
+		var req inviteReq
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonError(w, "invalid JSON", 400)
+			return
+		}
+		invite := &model.GroupInvite{
+			GroupID:          group.ID,
+			ActorTypeAllowed: req.ActorTypeAllowed,
+			Role:             req.Role,
+			MaxUses:          req.MaxUses,
+			Status:           model.GroupStatusActive,
+		}
+		if req.ExpiresAt != "" {
+			expiresAt, err := time.Parse(time.RFC3339, req.ExpiresAt)
+			if err != nil {
+				jsonError(w, "expires_at must be RFC3339", 400)
+				return
+			}
+			invite.ExpiresAt = &expiresAt
+		}
+		token, err := h.svcCtx.GroupInvites.Create(invite)
+		if err != nil {
+			errHTTP(w, err)
+			return
+		}
+		okJSON(w, inviteResp{GroupInvite: invite, Token: token})
+	default:
+		jsonError(w, "method not allowed", 405)
+	}
+}
+
+type GroupJoinByInviteHandler struct {
+	svcCtx *svc.ServiceContext
+}
+
+func NewGroupJoinByInviteHandler(svcCtx *svc.ServiceContext) *GroupJoinByInviteHandler {
+	return &GroupJoinByInviteHandler{svcCtx: svcCtx}
+}
+
+func (h *GroupJoinByInviteHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonError(w, "method not allowed", 405)
+		return
+	}
+	var req groupJoinReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON", 400)
+		return
+	}
+	inviteToken := strings.TrimSpace(req.InviteToken)
+	if inviteToken == "" {
+		jsonError(w, "invite_token is required", 400)
+		return
+	}
+	actorType := req.ActorType
+	if actorType == "" && req.ClientID != "" {
+		actorType = model.GroupActorHuman
+	}
+	actorType = svc.NormalizeActorType(actorType)
+	actorID := strings.TrimSpace(req.ActorID)
+	if actorID == "" {
+		actorID = strings.TrimSpace(req.ClientID)
+	}
+	if actorID == "" {
+		jsonError(w, "actor_id is required", 400)
+		return
+	}
+	invite, err := h.svcCtx.GroupInvites.GetByToken(inviteToken)
+	if err != nil {
+		errHTTP(w, err)
+		return
+	}
+	if !svc.InviteUsable(invite, actorType, time.Now()) {
+		jsonError(w, "invalid invite token", 403)
+		return
+	}
+	group, err := h.svcCtx.Groups.Get(invite.GroupID)
+	if err != nil {
+		errHTTP(w, err)
+		return
+	}
+	if group == nil || group.Status != model.GroupStatusActive {
+		jsonError(w, "group is not joinable", 403)
+		return
+	}
+	member := &model.GroupMember{
+		GroupID:          group.ID,
+		ActorType:        actorType,
+		ActorID:          actorID,
+		Role:             invite.Role,
+		CapabilitiesJson: rawJSONToString(req.Capabilities),
+	}
+	if err := h.svcCtx.GroupMembers.Upsert(member); err != nil {
+		errHTTP(w, err)
+		return
+	}
+	if err := h.svcCtx.GroupInvites.Consume(invite.ID); err != nil {
+		errHTTP(w, err)
+		return
+	}
+	memberToken := &model.GroupMemberToken{GroupID: group.ID, ActorType: actorType, ActorID: actorID}
+	accessToken, err := h.svcCtx.GroupTokens.Create(memberToken)
+	if err != nil {
+		errHTTP(w, err)
+		return
+	}
+	members, err := h.svcCtx.GroupMembers.List(group.ID)
+	if err != nil {
+		errHTTP(w, err)
+		return
+	}
+	okJSON(w, groupJoinResp{
+		Group:         group,
+		Member:        member,
+		AccessToken:   accessToken,
+		Orchestration: svc.BuildGroupOrchestrationState(group, members),
+	})
 }
 
 type GroupDetailHandler struct {
@@ -312,6 +503,10 @@ func (h *GroupEventHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, "sender_id is required", 400)
 			return
 		}
+		if isMemberPrincipal(r) && (event.SenderType != r.Header.Get(authActorTypeHeader) || event.SenderID != r.Header.Get(authActorIDHeader)) {
+			jsonError(w, "sender does not match access token", 403)
+			return
+		}
 		if err := h.svcCtx.GroupEvents.Append(event); err != nil {
 			errHTTP(w, err)
 			return
@@ -371,6 +566,16 @@ func (h *GroupArtifactHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		if artifact.Name == "" {
 			jsonError(w, "name is required", 400)
 			return
+		}
+		if isMemberPrincipal(r) {
+			actorID := r.Header.Get(authActorIDHeader)
+			if artifact.CreatedBy == "" {
+				artifact.CreatedBy = actorID
+			}
+			if artifact.CreatedBy != actorID {
+				jsonError(w, "created_by does not match access token", 403)
+				return
+			}
 		}
 		if err := h.svcCtx.GroupArtifacts.Create(artifact); err != nil {
 			errHTTP(w, err)
@@ -520,4 +725,8 @@ func rawJSONToString(raw json.RawMessage) string {
 		return ""
 	}
 	return string(raw)
+}
+
+func isMemberPrincipal(r *http.Request) bool {
+	return r.Header.Get(authPrincipalHeader) == "member"
 }

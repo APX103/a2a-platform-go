@@ -31,6 +31,13 @@ import (
 
 type requestIDContextKey struct{}
 
+const (
+	authPrincipalHeader = "X-A2A-Principal"
+	authGroupIDHeader   = "X-A2A-Group-ID"
+	authActorTypeHeader = "X-A2A-Actor-Type"
+	authActorIDHeader   = "X-A2A-Actor-ID"
+)
+
 func main() {
 	// Initialize structured logging
 	log.SetFlags(0)
@@ -114,6 +121,7 @@ func main() {
 	// Native A2A group orchestration API
 	mux.HandleFunc("/api/groups", handler.NewGroupListHandler(svcCtx).ServeHTTP)
 	mux.HandleFunc("/api/groups/", makeGroupRouteHandler(svcCtx))
+	mux.HandleFunc("/api/group-joins", handler.NewGroupJoinByInviteHandler(svcCtx).ServeHTTP)
 
 	// Events SSE stream (for TUI real-time monitoring)
 	mux.HandleFunc("/api/events", handler.NewEventsHandler(svcCtx.EventBus).ServeHTTP)
@@ -464,6 +472,11 @@ func makeGroupRouteHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 				handler.NewGroupJoinHandler(svcCtx).ServeHTTP(w, r)
 				return
 			}
+		case "invites":
+			if len(parts) == 2 {
+				handler.NewGroupInviteHandler(svcCtx).ServeHTTP(w, r)
+				return
+			}
 		case "events":
 			if len(parts) == 2 {
 				handler.NewGroupEventHandler(svcCtx).ServeHTTP(w, r)
@@ -514,7 +527,7 @@ func corsMiddleware(next http.Handler, cfg *config.Config) http.Handler {
 			}
 		}
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, A2A-Version, Authorization, X-Admin-Token")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, A2A-Version, Authorization, X-Admin-Token, X-Group-Member-Token")
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(204)
 			return
@@ -528,49 +541,172 @@ func authMiddleware(next http.Handler, svcCtx *svc.ServiceContext) http.Handler 
 		path := r.URL.Path
 		method := r.Method
 
-		// Only protect POST /api/agents and DELETE /api/agents/*
-		// Also protect builtin-agents CRUD
-		needsAuth := false
-		if method == http.MethodPost && path == "/api/agents" {
-			needsAuth = true
-		}
-		if method == http.MethodDelete && strings.HasPrefix(path, "/api/agents/") {
-			needsAuth = true
-		}
-		if method == http.MethodPost && path == "/api/builtin-agents" {
-			needsAuth = true
-		}
-		if (method == http.MethodPut || method == http.MethodDelete) && strings.HasPrefix(path, "/api/builtin-agents/") {
-			needsAuth = true
-		}
-		if method == http.MethodPost && path == "/api/groups" {
-			needsAuth = true
-		}
-		if (method == http.MethodPut || method == http.MethodDelete) && strings.HasPrefix(path, "/api/groups/") {
-			needsAuth = true
-		}
-		if method == http.MethodPost && strings.HasPrefix(path, "/api/groups/") && strings.HasSuffix(path, "/members") {
-			needsAuth = true
+		clearAuthPrincipalHeaders(r)
+
+		if method == http.MethodOptions || path == "/health" || path == "/api/group-joins" {
+			next.ServeHTTP(w, r)
+			return
 		}
 
-		if needsAuth {
-			token := ""
-			if t := r.Header.Get("X-Admin-Token"); t != "" {
-				token = t
-			} else if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
-				token = strings.TrimPrefix(auth, "Bearer ")
+		if isAdminRequest(r, svcCtx) {
+			r.Header.Set(authPrincipalHeader, "admin")
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		memberToken, tokenErr := memberTokenFromRequest(r, svcCtx)
+		if tokenErr != nil {
+			jsonError(w, tokenErr.Error(), 500)
+			return
+		}
+		if memberToken != nil {
+			r.Header.Set(authPrincipalHeader, "member")
+			r.Header.Set(authGroupIDHeader, memberToken.GroupID)
+			r.Header.Set(authActorTypeHeader, memberToken.ActorType)
+			r.Header.Set(authActorIDHeader, memberToken.ActorID)
+		}
+
+		if requiresAdmin(path, method) {
+			jsonError(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		if groupID, ok := scopedGroupID(path, method); ok {
+			if memberToken == nil {
+				jsonError(w, "unauthorized", http.StatusUnauthorized)
+				return
 			}
+			if groupID != "" && memberToken.GroupID != groupID {
+				jsonError(w, "forbidden", http.StatusForbidden)
+				return
+			}
+		}
 
-			if token == "" || token != svcCtx.Config.AdminToken {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(401)
-				json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
+		if strings.HasPrefix(path, "/agent/") {
+			if memberToken == nil {
+				jsonError(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			target := pathTail(path, "/agent/")
+			if target == "" {
+				jsonError(w, "missing agent name", http.StatusBadRequest)
+				return
+			}
+			member, err := svcCtx.GroupMembers.Get(memberToken.GroupID, model.GroupActorAgent, target)
+			if err != nil {
+				jsonError(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if member == nil {
+				jsonError(w, "target agent is not in caller group", http.StatusForbidden)
 				return
 			}
 		}
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+func clearAuthPrincipalHeaders(r *http.Request) {
+	for _, header := range []string{authPrincipalHeader, authGroupIDHeader, authActorTypeHeader, authActorIDHeader} {
+		r.Header.Del(header)
+	}
+}
+
+func isAdminRequest(r *http.Request, svcCtx *svc.ServiceContext) bool {
+	if svcCtx == nil || svcCtx.Config == nil || svcCtx.Config.AdminToken == "" {
+		return false
+	}
+	return tokenFromRequest(r) == svcCtx.Config.AdminToken
+}
+
+func memberTokenFromRequest(r *http.Request, svcCtx *svc.ServiceContext) (*model.GroupMemberToken, error) {
+	if svcCtx == nil || svcCtx.GroupTokens == nil {
+		return nil, nil
+	}
+	token := r.Header.Get("X-Group-Member-Token")
+	if token == "" {
+		token = bearerToken(r)
+	}
+	if token == "" {
+		return nil, nil
+	}
+	memberToken, err := svcCtx.GroupTokens.GetByToken(token)
+	if err != nil || !svc.MemberTokenUsable(memberToken, time.Now()) {
+		return nil, err
+	}
+	return memberToken, nil
+}
+
+func tokenFromRequest(r *http.Request) string {
+	if t := r.Header.Get("X-Admin-Token"); t != "" {
+		return t
+	}
+	return bearerToken(r)
+}
+
+func bearerToken(r *http.Request) string {
+	auth := r.Header.Get("Authorization")
+	if strings.HasPrefix(auth, "Bearer ") {
+		return strings.TrimSpace(strings.TrimPrefix(auth, "Bearer "))
+	}
+	return ""
+}
+
+func requiresAdmin(path, method string) bool {
+	if strings.HasPrefix(path, "/api/agents") || strings.HasPrefix(path, "/api/builtin-agents") {
+		return true
+	}
+	if strings.HasPrefix(path, "/api/tasks") || strings.HasPrefix(path, "/api/traces") || strings.HasPrefix(path, "/api/contexts") || strings.HasPrefix(path, "/api/subagents") || path == "/api/events" {
+		return true
+	}
+	if strings.HasPrefix(path, "/mcp/") {
+		return true
+	}
+	if method == http.MethodPost && path == "/api/groups" {
+		return true
+	}
+	if strings.HasPrefix(path, "/api/groups/") {
+		if method == http.MethodPut || method == http.MethodDelete {
+			return true
+		}
+		if strings.HasSuffix(path, "/members") && method == http.MethodPost {
+			return true
+		}
+		if strings.HasSuffix(path, "/invites") {
+			return true
+		}
+		if strings.HasSuffix(path, "/join") {
+			return true
+		}
+	}
+	return false
+}
+
+func scopedGroupID(path, method string) (string, bool) {
+	if path == "/api/groups" && method == http.MethodGet {
+		return "", true
+	}
+	if !strings.HasPrefix(path, "/api/groups/") {
+		return "", false
+	}
+	tail := pathTail(path, "/api/groups/")
+	if tail == "" {
+		return "", false
+	}
+	parts := strings.Split(tail, "/")
+	if len(parts) == 1 && method == http.MethodGet {
+		return parts[0], true
+	}
+	if len(parts) < 2 {
+		return "", false
+	}
+	switch parts[1] {
+	case "members", "events", "artifacts", "orchestration":
+		return parts[0], true
+	default:
+		return "", false
+	}
 }
 
 func rateLimitMiddleware(next http.Handler, cfg *config.Config) http.Handler {

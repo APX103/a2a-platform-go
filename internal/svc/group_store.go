@@ -1,9 +1,14 @@
 package svc
 
 import (
+	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"strings"
+	"time"
 
 	"a2a-platform/internal/model"
 
@@ -66,6 +71,44 @@ func (s *GroupStore) List(status string) ([]*model.Group, error) {
 		args = append(args, status)
 	}
 	query += " ORDER BY updated_at DESC, created_at DESC"
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []*model.Group
+	for rows.Next() {
+		var g model.Group
+		var description, rulesJson, memoryPolicyJson sql.NullString
+		if err := rows.Scan(&g.ID, &g.Name, &description, &g.OrchestrationMode, &rulesJson, &memoryPolicyJson, &g.Status, &g.CreatedAt, &g.UpdatedAt); err != nil {
+			return nil, err
+		}
+		if description.Valid {
+			g.Description = description.String
+		}
+		if rulesJson.Valid {
+			g.RulesJson = rulesJson.String
+		}
+		if memoryPolicyJson.Valid {
+			g.MemoryPolicyJson = memoryPolicyJson.String
+		}
+		result = append(result, &g)
+	}
+	return result, rows.Err()
+}
+
+func (s *GroupStore) ListByActor(actorType, actorID, status string) ([]*model.Group, error) {
+	query := `SELECT g.id, g.name, g.description, g.orchestration_mode, g.rules_json, g.memory_policy_json, g.status, g.created_at, g.updated_at
+		FROM a2a_groups g
+		INNER JOIN group_members m ON m.group_id = g.id
+		WHERE m.actor_type = ? AND m.actor_id = ?`
+	args := []interface{}{NormalizeActorType(actorType), strings.TrimSpace(actorID)}
+	if status != "" {
+		query += " AND g.status = ?"
+		args = append(args, status)
+	}
+	query += " ORDER BY g.updated_at DESC, g.created_at DESC"
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, err
@@ -199,9 +242,253 @@ func (s *GroupMemberStore) List(groupID string) ([]*model.GroupMember, error) {
 	return result, rows.Err()
 }
 
+func (s *GroupMemberStore) Get(groupID, actorType, actorID string) (*model.GroupMember, error) {
+	var m model.GroupMember
+	var capabilities sql.NullString
+	err := s.db.QueryRow(
+		`SELECT id, group_id, actor_type, actor_id, role, capabilities_json, joined_at
+		 FROM group_members WHERE group_id = ? AND actor_type = ? AND actor_id = ?`,
+		groupID, NormalizeActorType(actorType), strings.TrimSpace(actorID),
+	).Scan(&m.ID, &m.GroupID, &m.ActorType, &m.ActorID, &m.Role, &capabilities, &m.JoinedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if capabilities.Valid {
+		m.CapabilitiesJson = capabilities.String
+	}
+	return &m, nil
+}
+
 func (s *GroupMemberStore) Delete(groupID, actorType, actorID string) error {
 	_, err := s.db.Exec("DELETE FROM group_members WHERE group_id = ? AND actor_type = ? AND actor_id = ?", groupID, NormalizeActorType(actorType), actorID)
 	return err
+}
+
+type GroupInviteStore struct {
+	db *sql.DB
+}
+
+func NewGroupInviteStore(db *sql.DB) *GroupInviteStore {
+	return &GroupInviteStore{db: db}
+}
+
+func (s *GroupInviteStore) Create(invite *model.GroupInvite) (string, error) {
+	normalizeInvite(invite)
+	token, err := NewAccessToken()
+	if err != nil {
+		return "", err
+	}
+	invite.TokenHash = HashAccessToken(token)
+	res, err := s.db.Exec(
+		`INSERT INTO group_invites (group_id, token_hash, actor_type_allowed, role, max_uses, used_count, expires_at, status)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		invite.GroupID, invite.TokenHash, nullableText(invite.ActorTypeAllowed), invite.Role, invite.MaxUses, invite.UsedCount, invite.ExpiresAt, invite.Status,
+	)
+	if err == nil {
+		if id, idErr := res.LastInsertId(); idErr == nil {
+			invite.ID = id
+		}
+	}
+	return token, err
+}
+
+func (s *GroupInviteStore) List(groupID string) ([]*model.GroupInvite, error) {
+	rows, err := s.db.Query(
+		`SELECT id, group_id, token_hash, actor_type_allowed, role, max_uses, used_count, expires_at, status, created_at
+		 FROM group_invites WHERE group_id = ? ORDER BY created_at DESC, id DESC`,
+		groupID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []*model.GroupInvite
+	for rows.Next() {
+		invite, err := scanInvite(rows)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, invite)
+	}
+	return result, rows.Err()
+}
+
+func (s *GroupInviteStore) GetByToken(token string) (*model.GroupInvite, error) {
+	var row = s.db.QueryRow(
+		`SELECT id, group_id, token_hash, actor_type_allowed, role, max_uses, used_count, expires_at, status, created_at
+		 FROM group_invites WHERE token_hash = ?`,
+		HashAccessToken(token),
+	)
+	invite, err := scanInvite(row)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return invite, err
+}
+
+func (s *GroupInviteStore) Consume(id int64) error {
+	_, err := s.db.Exec(`UPDATE group_invites SET used_count = used_count + 1 WHERE id = ?`, id)
+	return err
+}
+
+type inviteScanner interface {
+	Scan(dest ...interface{}) error
+}
+
+func scanInvite(scanner inviteScanner) (*model.GroupInvite, error) {
+	var invite model.GroupInvite
+	var actorTypeAllowed sql.NullString
+	var expiresAt sql.NullTime
+	err := scanner.Scan(&invite.ID, &invite.GroupID, &invite.TokenHash, &actorTypeAllowed, &invite.Role, &invite.MaxUses, &invite.UsedCount, &expiresAt, &invite.Status, &invite.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	if actorTypeAllowed.Valid {
+		invite.ActorTypeAllowed = actorTypeAllowed.String
+	}
+	if expiresAt.Valid {
+		invite.ExpiresAt = &expiresAt.Time
+	}
+	return &invite, nil
+}
+
+func normalizeInvite(invite *model.GroupInvite) {
+	invite.GroupID = strings.TrimSpace(invite.GroupID)
+	invite.ActorTypeAllowed = strings.TrimSpace(invite.ActorTypeAllowed)
+	if invite.ActorTypeAllowed != "" {
+		invite.ActorTypeAllowed = NormalizeActorType(invite.ActorTypeAllowed)
+	}
+	if invite.Role == "" {
+		invite.Role = "member"
+	}
+	if invite.MaxUses <= 0 {
+		invite.MaxUses = 1
+	}
+	if invite.Status == "" {
+		invite.Status = model.GroupStatusActive
+	}
+}
+
+func InviteUsable(invite *model.GroupInvite, actorType string, now time.Time) bool {
+	if invite == nil || invite.Status != model.GroupStatusActive {
+		return false
+	}
+	if invite.ActorTypeAllowed != "" && invite.ActorTypeAllowed != NormalizeActorType(actorType) {
+		return false
+	}
+	if invite.MaxUses > 0 && invite.UsedCount >= invite.MaxUses {
+		return false
+	}
+	if invite.ExpiresAt != nil && !invite.ExpiresAt.After(now) {
+		return false
+	}
+	return true
+}
+
+type GroupMemberTokenStore struct {
+	db *sql.DB
+}
+
+func NewGroupMemberTokenStore(db *sql.DB) *GroupMemberTokenStore {
+	return &GroupMemberTokenStore{db: db}
+}
+
+func (s *GroupMemberTokenStore) Create(token *model.GroupMemberToken) (string, error) {
+	token.GroupID = strings.TrimSpace(token.GroupID)
+	token.ActorType = NormalizeActorType(token.ActorType)
+	token.ActorID = strings.TrimSpace(token.ActorID)
+	plain, err := NewAccessToken()
+	if err != nil {
+		return "", err
+	}
+	token.TokenHash = HashAccessToken(plain)
+	res, err := s.db.Exec(
+		`INSERT INTO group_member_tokens (group_id, actor_type, actor_id, token_hash, expires_at, revoked_at)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		token.GroupID, token.ActorType, token.ActorID, token.TokenHash, token.ExpiresAt, token.RevokedAt,
+	)
+	if err == nil {
+		if id, idErr := res.LastInsertId(); idErr == nil {
+			token.ID = id
+		}
+	}
+	return plain, err
+}
+
+func (s *GroupMemberTokenStore) GetByToken(token string) (*model.GroupMemberToken, error) {
+	row := s.db.QueryRow(
+		`SELECT id, group_id, actor_type, actor_id, token_hash, expires_at, revoked_at, created_at
+		 FROM group_member_tokens WHERE token_hash = ?`,
+		HashAccessToken(token),
+	)
+	memberToken, err := scanMemberToken(row)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return memberToken, err
+}
+
+func (s *GroupMemberTokenStore) RevokeActor(groupID, actorType, actorID string) error {
+	_, err := s.db.Exec(
+		`UPDATE group_member_tokens SET revoked_at = CURRENT_TIMESTAMP
+		 WHERE group_id = ? AND actor_type = ? AND actor_id = ? AND revoked_at IS NULL`,
+		groupID, NormalizeActorType(actorType), strings.TrimSpace(actorID),
+	)
+	return err
+}
+
+type memberTokenScanner interface {
+	Scan(dest ...interface{}) error
+}
+
+func scanMemberToken(scanner memberTokenScanner) (*model.GroupMemberToken, error) {
+	var token model.GroupMemberToken
+	var expiresAt, revokedAt sql.NullTime
+	err := scanner.Scan(&token.ID, &token.GroupID, &token.ActorType, &token.ActorID, &token.TokenHash, &expiresAt, &revokedAt, &token.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	if expiresAt.Valid {
+		token.ExpiresAt = &expiresAt.Time
+	}
+	if revokedAt.Valid {
+		token.RevokedAt = &revokedAt.Time
+	}
+	return &token, nil
+}
+
+func MemberTokenUsable(token *model.GroupMemberToken, now time.Time) bool {
+	if token == nil || token.RevokedAt != nil {
+		return false
+	}
+	if token.ExpiresAt != nil && !token.ExpiresAt.After(now) {
+		return false
+	}
+	return true
+}
+
+func NewAccessToken() (string, error) {
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(buf), nil
+}
+
+func HashAccessToken(token string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(token)))
+	return hex.EncodeToString(sum[:])
+}
+
+func nullableText(value string) interface{} {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	return strings.TrimSpace(value)
 }
 
 type GroupEventStore struct {

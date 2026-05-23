@@ -2,9 +2,15 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL?.trim() ?? '';
 const BASE = API_BASE_URL.endsWith('/') ? API_BASE_URL.slice(0, -1) : API_BASE_URL;
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const token = localStorage.getItem('admin_token') || '';
+  const headers = {
+    'Content-Type': 'application/json',
+    ...(token ? { 'X-Admin-Token': token } : {}),
+    ...(options?.headers || {}),
+  };
   const res = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
     ...options,
+    headers,
   });
   if (!res.ok) {
     const text = await res.text();
@@ -194,6 +200,19 @@ export interface GroupOrchestrationState {
   termination_policy: string;
 }
 
+export interface GroupInvite {
+  id: number;
+  group_id: string;
+  actor_type_allowed?: string;
+  role: string;
+  max_uses: number;
+  used_count: number;
+  expires_at?: string;
+  status: string;
+  created_at: string;
+  token?: string;
+}
+
 export interface GroupEventResponse {
   event: GroupEvent;
   orchestration: GroupOrchestrationState;
@@ -305,15 +324,23 @@ export const api = {
       headers: { 'X-Admin-Token': token },
     }),
   listGroupMembers: (id: string) => request<GroupMember[]>(`/api/groups/${id}/members`),
+  listGroupInvites: (id: string) => request<GroupInvite[]>(`/api/groups/${id}/invites`),
+  createGroupInvite: (id: string, invite: { actor_type_allowed?: string; role?: string; max_uses?: number; expires_at?: string }, token: string) =>
+    request<GroupInvite>(`/api/groups/${id}/invites`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Token': token },
+      body: JSON.stringify(invite),
+    }),
   addGroupMember: (id: string, member: { actor_type: string; actor_id: string; role?: string; capabilities?: unknown }, token: string) =>
     request<GroupMember[]>(`/api/groups/${id}/members`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Admin-Token': token },
       body: JSON.stringify(member),
     }),
-  joinGroup: (id: string, client: { client_id: string; capabilities?: unknown }) =>
+  joinGroup: (id: string, client: { client_id: string; capabilities?: unknown }, token?: string) =>
     request<GroupMember>(`/api/groups/${id}/join`, {
       method: 'POST',
+      ...(token ? { headers: { 'Content-Type': 'application/json', 'X-Admin-Token': token } } : {}),
       body: JSON.stringify(client),
     }),
   listGroupEvents: (id: string, limit?: number) =>

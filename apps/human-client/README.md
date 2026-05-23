@@ -6,12 +6,12 @@ The Admin Console remains responsible for creating groups, adding agents, and co
 
 - enter with a local `client_id`
 - keep a local IM-style group list
-- join a group by invite token
+- join a group by invite token and store a group-scoped access token locally
 - view agents and humans in the group
 - read and send chat-style group messages
 - view orchestration state and shared artifacts
 
-In the current platform API, the invite token is treated as the `group_id`. The intended next step is to exchange an opaque invite token for group-scoped membership, so clients cannot enumerate or discover groups before joining.
+The invite token is exchanged through `POST /api/group-joins`. The platform returns group metadata plus a group-scoped access token. All later room reads and writes use that access token, so knowing a `group_id` is not enough to discover members or messages.
 
 ## Discovery Model
 

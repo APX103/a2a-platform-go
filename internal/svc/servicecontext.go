@@ -34,6 +34,8 @@ type ServiceContext struct {
 	BuiltinAgents  *BuiltinAgentStore
 	Groups         *GroupStore
 	GroupMembers   *GroupMemberStore
+	GroupInvites   *GroupInviteStore
+	GroupTokens    *GroupMemberTokenStore
 	GroupEvents    *GroupEventStore
 	GroupArtifacts *GroupArtifactStore
 	Registry       *AgentRegistry
@@ -59,6 +61,8 @@ func NewServiceContext(c *config.Config) (*ServiceContext, error) {
 	builtinAgents := NewBuiltinAgentStore(db)
 	groups := NewGroupStore(db)
 	groupMembers := NewGroupMemberStore(db)
+	groupInvites := NewGroupInviteStore(db)
+	groupTokens := NewGroupMemberTokenStore(db)
 	groupEvents := NewGroupEventStore(db)
 	groupArtifacts := NewGroupArtifactStore(db)
 	registry := NewAgentRegistry(agents)
@@ -79,6 +83,8 @@ func NewServiceContext(c *config.Config) (*ServiceContext, error) {
 		BuiltinAgents:  builtinAgents,
 		Groups:         groups,
 		GroupMembers:   groupMembers,
+		GroupInvites:   groupInvites,
+		GroupTokens:    groupTokens,
 		GroupEvents:    groupEvents,
 		GroupArtifacts: groupArtifacts,
 		Registry:       registry,
@@ -723,6 +729,34 @@ CREATE TABLE IF NOT EXISTS group_members (
 	INDEX idx_group_members_actor (actor_type, actor_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+CREATE TABLE IF NOT EXISTS group_invites (
+	id BIGINT AUTO_INCREMENT PRIMARY KEY,
+	group_id VARCHAR(36) NOT NULL,
+	token_hash VARCHAR(64) NOT NULL UNIQUE,
+	actor_type_allowed VARCHAR(32),
+	role VARCHAR(64) NOT NULL DEFAULT 'member',
+	max_uses INT NOT NULL DEFAULT 1,
+	used_count INT NOT NULL DEFAULT 0,
+	expires_at TIMESTAMP NULL,
+	status VARCHAR(32) NOT NULL DEFAULT 'active',
+	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+	INDEX idx_group_invites_group (group_id),
+	INDEX idx_group_invites_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS group_member_tokens (
+	id BIGINT AUTO_INCREMENT PRIMARY KEY,
+	group_id VARCHAR(36) NOT NULL,
+	actor_type VARCHAR(32) NOT NULL,
+	actor_id VARCHAR(255) NOT NULL,
+	token_hash VARCHAR(64) NOT NULL UNIQUE,
+	expires_at TIMESTAMP NULL,
+	revoked_at TIMESTAMP NULL,
+	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+	INDEX idx_group_member_tokens_group (group_id),
+	INDEX idx_group_member_tokens_actor (actor_type, actor_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS group_events (
 	id BIGINT AUTO_INCREMENT PRIMARY KEY,
 	group_id VARCHAR(36) NOT NULL,
@@ -920,6 +954,36 @@ CREATE TABLE IF NOT EXISTS group_members (
 
 CREATE INDEX IF NOT EXISTS idx_group_members_group ON group_members(group_id);
 CREATE INDEX IF NOT EXISTS idx_group_members_actor ON group_members(actor_type, actor_id);
+
+CREATE TABLE IF NOT EXISTS group_invites (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	group_id TEXT NOT NULL,
+	token_hash TEXT NOT NULL UNIQUE,
+	actor_type_allowed TEXT,
+	role TEXT NOT NULL DEFAULT 'member',
+	max_uses INTEGER NOT NULL DEFAULT 1,
+	used_count INTEGER NOT NULL DEFAULT 0,
+	expires_at TIMESTAMP,
+	status TEXT NOT NULL DEFAULT 'active',
+	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_group_invites_group ON group_invites(group_id);
+CREATE INDEX IF NOT EXISTS idx_group_invites_status ON group_invites(status);
+
+CREATE TABLE IF NOT EXISTS group_member_tokens (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	group_id TEXT NOT NULL,
+	actor_type TEXT NOT NULL,
+	actor_id TEXT NOT NULL,
+	token_hash TEXT NOT NULL UNIQUE,
+	expires_at TIMESTAMP,
+	revoked_at TIMESTAMP,
+	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_group_member_tokens_group ON group_member_tokens(group_id);
+CREATE INDEX IF NOT EXISTS idx_group_member_tokens_actor ON group_member_tokens(actor_type, actor_id);
 
 CREATE TABLE IF NOT EXISTS group_events (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
