@@ -9,6 +9,7 @@ import (
 	"log"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -494,6 +495,14 @@ func makeGroupRouteHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 		switch parts[1] {
 		case "members":
 			if len(parts) == 2 {
+				handler.NewGroupMemberHandler(svcCtx).ServeHTTP(w, r)
+				return
+			}
+			if len(parts) == 4 {
+				actorType, _ := url.PathUnescape(parts[2])
+				actorID, _ := url.PathUnescape(parts[3])
+				r.Header.Set("X-Path-Param-ActorType", actorType)
+				r.Header.Set("X-Path-Param-ActorId", actorID)
 				handler.NewGroupMemberHandler(svcCtx).ServeHTTP(w, r)
 				return
 			}

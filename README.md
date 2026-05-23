@@ -186,6 +186,8 @@ bridge_agents:
 - `context`（默认）：平台会为未带 `contextId` 的请求自动生成 context，并把同一个 context 下的 task/message/trace 串起来，适合多轮 agent 交互。
 - `stateless`：平台不生成、不转发 `contextId`，每条消息都是一次无上下文 proxy 调用；平台只记录无上下文 task/trace，适合 completion API 或每次都新开会话的目标。
 
+如果只想快速接入并允许同类 agent 互相发现和点对点通信，可以在注册时设置 `simple_mode: true`。平台会自动创建/复用 `default-p2p` 群并把该 agent 加入其中。这个群是权限边界，但不跑群聊广播编排；admin 可以在群详情页或成员 API 中把 agent 移出该群。
+
 发现式注册：
 
 ```bash
@@ -206,6 +208,7 @@ curl -X POST http://localhost:18090/api/agents \
     "type": "external",
     "url": "http://10.1.52.70:10004/run",
     "context_mode": "stateless",
+    "simple_mode": true,
     "agent_card": {
       "description": "Existing agent behind a custom endpoint",
       "version": "1.0.0",

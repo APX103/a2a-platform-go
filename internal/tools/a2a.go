@@ -115,9 +115,12 @@ func executeListAgents(args map[string]any) (string, error) {
 		if err != nil {
 			return "", err
 		}
+		if hasGroup(groups, model.DefaultP2PGroupID) {
+			return executeListGroupAgents(model.DefaultP2PGroupID, args)
+		}
 		body, _ := json.Marshal(groups)
 		list, _ := formatGroupList(body)
-		return "group_id is required before listing agents. Call list_groups first, choose one group_id, then call list_agents with that group_id.\n" + list, nil
+		return "group_id is required before listing agents. Call list_groups first, choose one group_id, then call list_agents with that group_id. Simple-mode agents can omit group_id only when they are members of default-p2p.\n" + list, nil
 	}
 
 	req, err := platformRequest(http.MethodGet, platformBaseURL+"/api/agents", nil)
@@ -211,7 +214,14 @@ func executeSendToAgent(args map[string]any) (string, error) {
 	groupID := groupIDFromArgs(args)
 
 	if groupID == "" && sourceAgent != "" {
-		return "", fmt.Errorf("group_id is required before sending to another agent; call list_groups, then list_agents with the selected group_id")
+		inferred, ok, err := inferDefaultP2PGroup(sourceAgent)
+		if err != nil {
+			return "", err
+		}
+		if !ok {
+			return "", fmt.Errorf("group_id is required before sending to another agent; call list_groups, then list_agents with the selected group_id. Simple-mode agents can omit group_id only when they are members of default-p2p")
+		}
+		groupID = inferred
 	}
 	if groupID != "" {
 		if err := ensureSourceCanUseGroup(sourceAgent, groupID); err != nil {
@@ -337,7 +347,14 @@ func executeGetAgentInfo(args map[string]any) (string, error) {
 	sourceAgent := normalizeString(args["_source_agent"])
 	groupID := groupIDFromArgs(args)
 	if groupID == "" && sourceAgent != "" {
-		return "", fmt.Errorf("group_id is required before reading agent info; call list_groups, then list_agents with the selected group_id")
+		inferred, ok, err := inferDefaultP2PGroup(sourceAgent)
+		if err != nil {
+			return "", err
+		}
+		if !ok {
+			return "", fmt.Errorf("group_id is required before reading agent info; call list_groups, then list_agents with the selected group_id. Simple-mode agents can omit group_id only when they are members of default-p2p")
+		}
+		groupID = inferred
 	}
 	if groupID != "" {
 		if err := ensureSourceCanUseGroup(sourceAgent, groupID); err != nil {
@@ -499,6 +516,29 @@ func groupHasAgent(groupID, agent string) (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+func inferDefaultP2PGroup(sourceAgent string) (string, bool, error) {
+	if sourceAgent == "" {
+		return "", false, nil
+	}
+	groups, err := fetchVisibleGroups(sourceAgent, model.GroupStatusActive)
+	if err != nil {
+		return "", false, err
+	}
+	if hasGroup(groups, model.DefaultP2PGroupID) {
+		return model.DefaultP2PGroupID, true, nil
+	}
+	return "", false, nil
+}
+
+func hasGroup(groups []map[string]interface{}, groupID string) bool {
+	for _, group := range groups {
+		if normalizeString(group["id"]) == groupID {
+			return true
+		}
+	}
+	return false
 }
 
 func ensureSourceCanUseGroup(sourceAgent, groupID string) error {

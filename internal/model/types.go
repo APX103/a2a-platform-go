@@ -161,6 +161,9 @@ type Skill struct {
 }
 
 const (
+	DefaultP2PGroupID = "default-p2p"
+
+	GroupModeP2P             = "p2p"
 	GroupModeLeaderLed       = "leader_led"
 	GroupModeFreeChat        = "free_chat"
 	GroupModeRoundtable      = "roundtable"
@@ -264,14 +267,17 @@ type RegisterAgentReq struct {
 	Secret      string     `json:"secret"`
 	ContextMode string     `json:"context_mode,omitempty"`
 	AgentCard   *AgentCard `json:"agent_card,omitempty"`
+	SimpleMode  bool       `json:"simple_mode,omitempty"`
 }
 
 type RegisterAgentResp struct {
-	Ok           bool   `json:"ok"`
-	Name         string `json:"name"`
-	Url          string `json:"url"`
-	Status       string `json:"status"`
-	ReRegistered bool   `json:"re_registered"`
+	Ok             bool   `json:"ok"`
+	Name           string `json:"name"`
+	Url            string `json:"url"`
+	Status         string `json:"status"`
+	ReRegistered   bool   `json:"re_registered"`
+	SimpleMode     bool   `json:"simple_mode,omitempty"`
+	DefaultGroupID string `json:"default_group_id,omitempty"`
 }
 
 type ListTasksResp struct {

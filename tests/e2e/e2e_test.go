@@ -677,6 +677,66 @@ func TestExternalAgentCardHostingAndUpdate(t *testing.T) {
 	}
 }
 
+func TestSimpleModeAgentJoinsDefaultP2PGroup(t *testing.T) {
+	const name = "e2e-simple-mode-agent"
+	req(t, "DELETE", "/api/groups/default-p2p/members/agent/"+name, "", auth())
+	req(t, "DELETE", "/api/agents/"+name, "", auth())
+	t.Cleanup(func() {
+		req(t, "DELETE", "/api/groups/default-p2p/members/agent/"+name, "", auth())
+		req(t, "DELETE", "/api/agents/"+name, "", auth())
+	})
+
+	body := fmt.Sprintf(`{
+		"name": %q,
+		"type": "external",
+		"url": "http://127.0.0.1:9",
+		"context_mode": "stateless",
+		"simple_mode": true,
+		"agent_card": {
+			"description": "Simple mode test agent",
+			"version": "1.0.0",
+			"skills": [{"id":"chat","name":"Chat","description":"P2P chat"}]
+		}
+	}`, name)
+	code, data := req(t, "POST", "/api/agents", body, auth())
+	expect(t, code, 200)
+	resp := obj(t, data)
+	if resp["simple_mode"] != true || resp["default_group_id"] != "default-p2p" {
+		t.Fatalf("unexpected simple mode response: %s", string(data))
+	}
+
+	code, data = req(t, "GET", "/api/groups/default-p2p", "", auth())
+	expect(t, code, 200)
+	group := obj(t, data)
+	if group["orchestration_mode"] != "p2p" || group["status"] != "active" {
+		t.Fatalf("default group = %#v, want active p2p", group)
+	}
+
+	code, data = req(t, "GET", "/api/groups/default-p2p/members", "", auth())
+	expect(t, code, 200)
+	members := arr(t, data)
+	seen := false
+	for _, item := range members {
+		member, _ := item.(map[string]interface{})
+		if member["actor_type"] == "agent" && member["actor_id"] == name {
+			seen = true
+		}
+	}
+	if !seen {
+		t.Fatalf("simple mode agent not found in default-p2p members: %#v", members)
+	}
+
+	code, data = req(t, "DELETE", "/api/groups/default-p2p/members/agent/"+name, "", auth())
+	expect(t, code, 200)
+	members = arr(t, data)
+	for _, item := range members {
+		member, _ := item.(map[string]interface{})
+		if member["actor_type"] == "agent" && member["actor_id"] == name {
+			t.Fatalf("simple mode agent still present after remove: %#v", members)
+		}
+	}
+}
+
 // ===== 5. Builtin Agent Lifecycle =====
 
 func TestBuiltinAgentLifecycle(t *testing.T) {

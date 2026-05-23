@@ -252,6 +252,51 @@ func TestExecuteListAgentsRequiresGroupForSourceAgent(t *testing.T) {
 	}
 }
 
+func TestExecuteListAgentsDefaultsToP2PGroup(t *testing.T) {
+	requestedAgents := map[string]bool{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Admin-Token") != "secret" {
+			t.Fatalf("missing admin token on %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/groups":
+			fmt.Fprintln(w, `[{"id":"default-p2p","name":"Default P2P Network","orchestration_mode":"p2p","status":"active"}]`)
+		case "/api/groups/default-p2p/members":
+			fmt.Fprintln(w, `[{"actor_type":"agent","actor_id":"mi-1","role":"member"},{"actor_type":"agent","actor_id":"mi-2","role":"member"}]`)
+		case "/api/agents/mi-1":
+			requestedAgents["mi-1"] = true
+			fmt.Fprintln(w, `{"name":"mi-1","type":"builtin","status":"connected"}`)
+		case "/api/agents/mi-2":
+			requestedAgents["mi-2"] = true
+			fmt.Fprintln(w, `{"name":"mi-2","type":"builtin","status":"connected"}`)
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	oldBaseURL := platformBaseURL
+	oldAdminToken := platformAdminToken
+	platformBaseURL = server.URL
+	platformAdminToken = "secret"
+	t.Cleanup(func() {
+		platformBaseURL = oldBaseURL
+		platformAdminToken = oldAdminToken
+	})
+
+	result, err := executeListAgents(map[string]any{"_source_agent": "mi-1"})
+	if err != nil {
+		t.Fatalf("executeListAgents failed: %v", err)
+	}
+	if !requestedAgents["mi-1"] || !requestedAgents["mi-2"] {
+		t.Fatalf("requestedAgents = %#v", requestedAgents)
+	}
+	if strings.Contains(result, "group_id is required") || !strings.Contains(result, "mi-2") {
+		t.Fatalf("result = %q", result)
+	}
+}
+
 func TestExecuteListAgentsGroupScoped(t *testing.T) {
 	requestedAgents := map[string]bool{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

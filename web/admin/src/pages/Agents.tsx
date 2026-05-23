@@ -7,7 +7,7 @@ export default function Agents() {
   const [agents, setAgents] = useState<Agent[]>([])
   const [loading, setLoading] = useState(true)
   const [showRegister, setShowRegister] = useState(false)
-  const [form, setForm] = useState({ name: '', url: '', description: '', token: '' })
+  const [form, setForm] = useState({ name: '', url: '', description: '', token: '', simple_mode: true })
   const [error, setError] = useState('')
 
   const load = () => {
@@ -24,9 +24,9 @@ export default function Agents() {
     e.preventDefault()
     setError('')
     try {
-      await api.registerAgent({ name: form.name, url: form.url, description: form.description }, form.token)
+      await api.registerAgent({ name: form.name, url: form.url, description: form.description, simple_mode: form.simple_mode }, form.token)
       setShowRegister(false)
-      setForm({ name: '', url: '', description: '', token: '' })
+      setForm({ name: '', url: '', description: '', token: '', simple_mode: true })
       load()
     } catch (err) {
       setError(String(err))
@@ -87,6 +87,15 @@ export default function Agents() {
             onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
             className="w-full bg-[var(--bg-tertiary)] border border-[var(--border)] rounded-md px-3 py-2 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] outline-none focus:border-[var(--accent)]"
           />
+          <label className="flex items-center gap-2 text-sm text-[var(--text-secondary)]">
+            <input
+              type="checkbox"
+              checked={form.simple_mode}
+              onChange={e => setForm(f => ({ ...f, simple_mode: e.target.checked }))}
+              className="h-4 w-4 accent-[var(--accent)]"
+            />
+            Join default P2P network
+          </label>
           <div className="flex gap-3">
             <input
               placeholder="Admin token"

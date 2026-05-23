@@ -6,6 +6,7 @@ import { api, Group } from '../api/client'
 type GroupStatusFilter = 'active' | 'archived' | ''
 
 const modes = [
+  { value: 'p2p', label: 'P2P' },
   { value: 'leader_led', label: 'Leader-led' },
   { value: 'free_chat', label: 'Free chat' },
   { value: 'roundtable', label: 'Roundtable' },

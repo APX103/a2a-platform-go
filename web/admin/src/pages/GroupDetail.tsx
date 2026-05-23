@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, Bot, ExternalLink, FileText, GitBranch, KeyRound, RefreshCw, Send, UserPlus, Users } from 'lucide-react'
+import { ArrowLeft, Bot, ExternalLink, FileText, GitBranch, KeyRound, RefreshCw, Send, Trash2, UserPlus, Users } from 'lucide-react'
 import {
   Agent,
   api,
@@ -34,6 +34,7 @@ function tryFormatJson(value?: string) {
 
 function modeLabel(mode: string) {
   switch (mode) {
+    case 'p2p': return 'P2P'
     case 'leader_led': return 'Leader-led'
     case 'free_chat': return 'Free chat'
     case 'roundtable': return 'Roundtable'
@@ -58,6 +59,8 @@ function actorInitial(id: string) {
 
 function modeHint(mode: string) {
   switch (mode) {
+    case 'p2p':
+      return 'P2P network: members can discover each other and use direct agent calls, but group chat does not trigger orchestration.'
     case 'leader_led':
       return 'Leader-led: messages trigger the leader and create task/trace records.'
     case 'free_chat':
@@ -166,6 +169,21 @@ export default function GroupDetail() {
       load()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Add member failed')
+    }
+  }
+
+  const handleRemoveMember = async (member: GroupMember) => {
+    if (!id) return
+    if (!token) {
+      setError('Admin token required')
+      return
+    }
+    try {
+      const updated = await api.removeGroupMember(id, member.actor_type, member.actor_id, token)
+      setMembers(Array.isArray(updated) ? updated : [])
+      load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Remove member failed')
     }
   }
 
@@ -479,7 +497,17 @@ export default function GroupDetail() {
                     <div className="text-[var(--text-primary)] truncate">{member.actor_id}</div>
                     <div className="text-xs text-[var(--text-tertiary)]">{member.role}</div>
                   </div>
-                  <span className={`text-xs px-2 py-0.5 rounded-full ${actorColor(member.actor_type)}`}>{member.actor_type}</span>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <span className={`text-xs px-2 py-0.5 rounded-full ${actorColor(member.actor_type)}`}>{member.actor_type}</span>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveMember(member)}
+                      className="p-1 rounded text-[var(--text-tertiary)] hover:text-[var(--error)]"
+                      title="Remove member"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>

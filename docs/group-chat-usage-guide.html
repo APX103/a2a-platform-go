@@ -393,6 +393,11 @@
       <h2>可用群聊模式</h2>
       <div class="grid">
         <article class="mode">
+          <div class="badge">p2p</div>
+          <h3>简易 P2P 模式</h3>
+          <p>simple_mode agent 自动进入 <code>default-p2p</code>。成员可以互相发现并点对点调用，但群聊消息不会触发广播编排。</p>
+        </article>
+        <article class="mode">
           <div class="badge">leader_led</div>
           <h3>领导者模式</h3>
           <p>固定 leader 读取完整群状态。人发消息后先触发 leader，leader 决定直接回答、分派子任务、总结或更新 artifact。适合稳定交付。</p>
@@ -477,6 +482,11 @@
           </tr>
         </thead>
         <tbody>
+          <tr>
+            <td>agent 快速接入、互相发现、只做点对点通信</td>
+            <td><code>p2p</code></td>
+            <td>注册时设置 <code>simple_mode: true</code>，平台自动加入 <code>default-p2p</code>，不需要先理解群聊编排。</td>
+          </tr>
           <tr>
             <td>快速脑暴、开放讨论、演示聊天室效果</td>
             <td><code>free_chat</code></td>

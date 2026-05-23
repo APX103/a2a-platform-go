@@ -498,6 +498,24 @@ func (h *GroupMemberHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.listMembers(w, group.ID)
+	case http.MethodDelete:
+		actorType := strings.TrimSpace(r.URL.Query().Get("actor_type"))
+		actorID := strings.TrimSpace(r.URL.Query().Get("actor_id"))
+		if actorType == "" {
+			actorType = strings.TrimSpace(r.Header.Get("X-Path-Param-ActorType"))
+		}
+		if actorID == "" {
+			actorID = strings.TrimSpace(r.Header.Get("X-Path-Param-ActorId"))
+		}
+		if actorID == "" {
+			jsonError(w, "actor_id is required", 400)
+			return
+		}
+		if err := h.svcCtx.GroupMembers.Delete(group.ID, actorType, actorID); err != nil {
+			errHTTP(w, err)
+			return
+		}
+		h.listMembers(w, group.ID)
 	default:
 		jsonError(w, "method not allowed", 405)
 	}
@@ -694,6 +712,8 @@ func writeGroupSSE(w io.Writer, flusher http.Flusher, event string, data map[str
 
 func (h *GroupEventHandler) maybeRunGroupTurn(r *http.Request, group *model.Group, event *model.GroupEvent, members []*model.GroupMember) ([]*model.GroupEvent, error) {
 	switch group.OrchestrationMode {
+	case model.GroupModeP2P:
+		return nil, nil
 	case model.GroupModeFreeChat:
 		return h.maybeRunFreeChatTurn(r, group, event, members)
 	default:
@@ -703,6 +723,8 @@ func (h *GroupEventHandler) maybeRunGroupTurn(r *http.Request, group *model.Grou
 
 func (h *GroupEventHandler) streamGroupTurn(w io.Writer, flusher http.Flusher, r *http.Request, group *model.Group, event *model.GroupEvent, members []*model.GroupMember) ([]*model.GroupEvent, error) {
 	switch group.OrchestrationMode {
+	case model.GroupModeP2P:
+		return nil, nil
 	case model.GroupModeFreeChat:
 		return h.streamFreeChatTurn(w, flusher, r, group, event, members)
 	default:

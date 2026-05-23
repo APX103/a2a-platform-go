@@ -109,6 +109,7 @@ export interface Agent {
   version?: string;
   context_mode?: string;
   agent_card_json?: string;
+  simple_mode?: boolean;
   registered_at?: string;
   last_seen?: string;
 }
@@ -218,7 +219,7 @@ export interface Group {
   id: string;
   name: string;
   description?: string;
-  orchestration_mode: 'leader_led' | 'free_chat' | 'roundtable' | 'stateflow' | 'research_long_horizon' | string;
+  orchestration_mode: 'p2p' | 'leader_led' | 'free_chat' | 'roundtable' | 'stateflow' | 'research_long_horizon' | string;
   rules_json?: string;
   memory_policy_json?: string;
   status: string;
@@ -437,6 +438,11 @@ export const api = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Admin-Token': token },
       body: JSON.stringify(member),
+    }),
+  removeGroupMember: (id: string, actorType: string, actorId: string, token: string) =>
+    request<GroupMember[]>(`/api/groups/${id}/members/${encodeURIComponent(actorType)}/${encodeURIComponent(actorId)}`, {
+      method: 'DELETE',
+      headers: { 'X-Admin-Token': token },
     }),
   joinGroup: (id: string, client: { client_id: string; capabilities?: unknown }, token?: string) =>
     request<GroupMember>(`/api/groups/${id}/join`, {

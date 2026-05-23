@@ -646,8 +646,8 @@ func withA2AToolGuidance(prompt string) string {
 	const guidance = `A2A collaboration tool policy:
 - Treat groups as the boundary for discovery and collaboration.
 - Before looking for other agents, call list_groups to see which groups you can use.
-- To discover collaborators, call list_agents with a selected group_id from list_groups, unless the current group chat already provides that group context.
-- When sending to another agent or reading agent info, stay within the same selected group_id. Do not assume global agent visibility.`
+- To discover collaborators, call list_agents with a selected group_id from list_groups, unless the current group chat already provides that group context. Simple-mode agents in default-p2p may omit group_id for P2P discovery.
+- When sending to another agent or reading agent info, stay within the same selected group_id. Simple-mode agents may omit group_id only for default-p2p P2P calls. Do not assume global agent visibility.`
 	if strings.Contains(prompt, "A2A collaboration tool policy:") {
 		return prompt
 	}

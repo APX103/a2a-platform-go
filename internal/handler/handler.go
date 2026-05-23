@@ -174,11 +174,61 @@ func (h *RegisterAgentHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		jsonError(w, err.Error(), 400)
 		return
 	}
+	defaultGroupID := ""
+	if req.SimpleMode {
+		if err := ensureSimpleModeMembership(h.svcCtx, req.Name); err != nil {
+			jsonError(w, err.Error(), 500)
+			return
+		}
+		defaultGroupID = model.DefaultP2PGroupID
+	}
 	okJSON(w, model.RegisterAgentResp{
-		Ok:     true,
-		Name:   req.Name,
-		Url:    conn.Url,
-		Status: "connected",
+		Ok:             true,
+		Name:           req.Name,
+		Url:            conn.Url,
+		Status:         "connected",
+		SimpleMode:     req.SimpleMode,
+		DefaultGroupID: defaultGroupID,
+	})
+}
+
+func ensureSimpleModeMembership(svcCtx *svc.ServiceContext, agentName string) error {
+	if svcCtx == nil || svcCtx.Groups == nil || svcCtx.GroupMembers == nil {
+		return fmt.Errorf("group services are unavailable")
+	}
+	group, err := svcCtx.Groups.Get(model.DefaultP2PGroupID)
+	if err != nil {
+		return err
+	}
+	if group == nil {
+		group = &model.Group{
+			ID:                model.DefaultP2PGroupID,
+			Name:              "Default P2P Network",
+			Description:       "Automatically managed simple-mode group. Members can discover each other and communicate by direct P2P agent calls.",
+			OrchestrationMode: model.GroupModeP2P,
+			RulesJson:         `{"p2p_only":true,"auto_managed":true}`,
+			MemoryPolicyJson:  `{"hot_messages":0,"summary":false}`,
+			Status:            model.GroupStatusActive,
+		}
+		if err := svcCtx.Groups.Create(group); err != nil {
+			return err
+		}
+	} else if group.Status != model.GroupStatusActive || group.OrchestrationMode != model.GroupModeP2P {
+		group.Status = model.GroupStatusActive
+		group.OrchestrationMode = model.GroupModeP2P
+		if group.RulesJson == "" {
+			group.RulesJson = `{"p2p_only":true,"auto_managed":true}`
+		}
+		if err := svcCtx.Groups.Update(group); err != nil {
+			return err
+		}
+	}
+	return svcCtx.GroupMembers.Upsert(&model.GroupMember{
+		GroupID:          model.DefaultP2PGroupID,
+		ActorType:        model.GroupActorAgent,
+		ActorID:          agentName,
+		Role:             "member",
+		CapabilitiesJson: `{"simple_mode":true,"p2p":true}`,
 	})
 }
 

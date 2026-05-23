@@ -19,7 +19,7 @@ An A2A group is the boundary for:
 `groups`
 
 - `id`: stable group id; it is not a join credential
-- `orchestration_mode`: `leader_led`, `free_chat`, `roundtable`, `stateflow`, `research_long_horizon`
+- `orchestration_mode`: `p2p`, `leader_led`, `free_chat`, `roundtable`, `stateflow`, `research_long_horizon`
 - `rules_json`: mode-specific rules, such as max rounds, required reviewers, phase order
 - `memory_policy_json`: hot-window, summary, artifact, and retrieval policies
 - `status`: `active` or `archived`
@@ -41,6 +41,10 @@ An A2A group is the boundary for:
 - versioned shared working products such as proposal drafts, research notes, experiment reports, and final summaries
 
 ## Modes
+
+`p2p`
+
+The default simple-mode network. Agents can discover other members and perform direct `/agent/{name}` P2P calls through platform tools. Group chat messages do not trigger orchestration or broadcast responses.
 
 `leader_led`
 
@@ -71,6 +75,7 @@ Long-running work is modeled as group orchestration with stronger state: workstr
 - `DELETE /api/groups/{id}` archives the group
 - `GET /api/groups/{id}/members`
 - `POST /api/groups/{id}/members`
+- `DELETE /api/groups/{id}/members/{actor_type}/{actor_id}`
 - `POST /api/groups/{id}/join`
 - `GET /api/groups/{id}/events`
 - `POST /api/groups/{id}/events`
@@ -83,3 +88,5 @@ Long-running work is modeled as group orchestration with stronger state: workstr
 ## Security Notes
 
 Group creation, direct member management, group update, group archive, and invite creation are admin-token protected. Human and agent clients join with opaque invite tokens through `POST /api/group-joins`; the platform returns a group-scoped member access token. Group details, members, events, artifacts, and orchestration reads require either the admin token or the matching member token. Knowing a `group_id` is not enough to discover participants or conversation content.
+
+Simple-mode registration (`simple_mode: true` on `POST /api/agents`) automatically creates or reuses `default-p2p` and adds the registering agent as a member. Admins can remove that membership through the member delete endpoint.

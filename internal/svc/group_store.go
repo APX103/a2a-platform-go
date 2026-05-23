@@ -173,6 +173,8 @@ func normalizeGroup(g *model.Group) {
 
 func NormalizeGroupMode(mode string) string {
 	switch strings.TrimSpace(mode) {
+	case model.GroupModeP2P:
+		return model.GroupModeP2P
 	case model.GroupModeFreeChat:
 		return model.GroupModeFreeChat
 	case model.GroupModeRoundtable:
@@ -771,6 +773,11 @@ func BuildGroupOrchestrationState(group *model.Group, members []*model.GroupMemb
 	}
 
 	switch group.OrchestrationMode {
+	case model.GroupModeP2P:
+		state.NextAction = "p2p_only"
+		state.ContextPolicy = "members can discover each other and start direct agent-to-agent calls; group chat broadcast is disabled"
+		state.TerminationPolicy = "no group orchestration is run for p2p network messages"
+		state.EligibleSpeakers = groupSpeakers(members, false)
 	case model.GroupModeFreeChat:
 		state.NextAction = "agents_observe_and_optionally_reply"
 		state.ContextPolicy = "each agent receives recent room messages, group rules, and the latest message; each decides whether to reply"
