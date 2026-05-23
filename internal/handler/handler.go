@@ -167,6 +167,23 @@ func (h *RegisterAgentHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		jsonError(w, "missing name", 400)
 		return
 	}
+	var existingAgent *model.Agent
+	if req.SimpleMode {
+		if h.svcCtx == nil || h.svcCtx.Agents == nil {
+			jsonError(w, "agent store is unavailable", 500)
+			return
+		}
+		var err error
+		existingAgent, err = h.svcCtx.Agents.Get(req.Name)
+		if err != nil {
+			jsonError(w, err.Error(), 500)
+			return
+		}
+		if err := ensureSimpleModeGroup(h.svcCtx); err != nil {
+			jsonError(w, err.Error(), 500)
+			return
+		}
+	}
 	conn, err := h.svcCtx.Registry.RegisterAgent(
 		req.Name, req.Type, req.Url, req.Port, req.Skills, req.Secret, req.ContextMode, req.AgentCard,
 	)
@@ -176,7 +193,10 @@ func (h *RegisterAgentHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	}
 	defaultGroupID := ""
 	if req.SimpleMode {
-		if err := ensureSimpleModeMembership(h.svcCtx, req.Name); err != nil {
+		if err := upsertSimpleModeMember(h.svcCtx, req.Name); err != nil {
+			if existingAgent == nil {
+				rollbackNewAgentRegistration(h.svcCtx, req.Name)
+			}
 			jsonError(w, err.Error(), 500)
 			return
 		}
@@ -193,6 +213,13 @@ func (h *RegisterAgentHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 }
 
 func ensureSimpleModeMembership(svcCtx *svc.ServiceContext, agentName string) error {
+	if err := ensureSimpleModeGroup(svcCtx); err != nil {
+		return err
+	}
+	return upsertSimpleModeMember(svcCtx, agentName)
+}
+
+func ensureSimpleModeGroup(svcCtx *svc.ServiceContext) error {
 	if svcCtx == nil || svcCtx.Groups == nil || svcCtx.GroupMembers == nil {
 		return fmt.Errorf("group services are unavailable")
 	}
@@ -211,9 +238,17 @@ func ensureSimpleModeMembership(svcCtx *svc.ServiceContext, agentName string) er
 			Status:            model.GroupStatusActive,
 		}
 		if err := svcCtx.Groups.Create(group); err != nil {
-			return err
+			created, getErr := svcCtx.Groups.Get(model.DefaultP2PGroupID)
+			if getErr != nil {
+				return getErr
+			}
+			if created == nil {
+				return err
+			}
+			group = created
 		}
-	} else if group.Status != model.GroupStatusActive || group.OrchestrationMode != model.GroupModeP2P {
+	}
+	if group.Status != model.GroupStatusActive || group.OrchestrationMode != model.GroupModeP2P {
 		group.Status = model.GroupStatusActive
 		group.OrchestrationMode = model.GroupModeP2P
 		if group.RulesJson == "" {
@@ -223,6 +258,13 @@ func ensureSimpleModeMembership(svcCtx *svc.ServiceContext, agentName string) er
 			return err
 		}
 	}
+	return nil
+}
+
+func upsertSimpleModeMember(svcCtx *svc.ServiceContext, agentName string) error {
+	if svcCtx == nil || svcCtx.GroupMembers == nil {
+		return fmt.Errorf("group services are unavailable")
+	}
 	return svcCtx.GroupMembers.Upsert(&model.GroupMember{
 		GroupID:          model.DefaultP2PGroupID,
 		ActorType:        model.GroupActorAgent,
@@ -230,6 +272,21 @@ func ensureSimpleModeMembership(svcCtx *svc.ServiceContext, agentName string) er
 		Role:             "member",
 		CapabilitiesJson: `{"simple_mode":true,"p2p":true}`,
 	})
+}
+
+func rollbackNewAgentRegistration(svcCtx *svc.ServiceContext, agentName string) {
+	if svcCtx == nil {
+		return
+	}
+	if svcCtx.Registry != nil {
+		svcCtx.Registry.DisconnectAgent(agentName)
+	}
+	if svcCtx.Engine != nil {
+		svcCtx.Engine.RemoveAgent(agentName)
+	}
+	if svcCtx.Agents != nil {
+		_ = svcCtx.Agents.Delete(agentName)
+	}
 }
 
 // ===== Discovery (well-known) =====

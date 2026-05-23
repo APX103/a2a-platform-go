@@ -289,6 +289,14 @@ func TestAuthMiddlewareRequiresGroupMembershipForGroupReads(t *testing.T) {
 		t.Fatalf("no token status = %d, want 401", rec.Code)
 	}
 
+	if err := svcCtx.GroupMembers.Upsert(&model.GroupMember{
+		GroupID:   groupID,
+		ActorType: model.GroupActorHuman,
+		ActorID:   "human-route",
+		Role:      "member",
+	}); err != nil {
+		t.Fatalf("create human member: %v", err)
+	}
 	accessToken, err := svcCtx.GroupTokens.Create(&model.GroupMemberToken{
 		GroupID:   groupID,
 		ActorType: model.GroupActorHuman,
@@ -318,10 +326,64 @@ func TestAuthMiddlewareRequiresGroupMembershipForGroupReads(t *testing.T) {
 	}
 }
 
+func TestGroupMemberDeleteRevokesMemberToken(t *testing.T) {
+	svcCtx, groupID := setupGroupRouteTestContext(t)
+	svcCtx.Config = &config.Config{AdminToken: "secret"}
+	if err := svcCtx.GroupMembers.Upsert(&model.GroupMember{
+		GroupID:   groupID,
+		ActorType: model.GroupActorHuman,
+		ActorID:   "human-route",
+		Role:      "member",
+	}); err != nil {
+		t.Fatalf("create human member: %v", err)
+	}
+	accessToken, err := svcCtx.GroupTokens.Create(&model.GroupMemberToken{
+		GroupID:   groupID,
+		ActorType: model.GroupActorHuman,
+		ActorID:   "human-route",
+	})
+	if err != nil {
+		t.Fatalf("create member token: %v", err)
+	}
+
+	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/groups/"+groupID+"/members/human/human-route", nil)
+	deleteRec := httptest.NewRecorder()
+	makeGroupRouteHandler(svcCtx).ServeHTTP(deleteRec, deleteReq)
+	if deleteRec.Code != http.StatusOK {
+		t.Fatalf("delete member status = %d, want 200, body=%s", deleteRec.Code, deleteRec.Body.String())
+	}
+	storedToken, err := svcCtx.GroupTokens.GetByToken(accessToken)
+	if err != nil {
+		t.Fatalf("load member token: %v", err)
+	}
+	if storedToken == nil || storedToken.RevokedAt == nil {
+		t.Fatalf("member token was not revoked: %#v", storedToken)
+	}
+
+	protected := authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}), svcCtx)
+	readReq := httptest.NewRequest(http.MethodGet, "/api/groups/"+groupID+"/members", nil)
+	readReq.Header.Set("Authorization", "Bearer "+accessToken)
+	readRec := httptest.NewRecorder()
+	protected.ServeHTTP(readRec, readReq)
+	if readRec.Code != http.StatusUnauthorized {
+		t.Fatalf("removed member status = %d, want 401", readRec.Code)
+	}
+}
+
 func TestAuthMiddlewareRestrictsAgentProxyToSameGroup(t *testing.T) {
 	svcCtx, groupID := setupGroupRouteTestContext(t)
 	svcCtx.Config = &config.Config{AdminToken: "secret"}
 
+	if err := svcCtx.GroupMembers.Upsert(&model.GroupMember{
+		GroupID:   groupID,
+		ActorType: model.GroupActorHuman,
+		ActorID:   "human-route",
+		Role:      "member",
+	}); err != nil {
+		t.Fatalf("create human member: %v", err)
+	}
 	accessToken, err := svcCtx.GroupTokens.Create(&model.GroupMemberToken{
 		GroupID:   groupID,
 		ActorType: model.GroupActorHuman,

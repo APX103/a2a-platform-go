@@ -19,6 +19,7 @@ Thumbs.db
 
 # Local config overrides
 etc/config.local.yaml
+tests/e2e/e2e.config.json
 
 # Logs
 *.log

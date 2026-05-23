@@ -402,6 +402,8 @@ make build  # 前端 build + Go build
 go test -v ./tests/e2e/
 ```
 
+`tests/e2e/e2e.config.example.json` 是 e2e 本地配置模板；如需覆盖地址、admin token 或启用依赖真实内建 Agent 的 free_chat e2e，请复制为 `tests/e2e/e2e.config.json`。该本地文件已被 `.gitignore` 忽略，避免提交 token。也可以用 `A2A_SERVER_URL`、`ADMIN_TOKEN` 或 `A2A_E2E_CONFIG` 环境变量覆盖。
+
 ## 技术栈
 
 - **Go 1.25** — 标准库 `net/http`，无框架

@@ -695,6 +695,15 @@ func memberTokenFromRequest(r *http.Request, svcCtx *svc.ServiceContext) (*model
 	if err != nil || !svc.MemberTokenUsable(memberToken, time.Now()) {
 		return nil, err
 	}
+	if svcCtx.GroupMembers != nil {
+		member, err := svcCtx.GroupMembers.Get(memberToken.GroupID, memberToken.ActorType, memberToken.ActorID)
+		if err != nil {
+			return nil, err
+		}
+		if member == nil {
+			return nil, nil
+		}
+	}
 	return memberToken, nil
 }
 

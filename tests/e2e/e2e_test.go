@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
@@ -16,16 +18,86 @@ import (
 )
 
 const (
-	baseURL    = "http://localhost:18090"
-	adminToken = "a2a-admin-token"
+	defaultBaseURL    = "http://localhost:18090"
+	defaultAdminToken = "a2a-admin-token"
 )
 
 var (
+	testConfig = loadE2EConfig()
+	baseURL    = strings.TrimRight(testConfig.BaseURL, "/")
+	adminToken = testConfig.AdminToken
 	httpClient = &http.Client{Timeout: 180 * time.Second}
 	limiter    = rate.NewLimiter(15, 5) // 15 req/s with burst 5, stays under server's 20/s limit
 )
 
 // ===== Helpers =====
+
+type e2eConfig struct {
+	BaseURL    string            `json:"base_url"`
+	AdminToken string            `json:"admin_token"`
+	FreeChat   e2eFreeChatConfig `json:"free_chat"`
+}
+
+type e2eFreeChatConfig struct {
+	Enabled          bool     `json:"enabled"`
+	AgentNames       []string `json:"agent_names"`
+	MinBuiltinAgents int      `json:"min_builtin_agents"`
+	Prompt           string   `json:"prompt"`
+}
+
+func loadE2EConfig() e2eConfig {
+	cfg := e2eConfig{
+		BaseURL:    defaultBaseURL,
+		AdminToken: defaultAdminToken,
+		FreeChat: e2eFreeChatConfig{
+			MinBuiltinAgents: 3,
+			Prompt:           "编排 e2e 测试：请群内每个 agent 各用一句中文说明自己在这个问题讨论中能承担的角色。不要调用工具，不要输出 NO_REPLY。",
+		},
+	}
+	for _, path := range e2eConfigPaths() {
+		data, err := os.ReadFile(path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: read e2e config %s: %v\n", path, err)
+			continue
+		}
+		if err := json.Unmarshal(data, &cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: parse e2e config %s: %v\n", path, err)
+		}
+		break
+	}
+	if env := strings.TrimSpace(os.Getenv("A2A_SERVER_URL")); env != "" {
+		cfg.BaseURL = env
+	}
+	if env := strings.TrimSpace(os.Getenv("ADMIN_TOKEN")); env != "" {
+		cfg.AdminToken = env
+	}
+	if strings.TrimSpace(cfg.BaseURL) == "" {
+		cfg.BaseURL = defaultBaseURL
+	}
+	if strings.TrimSpace(cfg.AdminToken) == "" {
+		cfg.AdminToken = defaultAdminToken
+	}
+	if cfg.FreeChat.MinBuiltinAgents <= 0 {
+		cfg.FreeChat.MinBuiltinAgents = 3
+	}
+	if strings.TrimSpace(cfg.FreeChat.Prompt) == "" {
+		cfg.FreeChat.Prompt = "编排 e2e 测试：请群内每个 agent 各用一句中文说明自己在这个问题讨论中能承担的角色。不要调用工具，不要输出 NO_REPLY。"
+	}
+	return cfg
+}
+
+func e2eConfigPaths() []string {
+	if path := strings.TrimSpace(os.Getenv("A2A_E2E_CONFIG")); path != "" {
+		return []string{path}
+	}
+	return []string{
+		"e2e.config.json",
+		filepath.Join("tests", "e2e", "e2e.config.json"),
+	}
+}
 
 func req(t *testing.T, method, path, body string, headers map[string]string) (int, []byte) {
 	t.Helper()
@@ -156,6 +228,19 @@ func connectedBuiltinAgents(t *testing.T, minCount int) []string {
 		t.Fatalf("connected builtin agents = %v, want at least %d", agents, minCount)
 	}
 	return agents
+}
+
+func freeChatE2EAgents(t *testing.T) []string {
+	t.Helper()
+	cfg := testConfig.FreeChat
+	if !cfg.Enabled {
+		t.Skip("free_chat e2e disabled; copy tests/e2e/e2e.config.example.json to e2e.config.json and set free_chat.enabled=true")
+	}
+	if len(cfg.AgentNames) > 0 {
+		return cfg.AgentNames
+	}
+	agents := connectedBuiltinAgents(t, cfg.MinBuiltinAgents)
+	return agents[:cfg.MinBuiltinAgents]
 }
 
 func joinHumanByInvite(t *testing.T, groupID, actorID string) map[string]string {
@@ -406,16 +491,15 @@ func TestGroupOrchestrationLifecycle(t *testing.T) {
 }
 
 func TestGroupFreeChatInvokesBuiltinAgents(t *testing.T) {
-	agents := connectedBuiltinAgents(t, 3)
-	agents = agents[:3]
+	agents := freeChatE2EAgents(t)
 
 	body := fmt.Sprintf(`{
 		"name": %q,
 		"description": "E2E free-chat orchestration with builtin agents",
 		"orchestration_mode": "free_chat",
-		"rules": {"max_speakers": 3, "max_rounds": 1},
+		"rules": {"max_speakers": %d, "max_rounds": 1},
 		"memory_policy": {"hot_messages": 20, "summary": true}
-	}`, "e2e free chat "+time.Now().Format("150405.000"))
+	}`, "e2e free chat "+time.Now().Format("150405.000"), len(agents))
 	code, data := req(t, "POST", "/api/groups", body, auth())
 	expect(t, code, 200)
 	group := obj(t, data)
@@ -449,9 +533,8 @@ func TestGroupFreeChatInvokesBuiltinAgents(t *testing.T) {
 		t.Fatalf("next_action = %v, want agents_observe_and_optionally_reply", state["next_action"])
 	}
 
-	prompt := "编排 e2e 测试：请群内每个 agent 各用一句中文说明自己在这个问题讨论中能承担的角色。不要调用工具，不要输出 NO_REPLY。"
 	streamEvents := streamReq(t, "/api/groups/"+groupID+"/events",
-		fmt.Sprintf(`{"event_type":"message","sender_type":"human","sender_id":%q,"content":%q}`, humanID, prompt), memberAuth)
+		fmt.Sprintf(`{"event_type":"message","sender_type":"human","sender_id":%q,"content":%q}`, humanID, testConfig.FreeChat.Prompt), memberAuth)
 	var event map[string]interface{}
 	var done map[string]interface{}
 	var streamArtifact map[string]interface{}
@@ -493,8 +576,8 @@ func TestGroupFreeChatInvokesBuiltinAgents(t *testing.T) {
 	if len(triggered) == 0 {
 		t.Fatalf("free_chat produced no triggered agent events: %#v", done)
 	}
-	if len(triggered) > 3 {
-		t.Fatalf("triggered len = %d, want <= 3", len(triggered))
+	if len(triggered) > len(agents) {
+		t.Fatalf("triggered len = %d, want <= %d", len(triggered), len(agents))
 	}
 
 	allowed := map[string]bool{}
@@ -571,7 +654,7 @@ func TestGroupFreeChatInvokesBuiltinAgents(t *testing.T) {
 		t.Fatalf("artifact name = %v, want group-discussion.md", autoArtifact["name"])
 	}
 	content := fmt.Sprint(autoArtifact["content"])
-	if !strings.Contains(content, prompt) || !strings.Contains(content, "Agent Outputs") {
+	if !strings.Contains(content, testConfig.FreeChat.Prompt) || !strings.Contains(content, "Agent Outputs") {
 		t.Fatalf("auto artifact content did not include prompt and agent output section: %s", content)
 	}
 

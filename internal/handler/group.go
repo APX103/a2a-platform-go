@@ -515,6 +515,12 @@ func (h *GroupMemberHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			errHTTP(w, err)
 			return
 		}
+		if h.svcCtx.GroupTokens != nil {
+			if err := h.svcCtx.GroupTokens.RevokeActor(group.ID, actorType, actorID); err != nil {
+				errHTTP(w, err)
+				return
+			}
+		}
 		h.listMembers(w, group.ID)
 	default:
 		jsonError(w, "method not allowed", 405)
