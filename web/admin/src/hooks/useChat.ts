@@ -44,7 +44,7 @@ export function useChat(agentName: string) {
 
   // Send message to agent
   const sendMessage = useCallback(
-    async (content: string, contextId?: string) => {
+    async (content: string, contextId?: string, options?: { groupId?: string; rootContextId?: string }) => {
       disconnect();
 
       const controller = new AbortController();
@@ -86,6 +86,7 @@ export function useChat(agentName: string) {
             parts: [{ text: content }],
           },
           ...(contextId && { contextId }),
+          ...(options?.rootContextId && { rootContextId: options.rootContextId }),
         },
       };
 
@@ -96,7 +97,12 @@ export function useChat(agentName: string) {
         }
         await fetchEventSource(`/agent/${agentName}`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...headers },
+          headers: {
+            'Content-Type': 'application/json',
+            ...headers,
+            ...(options?.groupId ? { 'X-A2A-Group-ID': options.groupId } : {}),
+            ...(options?.rootContextId ? { 'X-A2A-Root-Context-Id': options.rootContextId } : {}),
+          },
           body: JSON.stringify(requestBody),
           signal: controller.signal,
           onmessage: (event) => {

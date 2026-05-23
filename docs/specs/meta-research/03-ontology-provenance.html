@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>03. 本体与溯源</title>
+    <link rel="stylesheet" href="./meta-research.css" />
+  </head>
+  <body>
+    <header>
+      <div class="hero">
+        <div class="eyebrow">Chapter 03 · Ontology</div>
+        <h1>本体与溯源：把研究从文本变成可计算对象网络</h1>
+        <p class="subtitle">
+          本章定义研究系统的一阶对象。核心改动是把 Reasoning / Warrant 从 claim 的字段提升为对象，并为所有对象增加 provenance envelope，使系统能够回答“谁在什么活动中，用什么材料，生成了哪个结论”。
+        </p>
+      </div>
+    </header>
+
+    <div class="layout">
+      <nav>
+        <h2>分章目录</h2>
+        <a href="./index.html">总览索引</a>
+        <a href="./00-evaluation-response.html">00. 评审采纳矩阵</a>
+        <a href="./01-positioning-principles.html">01. 定位与原则</a>
+        <a href="./02-epistemology-verification.html">02. 认识论与验证</a>
+        <a class="active" href="./03-ontology-provenance.html">03. 本体与溯源</a>
+        <a href="./04-orchestration-state-machine.html">04. 编排与状态机</a>
+        <a href="./05-agent-governance.html">05. 角色与治理</a>
+        <a href="./06-novelty-ledger.html">06. 新颖性与入库</a>
+        <a href="./07-workspace-ui.html">07. 工作台 UI</a>
+        <a href="./08-data-protocol.html">08. 数据与协议</a>
+        <a href="./09-mvp-roadmap.html">09. MVP 路线</a>
+        <a href="./10-case-study.html">10. 示例研究</a>
+      </nav>
+
+      <main>
+        <section>
+          <h2>为什么需要本体</h2>
+          <p class="lead">
+            如果研究结果只存在于报告段落里，系统无法做复审、无法做反例传播、无法判断证据独立性，也无法跨项目复用。对象模型的目的不是把文档复杂化，而是让研究中的关键事实能被检索、验证、链接和更新。
+          </p>
+          <div class="note">
+            一个合格的研究对象至少要能回答：它是什么、来自哪里、由谁生成、通过什么活动生成、依赖哪些对象、支持或反驳哪些 claim、当前验证状态是什么。
+          </div>
+        </section>
+
+        <section>
+          <h2>核心对象</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>对象</th>
+                <th>含义</th>
+                <th>关键字段</th>
+                <th>关系</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>ResearchProgram</td>
+                <td>长期研究单元，包含范围、目标、PI 和知识账本。</td>
+                <td>scope, exclusions, pi, approval_policy, ledger_id</td>
+                <td>hasBranch, hasClaim, governedBy</td>
+              </tr>
+              <tr>
+                <td>Question</td>
+                <td>可研究的问题，定义范围和成功标准。</td>
+                <td>prompt, scope, assumptions, success_criteria</td>
+                <td>spawnsHypothesis, refinesQuestion</td>
+              </tr>
+              <tr>
+                <td>Hypothesis</td>
+                <td>可检验的候选解释或方案。</td>
+                <td>statement, predictions, falsification_conditions</td>
+                <td>answersQuestion, testedBy, competesWith</td>
+              </tr>
+              <tr>
+                <td>Evidence</td>
+                <td>支持或反驳 claim 的资料、数据、观察、实验结果。</td>
+                <td>source, design_level, extraction, reliability, independence_group</td>
+                <td>supports, contradicts, derivedFrom</td>
+              </tr>
+              <tr>
+                <td>Reasoning / Warrant</td>
+                <td>连接 Evidence 与 Claim 的推理对象。</td>
+                <td>reasoning_type, premises, inference, assumptions, known_weaknesses</td>
+                <td>usesEvidence, warrantsClaim, challengedByReview</td>
+              </tr>
+              <tr>
+                <td>Claim</td>
+                <td>可被验证、审查、入库或撤回的知识声明。</td>
+                <td>statement, scope, verification_level, confidence, novelty, status</td>
+                <td>warrantedBy, reviewedBy, supersedes</td>
+              </tr>
+              <tr>
+                <td>Review</td>
+                <td>对 claim、evidence 或 reasoning 的审查。</td>
+                <td>reviewer, verdict, objections, required_changes</td>
+                <td>reviews, raisesCounterEvidence</td>
+              </tr>
+              <tr>
+                <td>Activity</td>
+                <td>一次检索、分析、实验、审查或审批行为。</td>
+                <td>activity_type, inputs, outputs, tool, parameters, logs</td>
+                <td>used, generated, attributedTo</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section>
+          <h2>Reasoning 必须对象化</h2>
+          <p>
+            原方案中 claim 可能包含一个 reasoning 字段，但这不够。字段不能被独立审查、版本化、引用或反驳。把 Reasoning 对象化后，一个 claim 的薄弱点可以被准确定位：是 evidence 不可靠，还是推理跳跃，还是 scope 写得过宽。
+          </p>
+          <pre><code>{
+  "id": "warrant-9f2",
+  "type": "Reasoning",
+  "reasoning_type": "causal_inference",
+  "premises": [
+    "benchmark A 中策略 X 在三类任务上提升成功率",
+    "失败样本集中于上下文切换阶段",
+    "策略 X 显式维护 branch state"
+  ],
+  "inference": "branch state 可能降低上下文切换损失，从而提升成功率",
+  "assumptions": [
+    "benchmark A 的任务分布代表目标使用场景",
+    "成功率提升不是由 token budget 增加导致"
+  ],
+  "known_weaknesses": [
+    "未完成 token budget 对照",
+    "缺少外部任务集复现"
+  ],
+  "supports_claim_id": "claim-31",
+  "uses_evidence_ids": ["ev-12", "ev-13", "ev-19"]
+}</code></pre>
+        </section>
+
+        <section>
+          <h2>Provenance Envelope</h2>
+          <p>
+            每个对象都带统一溯源包，借鉴 W3C PROV 的 Entity / Activity / Agent 思路。这样系统能做责任追踪、复审传播和证据独立性判断。
+          </p>
+          <pre><code>{
+  "provenance": {
+    "entity_id": "claim-31",
+    "was_generated_by": "activity-analysis-77",
+    "was_attributed_to": ["agent-statistician", "human-pi-001"],
+    "was_derived_from": ["evidence-12", "evidence-13", "warrant-9f2"],
+    "generated_at": "2026-05-23T11:40:00+08:00",
+    "version": 3,
+    "previous_version": "claim-31:v2",
+    "license_or_access": "internal",
+    "audit_log": ["event-901", "event-944"]
+  }
+}</code></pre>
+        </section>
+
+        <section>
+          <h2>外部知识对象</h2>
+          <p>
+            文献、数据集、方法、工具和概念必须是一阶对象。否则系统只能“引用一段文本”，无法表达文献之间的冲突、数据集复用、方法适用边界或概念同义关系。
+          </p>
+          <div class="grid">
+            <div class="card">
+              <strong>Publication</strong>
+              <p>论文、报告、网页、专利、标准。字段包括 DOI/URL、作者、日期、撤稿状态、引用链。</p>
+            </div>
+            <div class="card">
+              <strong>Dataset</strong>
+              <p>数据集、实验日志、标注集。字段包括采样、版本、授权、缺失值、schema、可访问性。</p>
+            </div>
+            <div class="card">
+              <strong>Method</strong>
+              <p>实验方法、分析方法、评估方法。字段包括适用条件、失败条件、参数和已知偏差。</p>
+            </div>
+            <div class="card">
+              <strong>AnalysisWorkflow</strong>
+              <p>可执行分析流程。字段包括代码版本、环境、输入、输出、随机种子和运行日志。</p>
+            </div>
+            <div class="card">
+              <strong>Concept</strong>
+              <p>术语、概念、分类。支持 SKOS 式 broader/narrower/related 和同义词。</p>
+            </div>
+            <div class="card">
+              <strong>Artifact</strong>
+              <p>报告、图表、代码、实验材料。报告只是对象网络的一种投影，不是唯一真相。</p>
+            </div>
+          </div>
+        </section>
+
+        <section>
+          <h2>关系类型</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>关系</th>
+                <th>语义</th>
+                <th>例子</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>supports / contradicts</td>
+                <td>证据支持或反驳某 claim。</td>
+                <td>Evidence A contradicts Claim B。</td>
+              </tr>
+              <tr>
+                <td>warrants</td>
+                <td>Reasoning 将证据和 claim 连接起来。</td>
+                <td>Warrant C warrants Claim B using Evidence A。</td>
+              </tr>
+              <tr>
+                <td>derivedFrom</td>
+                <td>对象由另一个对象派生。</td>
+                <td>Analysis result derivedFrom Dataset V2。</td>
+              </tr>
+              <tr>
+                <td>replicates / failsToReplicate</td>
+                <td>复现关系。</td>
+                <td>Experiment E replicates Experiment D。</td>
+              </tr>
+              <tr>
+                <td>supersedes / narrows / generalizes</td>
+                <td>claim 之间的版本和范围关系。</td>
+                <td>Claim V3 narrows Claim V2 after counter-evidence。</td>
+              </tr>
+              <tr>
+                <td>dependsOn</td>
+                <td>知识依赖关系，用于反例传播。</td>
+                <td>Claim B dependsOn Claim A。</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section>
+          <h2>对象入库最低要求</h2>
+          <ul>
+            <li>每个 Claim 必须有至少一个 Reasoning 对象；不能只有 evidence 列表。</li>
+            <li>每个 Evidence 必须有来源、设计等级、提取方式和独立性分组。</li>
+            <li>每个 Activity 必须记录输入、输出、参数和执行者。</li>
+            <li>每个 Review 必须有 verdict，不能只是自然语言评论。</li>
+            <li>每个对象必须有 persistent id，跨项目复用时保留全局引用。</li>
+          </ul>
+        </section>
+      </main>
+    </div>
+
+    <footer>
+      上一章：<a href="./02-epistemology-verification.html">认识论与验证</a> · 下一章：<a href="./04-orchestration-state-machine.html">编排与状态机</a>
+    </footer>
+  </body>
+</html>

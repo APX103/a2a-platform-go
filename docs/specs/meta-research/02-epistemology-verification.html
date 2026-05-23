@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>02. 认识论与验证</title>
+    <link rel="stylesheet" href="./meta-research.css" />
+  </head>
+  <body>
+    <header>
+      <div class="hero">
+        <div class="eyebrow">Chapter 02 · Epistemology</div>
+        <h1>认识论与验证：什么东西能从“想法”升级为“知识”</h1>
+        <p class="subtitle">
+          本章定义验证等级、证据设计、证伪条件和置信度更新。系统不负责宣布绝对真理，而是负责让每个知识声明的来源、边界、反例、复现状态和不确定性透明可审计。
+        </p>
+      </div>
+    </header>
+
+    <div class="layout">
+      <nav>
+        <h2>分章目录</h2>
+        <a href="./index.html">总览索引</a>
+        <a href="./00-evaluation-response.html">00. 评审采纳矩阵</a>
+        <a href="./01-positioning-principles.html">01. 定位与原则</a>
+        <a class="active" href="./02-epistemology-verification.html">02. 认识论与验证</a>
+        <a href="./03-ontology-provenance.html">03. 本体与溯源</a>
+        <a href="./04-orchestration-state-machine.html">04. 编排与状态机</a>
+        <a href="./05-agent-governance.html">05. 角色与治理</a>
+        <a href="./06-novelty-ledger.html">06. 新颖性与入库</a>
+        <a href="./07-workspace-ui.html">07. 工作台 UI</a>
+        <a href="./08-data-protocol.html">08. 数据与协议</a>
+        <a href="./09-mvp-roadmap.html">09. MVP 路线</a>
+        <a href="./10-case-study.html">10. 示例研究</a>
+      </nav>
+
+      <main>
+        <section>
+          <h2>基本立场</h2>
+          <p class="lead">
+            系统采用“可证伪的贝叶斯实用主义”：每个 claim 必须说明什么情况会削弱或推翻它，同时允许系统用新证据更新置信度。Popper 负责边界，Bayes 负责更新，审查记录负责责任。
+          </p>
+          <div class="note">
+            这避免了原方案中的张力：confidence 不是“理论被证明为真”的分数，而是“在当前证据、设计强度和适用范围下的后验信念状态”。
+          </div>
+        </section>
+
+        <section>
+          <h2>验证等级 V0-V5</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>等级</th>
+                <th>名称</th>
+                <th>准入条件</th>
+                <th>不得自动化的部分</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>V0</td>
+                <td>Unverified Note</td>
+                <td>只是观察、想法、摘要或候选问题；可无正式证据。</td>
+                <td>不能进入知识库，只能进入研究草稿区。</td>
+              </tr>
+              <tr>
+                <td>V1</td>
+                <td>Source-grounded Claim</td>
+                <td>至少绑定一个来源或内部数据片段；能回答“从哪里来”。</td>
+                <td>不能推断为“成立”，只能说明有来源支持。</td>
+              </tr>
+              <tr>
+                <td>V2</td>
+                <td>Reviewed Claim</td>
+                <td>通过 Critic 或人类 reviewer 审查；记录主要反例、边界和不确定性。</td>
+                <td>严肃 claim 的 V1→V2 应有人类或隔离 critic gate。</td>
+              </tr>
+              <tr>
+                <td>V3-r</td>
+                <td>Reproducible in Principle</td>
+                <td>材料、数据、代码、参数、环境和步骤足够，让独立方有机会复现。</td>
+                <td>不能声称已经被独立复现。</td>
+              </tr>
+              <tr>
+                <td>V3-i</td>
+                <td>Independently Replicated</td>
+                <td>至少一个独立团队或隔离执行环境成功复现核心结果。</td>
+                <td>系统不能用同一 agent 自我复现来提升到 V3-i。</td>
+              </tr>
+              <tr>
+                <td>V4</td>
+                <td>Robustly Validated</td>
+                <td>多方法、多数据或多场景验证；主要替代解释被处理。</td>
+                <td>高影响 claim 需要 PI gate 或领域专家 gate。</td>
+              </tr>
+              <tr>
+                <td>V5</td>
+                <td>Operational Knowledge</td>
+                <td>被多个项目稳定复用，带有更新、撤回和版本治理机制。</td>
+                <td>不能由单次研究直接产生，必须经过时间和复用检验。</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section>
+          <h2>证据设计等级是正交轴</h2>
+          <p>
+            V 等级描述“这个 claim 被处理到了什么验证状态”，但不描述证据本身的研究设计强度。一个 V4 的观察性结论仍可能比一个 V2 的强实验结论更弱。因此系统需要同时记录 EvidenceDesignLevel。
+          </p>
+          <table>
+            <thead>
+              <tr>
+                <th>等级</th>
+                <th>设计类型</th>
+                <th>适用说明</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>D0</td>
+                <td>Expert Note / Anecdote</td>
+                <td>专家意见、经验观察、非系统记录。适合生成假设，不适合强 claim。</td>
+              </tr>
+              <tr>
+                <td>D1</td>
+                <td>Documented Observation</td>
+                <td>有来源、有记录，但缺少控制和系统采样。</td>
+              </tr>
+              <tr>
+                <td>D2</td>
+                <td>Structured Dataset / Benchmark</td>
+                <td>有明确数据结构、采样和指标，可重复分析。</td>
+              </tr>
+              <tr>
+                <td>D3</td>
+                <td>Controlled Experiment</td>
+                <td>有对照、干预、预设指标，能支持因果或机制判断。</td>
+              </tr>
+              <tr>
+                <td>D4</td>
+                <td>Replication / Multi-site</td>
+                <td>独立环境、多点复现或跨数据集验证。</td>
+              </tr>
+              <tr>
+                <td>D5</td>
+                <td>Systematic Review / Meta-analysis</td>
+                <td>系统综述、元分析或跨研究纲领综合。</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section>
+          <h2>置信度向量</h2>
+          <p>
+            单一 confidence 分数不够。一个 claim 可能“在当前数据内很可信”，但“外推到其他场景很不可信”；也可能“理论上合理”，但“独立复现概率很低”。因此 confidence 必须是多维对象。
+          </p>
+          <pre><code>{
+  "confidence": {
+    "truth_interval": [0.62, 0.78],
+    "replicability": 0.70,
+    "generalization": 0.45,
+    "mechanistic_plausibility": 0.66,
+    "evidence_independence": 0.52,
+    "last_updated_at": "2026-05-23T10:20:00+08:00",
+    "update_log": [
+      {
+        "event_id": "review-17",
+        "delta": { "truth_interval": [-0.05, -0.02], "generalization": -0.12 },
+        "reason": "critic found dataset comes from same upstream source"
+      }
+    ]
+  }
+}</code></pre>
+        </section>
+
+        <section>
+          <h2>证伪条件必须可执行</h2>
+          <p>
+            “如果有反例就推翻”不是证伪条件。合格的 falsification condition 必须写清条件、观察、阈值、测试状态和是否发生临时补丁。
+          </p>
+          <pre><code>{
+  "falsification_conditions": [
+    {
+      "condition": "在同一任务分布下，新编排策略的成功率低于基线 5% 以上",
+      "measurement": "success_rate_delta",
+      "threshold": -0.05,
+      "test_protocol_id": "vp-042",
+      "risk_level": "high",
+      "tested": false,
+      "outcome": "pending",
+      "ad_hoc_rescue": null
+    }
+  ]
+}</code></pre>
+          <div class="note warn">
+            系统需要记录 ad hoc rescue。一个 claim 被反例击中后，如果研究者通过不断缩小范围来保住结论，应当降低 generalization，并触发 reviewer 复审。
+          </div>
+        </section>
+
+        <section>
+          <h2>知识升级规则</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>升级</th>
+                <th>硬门槛</th>
+                <th>软判断</th>
+                <th>审批</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>V0 → V1</td>
+                <td>至少一个 Evidence 或 Publication 引用。</td>
+                <td>来源是否相关、是否过时。</td>
+                <td>自动或 Staff Officer。</td>
+              </tr>
+              <tr>
+                <td>V1 → V2</td>
+                <td>至少一个 Review；反例条件完整。</td>
+                <td>reasoning 是否充分，边界是否明确。</td>
+                <td>Critic 或 PI。</td>
+              </tr>
+              <tr>
+                <td>V2 → V3-r</td>
+                <td>复现材料齐全，环境和参数记录完整。</td>
+                <td>材料是否足够让外部人理解。</td>
+                <td>Reproducibility Curator。</td>
+              </tr>
+              <tr>
+                <td>V3-r → V3-i</td>
+                <td>独立执行成功，有日志和差异说明。</td>
+                <td>独立性是否充分，复现是否覆盖核心结果。</td>
+                <td>Adjudicator 或 PI。</td>
+              </tr>
+              <tr>
+                <td>V3-i → V4/V5</td>
+                <td>多方法/多场景/跨项目复用证据。</td>
+                <td>是否仍有重大未处理替代解释。</td>
+                <td>PI 或委员会。</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section>
+          <h2>失败模式</h2>
+          <ul>
+            <li><strong>来源堆叠假象：</strong>多条证据来自同一上游来源，不能当作独立证据叠加。</li>
+            <li><strong>指标漂移：</strong>研究中途改变成功指标，但没有记录 preregistration 变更。</li>
+            <li><strong>复现误判：</strong>同一 agent、同一上下文、同一工具环境重复运行，被误标为独立复现。</li>
+            <li><strong>概念外推：</strong>claim 在小范围成立，却被写成普遍规律。</li>
+            <li><strong>置信度冻结：</strong>新证据出现后没有触发 update log 和 downstream claim 复审。</li>
+          </ul>
+        </section>
+      </main>
+    </div>
+
+    <footer>
+      上一章：<a href="./01-positioning-principles.html">定位与原则</a> · 下一章：<a href="./03-ontology-provenance.html">本体与溯源</a>
+    </footer>
+  </body>
+</html>

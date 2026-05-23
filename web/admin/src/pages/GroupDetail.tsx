@@ -149,6 +149,8 @@ export default function GroupDetail() {
   const [inviteForm, setInviteForm] = useState({ actor_type_allowed: 'human', role: 'member', max_uses: 20 })
   const [newInviteToken, setNewInviteToken] = useState('')
   const [sendingEvent, setSendingEvent] = useState(false)
+  const [topicForm, setTopicForm] = useState({ entry_agent: '', title: '', content: '' })
+  const [topicStarting, setTopicStarting] = useState(false)
   const [flowSteps, setFlowSteps] = useState<FlowStep[]>([])
   const [selectedStep, setSelectedStep] = useState(0)
   const [flowSaving, setFlowSaving] = useState(false)
@@ -217,6 +219,19 @@ export default function GroupDetail() {
     () => members.filter(member => member.actor_type === 'agent').map(member => member.actor_id),
     [members],
   )
+
+  const topicAgentOptions = useMemo(() => {
+    const flowAgentNames = flowSteps.map(step => step.agent).filter(Boolean)
+    const preferred = memberAgentNames.length > 0 ? memberAgentNames : flowAgentNames
+    return Array.from(new Set(preferred.length > 0 ? preferred : agents.map(agent => agent.name)))
+  }, [agents, flowSteps, memberAgentNames])
+
+  useEffect(() => {
+    setTopicForm(form => {
+      if (form.entry_agent && topicAgentOptions.includes(form.entry_agent)) return form
+      return { ...form, entry_agent: topicAgentOptions[0] || '' }
+    })
+  }, [topicAgentOptions])
 
   const handleAddAgent = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -549,6 +564,41 @@ export default function GroupDetail() {
     }
   }
 
+  const handleStartTopic = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!group) return
+    const content = topicForm.content.trim()
+    if (!topicForm.entry_agent) {
+      setError('Choose an entry agent before starting a topic')
+      return
+    }
+    if (!content) {
+      setError('Topic question is required')
+      return
+    }
+    if (!token) {
+      setError('Admin token required')
+      return
+    }
+    setTopicStarting(true)
+    setError('')
+    try {
+      const title = topicForm.title.trim() || content.slice(0, 50)
+      const context = await api.createContext({ agent_name: topicForm.entry_agent, title })
+      const params = new URLSearchParams({
+        contextId: context.id,
+        groupId: group.id,
+        draft: content,
+        autoSend: '1',
+      })
+      navigate(`/chat/${encodeURIComponent(topicForm.entry_agent)}?${params.toString()}`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Start topic failed')
+    } finally {
+      setTopicStarting(false)
+    }
+  }
+
   if (loading) return <div className="p-8 text-sm text-[var(--text-tertiary)]">Loading...</div>
   if (!group) return <div className="p-8 text-sm text-[var(--error)]">Group not found</div>
   const groupTracePath = `/traces/context/${encodeURIComponent(`group:${group.id}`)}`
@@ -802,6 +852,67 @@ export default function GroupDetail() {
         </aside>
 
         <div className="space-y-6 min-w-0">
+          {(isP2PMode || flowMode) && (
+            <section className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg overflow-hidden">
+              <div className="flex items-center justify-between gap-4 px-4 py-3 border-b border-[var(--border)] bg-[var(--bg-primary)]">
+                <div className="min-w-0">
+                  <h2 className="text-sm font-medium text-[var(--text-primary)]">Start Topic</h2>
+                  <div className="mt-0.5 text-xs text-[var(--text-tertiary)] truncate">
+                    Create a root context from this group and send the first question to an entry agent.
+                  </div>
+                </div>
+                <span className="shrink-0 text-xs px-2 py-1 rounded-full bg-[var(--bg-tertiary)] text-[var(--text-secondary)]">root context</span>
+              </div>
+              <form onSubmit={handleStartTopic} className="space-y-3 p-4">
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_220px]">
+                  <div>
+                    <label className="text-xs text-[var(--text-tertiary)]">Title</label>
+                    <input
+                      value={topicForm.title}
+                      onChange={e => setTopicForm(form => ({ ...form, title: e.target.value }))}
+                      placeholder="Optional topic title"
+                      className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg-primary)] px-3 py-2 text-sm text-[var(--text-primary)]"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-[var(--text-tertiary)]">Entry Agent</label>
+                    <select
+                      value={topicForm.entry_agent}
+                      onChange={e => setTopicForm(form => ({ ...form, entry_agent: e.target.value }))}
+                      className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg-primary)] px-3 py-2 text-sm text-[var(--text-primary)]"
+                    >
+                      <option value="">Choose agent</option>
+                      {topicAgentOptions.map(name => <option key={name} value={name}>{name}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs text-[var(--text-tertiary)]">Question</label>
+                  <textarea
+                    value={topicForm.content}
+                    onChange={e => setTopicForm(form => ({ ...form, content: e.target.value }))}
+                    rows={4}
+                    placeholder={flowMode ? 'Describe the research question or workflow objective...' : 'Describe the direct P2P topic you want to start...'}
+                    className="mt-1 w-full resize-none rounded-md border border-[var(--border)] bg-[var(--bg-primary)] px-3 py-2 text-sm text-[var(--text-primary)]"
+                  />
+                </div>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-xs text-[var(--text-tertiary)]">
+                    The chat page will open with this group id attached, so the entry agent can discover group members and keep traces under the new root context.
+                  </p>
+                  <button
+                    type="submit"
+                    disabled={topicStarting || !topicForm.content.trim() || !topicForm.entry_agent}
+                    className="flex shrink-0 items-center gap-1.5 rounded-md bg-[var(--accent)] px-3 py-2 text-sm text-white hover:bg-[var(--accent-hover)] disabled:opacity-50"
+                  >
+                    {topicStarting ? <RefreshCw size={14} className="animate-spin" /> : <Send size={14} />}
+                    Start
+                  </button>
+                </div>
+              </form>
+            </section>
+          )}
+
           {isP2PMode ? (
             <section className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg overflow-hidden">
               <div className="flex items-center justify-between gap-4 px-4 py-3 border-b border-[var(--border)] bg-[var(--bg-primary)]">
@@ -827,7 +938,7 @@ export default function GroupDetail() {
                         </div>
                       </div>
                       <Link
-                        to={`/chat/${encodeURIComponent(member.actor_id)}`}
+                        to={`/chat/${encodeURIComponent(member.actor_id)}?groupId=${encodeURIComponent(group.id)}`}
                         className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)]"
                         title="Open direct chat"
                       >

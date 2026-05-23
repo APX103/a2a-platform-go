@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>09. MVP 路线</title>
+    <link rel="stylesheet" href="./meta-research.css" />
+  </head>
+  <body>
+    <header>
+      <div class="hero">
+        <div class="eyebrow">Chapter 09 · MVP Roadmap</div>
+        <h1>MVP 路线：先把对象和验证做扎实，再追求自动科学发现</h1>
+        <p class="subtitle">
+          元研究系统非常容易膨胀。本章把第一版压缩到 8-12 周可以交付、可以验证、可以让真实研究问题跑通的范围。
+        </p>
+      </div>
+    </header>
+
+    <div class="layout">
+      <nav>
+        <h2>分章目录</h2>
+        <a href="./index.html">总览索引</a>
+        <a href="./00-evaluation-response.html">00. 评审采纳矩阵</a>
+        <a href="./01-positioning-principles.html">01. 定位与原则</a>
+        <a href="./02-epistemology-verification.html">02. 认识论与验证</a>
+        <a href="./03-ontology-provenance.html">03. 本体与溯源</a>
+        <a href="./04-orchestration-state-machine.html">04. 编排与状态机</a>
+        <a href="./05-agent-governance.html">05. 角色与治理</a>
+        <a href="./06-novelty-ledger.html">06. 新颖性与入库</a>
+        <a href="./07-workspace-ui.html">07. 工作台 UI</a>
+        <a href="./08-data-protocol.html">08. 数据与协议</a>
+        <a class="active" href="./09-mvp-roadmap.html">09. MVP 路线</a>
+        <a href="./10-case-study.html">10. 示例研究</a>
+      </nav>
+
+      <main>
+        <section>
+          <h2>MVP 的唯一目标</h2>
+          <p class="lead">
+            一个真实研究问题能在系统里完成完整对象链，并且 6 个月后回看时，每个 claim 仍然能追溯到 evidence、reasoning、review 和当时的验证状态。
+          </p>
+          <div class="note ok">
+            第一版不要追求“AI 自动发现重大科学突破”。先做到：未验证 claim 不能入库，入库 claim 可追溯，研究分支可暂停恢复。
+          </div>
+        </section>
+
+        <section>
+          <h2>必须做与暂缓做</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>必须做</th>
+                <th>暂缓做</th>
+                <th>原因</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>7 类核心对象 CRUD</td>
+                <td>完整跨机构知识图谱</td>
+                <td>对象工作台是地基，跨机构复用可以后置。</td>
+              </tr>
+              <tr>
+                <td>V0-V2 + falsification</td>
+                <td>V3-i/V4/V5 自动升级</td>
+                <td>高等级验证必须依赖真实复现和人类 gate。</td>
+              </tr>
+              <tr>
+                <td>PI 审批门</td>
+                <td>复杂委员会工作流</td>
+                <td>先证明人类 gate 的核心价值。</td>
+              </tr>
+              <tr>
+                <td>Root Context Composer</td>
+                <td>全功能研究模板市场</td>
+                <td>先让管理员能正确发起研究。</td>
+              </tr>
+              <tr>
+                <td>Branch Board 简化版</td>
+                <td>复杂可视化知识地图</td>
+                <td>先表达并行假设和阻塞状态。</td>
+              </tr>
+              <tr>
+                <td>Trace Log</td>
+                <td>完整审计合规系统</td>
+                <td>先保证每个对象有事件来源。</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section>
+          <h2>8-12 周路线</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>阶段</th>
+                <th>时间</th>
+                <th>目标</th>
+                <th>可验收产物</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Phase 1</td>
+                <td>第 1-2 周</td>
+                <td>对象模型和基础 API。</td>
+                <td>Program、Question、Hypothesis、Evidence、Reasoning、Claim、Review 可创建和链接。</td>
+              </tr>
+              <tr>
+                <td>Phase 2</td>
+                <td>第 3-4 周</td>
+                <td>Root Context 和 UI 工作台。</td>
+                <td>管理员能发起研究；branch board 可见；claim inspector 可用。</td>
+              </tr>
+              <tr>
+                <td>Phase 3</td>
+                <td>第 5-6 周</td>
+                <td>V0-V2 验证和 review。</td>
+                <td>未 review 的 claim 不能入库；falsification 条件必填。</td>
+              </tr>
+              <tr>
+                <td>Phase 4</td>
+                <td>第 7-8 周</td>
+                <td>PI gate 和 durable wait。</td>
+                <td>审批请求、暂停、恢复、拒绝和修订都有事件。</td>
+              </tr>
+              <tr>
+                <td>Phase 5</td>
+                <td>第 9-10 周</td>
+                <td>agent 分工与对象写入。</td>
+                <td>Evidence Scout、Critic、Staff Officer 可按权限创建草稿对象。</td>
+              </tr>
+              <tr>
+                <td>Phase 6</td>
+                <td>第 11-12 周</td>
+                <td>真实研究 dogfood 和报告投影。</td>
+                <td>一条完整研究链路跑通，导出结构化报告。</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section>
+          <h2>MVP 成功标准</h2>
+          <ul>
+            <li>从一个管理员输入的问题开始，系统生成 Program、Question 和至少一个 Branch。</li>
+            <li>至少一个 branch 产生 Evidence、Reasoning、Claim 和 Review。</li>
+            <li>Claim 从 V0 升到 V2 的每一步都有硬门槛和事件记录。</li>
+            <li>Critic 的 objection 能创建 CounterEvidence 或 required changes。</li>
+            <li>PI 可以批准或拒绝 claim 入库，决定会写入 trace。</li>
+            <li>导出的报告能从对象网络生成，而不是只拼接聊天记录。</li>
+          </ul>
+        </section>
+
+        <section>
+          <h2>第一版数据库范围</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>表/集合</th>
+                <th>用途</th>
+                <th>备注</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>research_programs</td>
+                <td>长期研究容器。</td>
+                <td>绑定 group/context/PI。</td>
+              </tr>
+              <tr>
+                <td>research_objects</td>
+                <td>统一存 Question/Hypothesis/Evidence/Reasoning/Claim/Review。</td>
+                <td>MVP 可用 JSON 字段加 type 区分。</td>
+              </tr>
+              <tr>
+                <td>research_edges</td>
+                <td>对象关系。</td>
+                <td>supports、contradicts、warrants、derivedFrom。</td>
+              </tr>
+              <tr>
+                <td>research_branches</td>
+                <td>分支状态。</td>
+                <td>保存 current_state、loop_guard、blockers。</td>
+              </tr>
+              <tr>
+                <td>research_events</td>
+                <td>审计和回放。</td>
+                <td>所有状态变化、审批、agent 写入都进事件表。</td>
+              </tr>
+              <tr>
+                <td>approval_requests</td>
+                <td>PI gate。</td>
+                <td>支持 pending/approved/rejected/revision。</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section>
+          <h2>风险与取舍</h2>
+          <div class="grid">
+            <div class="card">
+              <strong>复杂度过高</strong>
+              <p>应对：第一版不做 V3+，不做复杂知识地图，只做对象链和 V0-V2。</p>
+            </div>
+            <div class="card">
+              <strong>用户不愿迁移</strong>
+              <p>应对：支持从普通聊天或文档抽取对象，不强迫用户一次性结构化所有内容。</p>
+            </div>
+            <div class="card">
+              <strong>LLM 写入污染知识库</strong>
+              <p>应对：agent 默认 draft_only；入库必须过 review 和 PI gate。</p>
+            </div>
+            <div class="card">
+              <strong>验证体系太学术</strong>
+              <p>应对：UI 用简单状态呈现，底层保留严谨字段。</p>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <footer>
+      上一章：<a href="./08-data-protocol.html">数据与协议</a> · 下一章：<a href="./10-case-study.html">示例研究</a>
+    </footer>
+  </body>
+</html>

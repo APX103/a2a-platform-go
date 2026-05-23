@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>04. 编排与状态机</title>
+    <link rel="stylesheet" href="./meta-research.css" />
+  </head>
+  <body>
+    <header>
+      <div class="hero">
+        <div class="eyebrow">Chapter 04 · Orchestration</div>
+        <h1>编排与状态机：从单一循环升级为多分支持久化研究</h1>
+        <p class="subtitle">
+          真实科研不是一个 agent 在 collect-context 和 write-report 之间循环，而是多个假设分支同时推进、等待审批、等待实验、被反例打断、合并或废弃。本章定义 Program / Branch / Activity 三层编排。
+        </p>
+      </div>
+    </header>
+
+    <div class="layout">
+      <nav>
+        <h2>分章目录</h2>
+        <a href="./index.html">总览索引</a>
+        <a href="./00-evaluation-response.html">00. 评审采纳矩阵</a>
+        <a href="./01-positioning-principles.html">01. 定位与原则</a>
+        <a href="./02-epistemology-verification.html">02. 认识论与验证</a>
+        <a href="./03-ontology-provenance.html">03. 本体与溯源</a>
+        <a class="active" href="./04-orchestration-state-machine.html">04. 编排与状态机</a>
+        <a href="./05-agent-governance.html">05. 角色与治理</a>
+        <a href="./06-novelty-ledger.html">06. 新颖性与入库</a>
+        <a href="./07-workspace-ui.html">07. 工作台 UI</a>
+        <a href="./08-data-protocol.html">08. 数据与协议</a>
+        <a href="./09-mvp-roadmap.html">09. MVP 路线</a>
+        <a href="./10-case-study.html">10. 示例研究</a>
+      </nav>
+
+      <main>
+        <section>
+          <h2>为什么单 FSM 会坏</h2>
+          <p class="lead">
+            如果一个 Research Program 只有一个 current_state，就无法表达“假设 A 正在跑实验，假设 B 等待 PI 审批，假设 C 被反例打回，假设 D 正在整理证据”。这不是实现细节，而是研究语义错误。
+          </p>
+          <div class="note danger">
+            单 FSM 的最大风险是把科研伪装成线性流程。它会诱导系统追求“下一步是什么”，而不是追问“哪个分支的什么不确定性最值得推进”。
+          </div>
+        </section>
+
+        <section>
+          <h2>三层编排模型</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>层</th>
+                <th>职责</th>
+                <th>状态</th>
+                <th>持久化要求</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Program Orchestrator</td>
+                <td>管理长期目标、范围、资源、PI gate、知识账本和 branch 集合。</td>
+                <td>active, paused, under_review, archived</td>
+                <td>必须长期存在，支持跨月恢复。</td>
+              </tr>
+              <tr>
+                <td>Hypothesis Branch FSM</td>
+                <td>管理单个假设的认知状态和下一步策略。</td>
+                <td>scoping, evidence, hypothesis, verification_plan, experiment, analysis, review, ledger_candidate</td>
+                <td>每次转移都记录 event 和 gate。</td>
+              </tr>
+              <tr>
+                <td>Activity DAG</td>
+                <td>执行检索、分析、实验、审查、审批等具体动作。</td>
+                <td>queued, running, waiting, succeeded, failed, cancelled</td>
+                <td>记录输入、输出、工具、日志和可复现材料。</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section>
+          <h2>Branch 状态定义</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>状态</th>
+                <th>目标</th>
+                <th>退出条件</th>
+                <th>常见下一步</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>scoping</td>
+                <td>收敛问题范围、排除项、成功标准。</td>
+                <td>scope、assumptions、success criteria 完整。</td>
+                <td>evidence</td>
+              </tr>
+              <tr>
+                <td>evidence</td>
+                <td>收集和结构化证据。</td>
+                <td>至少一个 Evidence，且记录来源和设计等级。</td>
+                <td>hypothesis, scoping</td>
+              </tr>
+              <tr>
+                <td>hypothesis</td>
+                <td>生成或修订可检验假设。</td>
+                <td>假设、预测、反例条件完整。</td>
+                <td>verification_plan, evidence</td>
+              </tr>
+              <tr>
+                <td>verification_plan</td>
+                <td>设计验证方式、成本、风险、成功指标。</td>
+                <td>hard gates、soft scores、human gates 清楚。</td>
+                <td>experiment, review, await_approval</td>
+              </tr>
+              <tr>
+                <td>experiment</td>
+                <td>执行实验、仿真、数据分析或外部验证。</td>
+                <td>Activity 完成，产出 Evidence 或 Failure。</td>
+                <td>analysis, await_external</td>
+              </tr>
+              <tr>
+                <td>analysis</td>
+                <td>解释结果，生成 Reasoning 和候选 Claim。</td>
+                <td>Reasoning 对象和不确定性记录完整。</td>
+                <td>review, evidence, experiment</td>
+              </tr>
+              <tr>
+                <td>review</td>
+                <td>Critic、Adjudicator 或 PI 审查。</td>
+                <td>Review verdict 存在，阻塞项处理。</td>
+                <td>ledger_candidate, revise, await_pi</td>
+              </tr>
+              <tr>
+                <td>ledger_candidate</td>
+                <td>判断是否进入知识账本。</td>
+                <td>V 等级、novelty、confidence、scope 齐全。</td>
+                <td>accepted, rejected, paused</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section>
+          <h2>Loop Guard</h2>
+          <p>
+            研究允许循环，但不能无限自我消耗。Loop Guard 不是阻止探索，而是发现停滞、升级不确定性、请求人类决策。
+          </p>
+          <pre><code>{
+  "loop_guard": {
+    "max_visits_per_state": 5,
+    "max_total_transitions": 40,
+    "stagnation_window": 3,
+    "stagnation_metric": "no_new_evidence_or_confidence_delta",
+    "required_escalation": "ask_adjudicator",
+    "on_trigger": [
+      "summarize_blocker",
+      "list_decision_options",
+      "pause_branch_until_decision"
+    ]
+  }
+}</code></pre>
+        </section>
+
+        <section>
+          <h2>硬门槛、软评分、人类门禁</h2>
+          <p>
+            LLM 可以辅助判断，但不能拥有全部控制权。每个状态转移都分三类条件。
+          </p>
+          <table>
+            <thead>
+              <tr>
+                <th>条件类型</th>
+                <th>含义</th>
+                <th>示例</th>
+                <th>由谁判断</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>hard_gates</td>
+                <td>schema 可校验，不满足则阻塞。</td>
+                <td>Claim 必须绑定 Reasoning；Evidence 必须有 source。</td>
+                <td>系统</td>
+              </tr>
+              <tr>
+                <td>soft_scores</td>
+                <td>rubric 判断，用于建议继续或升级。</td>
+                <td>hypothesis specificity >= 0.7。</td>
+                <td>Staff Officer + Critic</td>
+              </tr>
+              <tr>
+                <td>human_gates</td>
+                <td>涉及责任、成本、伦理或外部发布。</td>
+                <td>批准实体实验、V3-i 入库、外部公开。</td>
+                <td>PI / 委员会</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section>
+          <h2>Durable Wait</h2>
+          <p>
+            长流程研究一定会等待：等实验排期、等 PI 批准、等外部数据、等独立复现。等待必须是显式状态，而不是让 agent 卡在一个长任务里。
+          </p>
+          <pre><code>{
+  "event_type": "WorkflowPaused",
+  "program_id": "program-a2a-meta",
+  "branch_id": "branch-hypothesis-02",
+  "pause_reason": "await_pi_approval",
+  "resume_token": "resume_7f92",
+  "required_action": {
+    "actor": "pi",
+    "decision": ["approve", "reject", "request_revision"],
+    "deadline": "2026-06-01"
+  },
+  "state_snapshot": {
+    "branch_state": "verification_plan",
+    "pending_activity_ids": ["activity-exp-design-4"]
+  }
+}</code></pre>
+        </section>
+
+        <section>
+          <h2>分支操作</h2>
+          <div class="grid">
+            <div class="card">
+              <strong>spawn</strong>
+              <p>从一个 Question、CounterEvidence 或 Review objection 生成新假设分支。</p>
+            </div>
+            <div class="card">
+              <strong>merge</strong>
+              <p>多个分支收敛到同一 claim 或同一验证计划，保留各自 provenance。</p>
+            </div>
+            <div class="card">
+              <strong>fork</strong>
+              <p>同一假设因方法、数据或范围差异拆成多个可比较分支。</p>
+            </div>
+            <div class="card">
+              <strong>pause</strong>
+              <p>等待审批、实验或外部事件，保留 resume token。</p>
+            </div>
+            <div class="card">
+              <strong>retire</strong>
+              <p>因反例、成本或低价值废弃分支，但保留失败知识。</p>
+            </div>
+            <div class="card">
+              <strong>escalate</strong>
+              <p>分支陷入冲突或循环时升级给 Adjudicator 或 PI。</p>
+            </div>
+          </div>
+        </section>
+
+        <section>
+          <h2>状态转移示例</h2>
+          <pre><code>{
+  "transition": {
+    "from": "analysis",
+    "to": "review",
+    "branch_id": "branch-h2",
+    "hard_gates": [
+      { "field": "reasoning_id", "operator": "exists" },
+      { "field": "evidence_ids", "operator": "min_count", "value": 2 }
+    ],
+    "soft_scores": [
+      { "rubric": "alternative_explanations_handled", "min": 0.65 }
+    ],
+    "generated_events": [
+      "ReviewRequested",
+      "CriticContextPrepared"
+    ]
+  }
+}</code></pre>
+        </section>
+      </main>
+    </div>
+
+    <footer>
+      上一章：<a href="./03-ontology-provenance.html">本体与溯源</a> · 下一章：<a href="./05-agent-governance.html">角色与治理</a>
+    </footer>
+  </body>
+</html>

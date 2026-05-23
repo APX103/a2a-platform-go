@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>00. 评审采纳矩阵</title>
+    <link rel="stylesheet" href="./meta-research.css" />
+  </head>
+  <body>
+    <header>
+      <div class="hero">
+        <div class="eyebrow">Chapter 00 · Evaluation Response</div>
+        <h1>评审采纳矩阵：哪些建议在理，如何进入设计</h1>
+        <p class="subtitle">
+          这章不重复 Opus 的评估报告，而是把它转化为设计决策。每条建议都要回答三个问题：它指出的风险是否真实？是否进入核心架构？如果进入，具体落在哪个章节和哪个对象上？
+        </p>
+      </div>
+    </header>
+
+    <div class="layout">
+      <nav>
+        <h2>分章目录</h2>
+        <a href="./index.html">总览索引</a>
+        <a class="active" href="./00-evaluation-response.html">00. 评审采纳矩阵</a>
+        <a href="./01-positioning-principles.html">01. 定位与原则</a>
+        <a href="./02-epistemology-verification.html">02. 认识论与验证</a>
+        <a href="./03-ontology-provenance.html">03. 本体与溯源</a>
+        <a href="./04-orchestration-state-machine.html">04. 编排与状态机</a>
+        <a href="./05-agent-governance.html">05. 角色与治理</a>
+        <a href="./06-novelty-ledger.html">06. 新颖性与入库</a>
+        <a href="./07-workspace-ui.html">07. 工作台 UI</a>
+        <a href="./08-data-protocol.html">08. 数据与协议</a>
+        <a href="./09-mvp-roadmap.html">09. MVP 路线</a>
+        <a href="./10-case-study.html">10. 示例研究</a>
+      </nav>
+
+      <main>
+        <section>
+          <h2>总体判断</h2>
+          <p class="lead">
+            Opus 的建议最有价值的地方，是它没有停留在“内容是否丰富”，而是检查了系统的认识论基础、长期执行机制和知识入库可靠性。它指出的几个问题确实会导致系统在真实科研中失效：并行假设无法表达、复现等级混乱、LLM 自判导致循环失控、critic 缺乏结构隔离、以及新颖性被误当成单一分数。
+          </p>
+          <div class="note ok">
+            本次分章设计的原则：凡是会影响“长期项目能否可靠推进、claim 能否追溯、责任能否归属、验证能否复现”的建议，进入核心架构；凡是偏高级量化或外部指标的建议，进入后续版本，但在数据模型上预留位置。
+          </div>
+        </section>
+
+        <section>
+          <h2>采纳矩阵</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>建议</th>
+                <th>我的判断</th>
+                <th>处理方式</th>
+                <th>落点</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>单 FSM 无法表达多假设并行</td>
+                <td><span class="tag brick">完全采纳</span> 这是 P0。科研不是一条流水线，而是多个假设分支并发推进。</td>
+                <td>改为 Program / Branch / Activity 三层模型。</td>
+                <td>第 04 章</td>
+              </tr>
+              <tr>
+                <td>V3 未区分可复现与已独立复现</td>
+                <td><span class="tag brick">完全采纳</span> 这是复现危机的核心区别。</td>
+                <td>拆为 V3-r 和 V3-i；V3-i 不允许系统自判。</td>
+                <td>第 02 章</td>
+              </tr>
+              <tr>
+                <td>confidence 不能是单一 0-1 分数</td>
+                <td><span class="tag brick">完全采纳</span> 单分数会掩盖真值、复现、泛化、外推边界。</td>
+                <td>改为 confidence vector + interval + update log。</td>
+                <td>第 02、08 章</td>
+              </tr>
+              <tr>
+                <td>Reasoning 应该是一阶对象</td>
+                <td><span class="tag brick">完全采纳</span> 否则 Claim-Evidence 中间的“为什么”不可审计。</td>
+                <td>引入 Warrant / Reasoning 对象，绑定推理类型和漏洞。</td>
+                <td>第 03 章</td>
+              </tr>
+              <tr>
+                <td>缺少 Adjudicator / Mediator</td>
+                <td><span class="tag brick">完全采纳</span> Critic 和 Theorist 争执时需要程序裁决。</td>
+                <td>加入 Adjudicator，负责预注册、冲突裁决和升级到 PI。</td>
+                <td>第 05 章</td>
+              </tr>
+              <tr>
+                <td>AI Research Lead 风险高</td>
+                <td><span class="tag amber">采纳但改名</span> AI 可以组织材料，但不应拥有阶段权威。</td>
+                <td>AI Research Lead 改为 Staff Officer；PI 保留 stage authority。</td>
+                <td>第 05 章</td>
+              </tr>
+              <tr>
+                <td>Critic 需要结构隔离</td>
+                <td><span class="tag brick">完全采纳</span> 否则批判只是表演式自我检查。</td>
+                <td>引入盲审、异构模型、证据视图隔离、轮换和红队任务。</td>
+                <td>第 05 章</td>
+              </tr>
+              <tr>
+                <td>缺少 evidence design level</td>
+                <td><span class="tag brick">完全采纳</span> 验证等级和研究设计强度是正交维度。</td>
+                <td>增加 EvidenceDesignLevel，与 V 阶梯形成矩阵。</td>
+                <td>第 02 章</td>
+              </tr>
+              <tr>
+                <td>新颖性要区分组织内与全局</td>
+                <td><span class="tag brick">完全采纳</span> 这是避免 rediscovery 被误判为创新的硬要求。</td>
+                <td>NoveltyScope 拆为 organization / community / global。</td>
+                <td>第 06 章</td>
+              </tr>
+              <tr>
+                <td>解释压缩度可用 MDL 形式化</td>
+                <td><span class="tag amber">方向采纳</span> 理论基础好，但 MVP 不应先做复杂量化。</td>
+                <td>数据模型预留 compression_delta，MVP 用人工 rubric。</td>
+                <td>第 06、09 章</td>
+              </tr>
+              <tr>
+                <td>引入 FAIR / W3C PROV / ORKG 对齐</td>
+                <td><span class="tag green">核心采纳</span> 不是为了标准化而标准化，而是为了跨项目复用。</td>
+                <td>每个对象都有 provenance envelope；Publication / Dataset / Method 成为一阶对象。</td>
+                <td>第 03、08 章</td>
+              </tr>
+              <tr>
+                <td>复杂度过高，MVP 要克制</td>
+                <td><span class="tag brick">完全采纳</span> 这是产品能不能落地的关键。</td>
+                <td>Phase 1 只做对象工作台、V0-V2、PI gate、trace log。</td>
+                <td>第 09 章</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section>
+          <h2>不完全采纳的点</h2>
+          <h3>1. 不把所有学术指标都做成第一版自动评分</h3>
+          <p>
+            CEBM、GRADE、MDL、Disruption Index、Uzzi atypicality 都有参考价值，但如果一开始全部产品化，系统会变成复杂指标仪表盘，而不是可用的研究工作台。第一版应该保留字段和人工判定流程，让真实项目先产生数据，再决定哪些指标值得自动化。
+          </p>
+
+          <h3>2. 不把“科学发现”承诺为全自动</h3>
+          <p>
+            这套系统的定位不是让 AI 替代 PI，而是让研究过程可组织、可审计、可复用。AI 可以提出候选假设、检索证据、生成区分实验，但高等级 claim 的入库、伦理风险、外部发布和昂贵实验仍要有人类 gate。
+          </p>
+
+          <h3>3. 不把 Research Program 做成纯 Temporal 工作流</h3>
+          <p>
+            Temporal 式 durable execution 值得借鉴，但科研状态不是普通任务状态。系统需要同时表达认知状态、证据状态、审批状态和工具执行状态。因此三层模型中只有 Activity 层接近工作流引擎，Branch 和 Program 层必须保留研究语义。
+          </p>
+        </section>
+
+        <section>
+          <h2>采纳后的总设计变化</h2>
+          <div class="grid">
+            <div class="card">
+              <strong>从单流程到多分支</strong>
+              <p>原方案容易把研究看成固定循环。新版把每个 hypothesis 建成 branch，branch 可以并行、暂停、合并、废弃。</p>
+            </div>
+            <div class="card">
+              <strong>从 claim 字段到论证对象</strong>
+              <p>证据和结论之间必须有 Reasoning/Warrant 对象，记录推理类型、适用边界、反例和审查意见。</p>
+            </div>
+            <div class="card">
+              <strong>从 AI 决策到人机治理</strong>
+              <p>AI 不拥有最终阶段权威。PI、Adjudicator 和审批阶梯让责任边界明确。</p>
+            </div>
+            <div class="card">
+              <strong>从漂亮报告到知识账本</strong>
+              <p>报告只是投影。真正的一等公民是 Claim Ledger 里的对象、证据、验证状态、置信度更新和审查记录。</p>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <footer>
+      上一页：<a href="./index.html">总览索引</a> · 下一章：<a href="./01-positioning-principles.html">定位与原则</a>
+    </footer>
+  </body>
+</html>

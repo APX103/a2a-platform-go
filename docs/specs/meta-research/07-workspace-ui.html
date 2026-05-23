@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>07. 工作台 UI</title>
+    <link rel="stylesheet" href="./meta-research.css" />
+  </head>
+  <body>
+    <header>
+      <div class="hero">
+        <div class="eyebrow">Chapter 07 · Workspace UI</div>
+        <h1>工作台 UI：从聊天窗口转向对象、分支和验证状态</h1>
+        <p class="subtitle">
+          深度研究的前端不应该默认是一块聊天记录。聊天可以发起问题和解释状态，但研究主体应该是 root context、branch board、对象 inspector、claim ledger、approval queue 和 trace。
+        </p>
+      </div>
+    </header>
+
+    <div class="layout">
+      <nav>
+        <h2>分章目录</h2>
+        <a href="./index.html">总览索引</a>
+        <a href="./00-evaluation-response.html">00. 评审采纳矩阵</a>
+        <a href="./01-positioning-principles.html">01. 定位与原则</a>
+        <a href="./02-epistemology-verification.html">02. 认识论与验证</a>
+        <a href="./03-ontology-provenance.html">03. 本体与溯源</a>
+        <a href="./04-orchestration-state-machine.html">04. 编排与状态机</a>
+        <a href="./05-agent-governance.html">05. 角色与治理</a>
+        <a href="./06-novelty-ledger.html">06. 新颖性与入库</a>
+        <a class="active" href="./07-workspace-ui.html">07. 工作台 UI</a>
+        <a href="./08-data-protocol.html">08. 数据与协议</a>
+        <a href="./09-mvp-roadmap.html">09. MVP 路线</a>
+        <a href="./10-case-study.html">10. 示例研究</a>
+      </nav>
+
+      <main>
+        <section>
+          <h2>核心 UI 判断</h2>
+          <p class="lead">
+            用户进入一个研究系统时，最重要的问题不是“我能不能和群聊天”，而是“我正在研究什么、当前有哪些假设分支、哪些证据支持它、哪些 claim 卡在验证或审批上”。因此主界面必须围绕研究对象，而不是围绕消息流。
+          </p>
+          <div class="note">
+            但“不做群聊”不等于“不能输入问题”。管理员需要明确入口来发起 root context：输入研究问题、选择入口 agent 或 flow、生成 Program/Branch，并把第一条问题写入 trace。
+          </div>
+        </section>
+
+        <section>
+          <h2>首页布局</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>区域</th>
+                <th>展示内容</th>
+                <th>主要动作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Program Header</td>
+                <td>研究目标、范围、PI、状态、风险、最近更新。</td>
+                <td>编辑范围、暂停、归档、导出报告。</td>
+              </tr>
+              <tr>
+                <td>Start Topic / Root Context</td>
+                <td>问题输入、入口 agent、使用模板、引用资料。</td>
+                <td>创建 root context、创建 branch、自动发送第一步。</td>
+              </tr>
+              <tr>
+                <td>Branch Board</td>
+                <td>每个假设分支的状态、阻塞、confidence delta。</td>
+                <td>打开分支、暂停、合并、升级审批。</td>
+              </tr>
+              <tr>
+                <td>Object Stream</td>
+                <td>最近创建的 Evidence、Reasoning、Claim、Review。</td>
+                <td>筛选、审查、转入 ledger。</td>
+              </tr>
+              <tr>
+                <td>Approval Queue</td>
+                <td>等待 PI / Adjudicator / Curator 的 gate。</td>
+                <td>批准、拒绝、要求修订。</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section>
+          <h2>不同群模式对应不同 UI</h2>
+          <p>
+            这是平台产品形态的关键规则。群的 orchestration mode 决定 UI，不应该所有群都渲染成同一个聊天窗口。
+          </p>
+          <table>
+            <thead>
+              <tr>
+                <th>群模式</th>
+                <th>UI 主体</th>
+                <th>输入入口</th>
+                <th>不应该出现</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>P2P Network</td>
+                <td>成员发现、直连入口、能力卡片、Start Topic。</td>
+                <td>管理员从 Start Topic 发起 root context，或打开某个 agent 的 direct chat。</td>
+                <td>群广播聊天框。</td>
+              </tr>
+              <tr>
+                <td>Manual Flow</td>
+                <td>步骤编排器、每步 agent、system prompt、输入输出 artifact。</td>
+                <td>Start Topic 输入研究问题，选择入口 step 或 agent。</td>
+                <td>所有成员无序群聊。</td>
+              </tr>
+              <tr>
+                <td>Stateflow</td>
+                <td>状态图、当前 phase、可发言角色、gate 和 trace。</td>
+                <td>根据 state 选择允许的 action，而不是自由聊天。</td>
+                <td>绕过状态机的普通输入框。</td>
+              </tr>
+              <tr>
+                <td>Free Chat</td>
+                <td>聊天时间线 + 对象抽取侧栏。</td>
+                <td>聊天输入框。</td>
+                <td>把所有消息默认当知识。</td>
+              </tr>
+              <tr>
+                <td>Research Program</td>
+                <td>对象工作台、branch board、ledger、approval queue。</td>
+                <td>Root Context Composer。</td>
+                <td>单一线性聊天作为主界面。</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section>
+          <h2>Root Context Composer</h2>
+          <p>
+            这是管理员发起研究的入口。它不是普通聊天框，而是一个结构化启动器。
+          </p>
+          <div class="grid">
+            <div class="card">
+              <strong>Question</strong>
+              <p>用户输入自然语言问题。系统会生成 Question 对象，并保留原文。</p>
+            </div>
+            <div class="card">
+              <strong>Scope</strong>
+              <p>选择研究范围、排除项、时间边界、数据源权限。</p>
+            </div>
+            <div class="card">
+              <strong>Entry Agent / Flow</strong>
+              <p>选择第一步由哪个 agent、哪个 step 或哪个模板接管。</p>
+            </div>
+            <div class="card">
+              <strong>Mode</strong>
+              <p>探索、验证、复现、综述、实验设计、知识复审。</p>
+            </div>
+            <div class="card">
+              <strong>Initial Materials</strong>
+              <p>附加文档、链接、数据库、已有 claim、上下文片段。</p>
+            </div>
+            <div class="card">
+              <strong>Governance</strong>
+              <p>选择 PI、审批策略、风险等级和自动化上限。</p>
+            </div>
+          </div>
+        </section>
+
+        <section>
+          <h2>Branch Workspace</h2>
+          <p>
+            打开一个 hypothesis branch 后，页面应围绕状态推进，而不是围绕聊天。
+          </p>
+          <table>
+            <thead>
+              <tr>
+                <th>组件</th>
+                <th>目的</th>
+                <th>用户动作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>State Ribbon</td>
+                <td>显示当前 branch 状态、退出条件、阻塞项。</td>
+                <td>查看下一步、请求升级、暂停。</td>
+              </tr>
+              <tr>
+                <td>Hypothesis Card</td>
+                <td>展示假设、预测、反例条件。</td>
+                <td>修订假设、拆分分支。</td>
+              </tr>
+              <tr>
+                <td>Evidence Table</td>
+                <td>展示证据来源、设计等级、支持/反驳方向、独立性。</td>
+                <td>添加证据、标记同源、请求检索。</td>
+              </tr>
+              <tr>
+                <td>Reasoning Graph</td>
+                <td>可视化 Evidence → Warrant → Claim。</td>
+                <td>审查推理、定位漏洞。</td>
+              </tr>
+              <tr>
+                <td>Activity Log</td>
+                <td>显示工具执行、实验、审批和状态转移。</td>
+                <td>复现、查看输入输出、回滚草稿。</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section>
+          <h2>Claim Inspector</h2>
+          <p>
+            Claim 是系统最重要的 UI 对象。Inspector 必须让用户一眼看见这个 claim 处在什么知识状态。
+          </p>
+          <ul>
+            <li>Statement：声明内容和适用 scope。</li>
+            <li>Verification：V 等级、EvidenceDesignLevel、复现状态。</li>
+            <li>Confidence：truth、replicability、generalization、update log。</li>
+            <li>Reasoning：warrant 列表、推理类型、已知弱点。</li>
+            <li>Counter Evidence：反例、替代解释、未解决 objection。</li>
+            <li>Governance：reviewer、PI gate、下一次复审触发条件。</li>
+          </ul>
+        </section>
+
+        <section>
+          <h2>关键交互规则</h2>
+          <div class="note ok">
+            所有自然语言输入都应该产生或修改对象，而不是只追加消息。比如用户问“这个结论靠谱吗”，系统应该打开 Claim Inspector，生成 Review task，而不是只在聊天里回答“看起来靠谱”。
+          </div>
+          <ul>
+            <li>Start Topic 生成 root context，并创建 Question。</li>
+            <li>“提出假设”生成 Hypothesis，而不是普通 assistant message。</li>
+            <li>“找证据”生成 Activity 和 Evidence。</li>
+            <li>“为什么成立”生成或打开 Reasoning。</li>
+            <li>“这个能入库吗”触发 Ledger Admission Review。</li>
+            <li>“我不同意”生成 Objection 或 CounterEvidence。</li>
+          </ul>
+        </section>
+      </main>
+    </div>
+
+    <footer>
+      上一章：<a href="./06-novelty-ledger.html">新颖性与入库</a> · 下一章：<a href="./08-data-protocol.html">数据与协议</a>
+    </footer>
+  </body>
+</html>

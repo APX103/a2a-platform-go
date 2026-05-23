@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { useChatStore } from '../stores/chatStore';
@@ -11,12 +11,17 @@ import TaskPanel from '../components/TaskPanel';
 
 export default function Chat() {
   const { agentName } = useParams<{ agentName: string }>();
-  const contextIdParam = new URLSearchParams(window.location.search).get('contextId');
+  const searchParams = new URLSearchParams(window.location.search);
+  const contextIdParam = searchParams.get('contextId');
+  const groupIdParam = searchParams.get('groupId') || undefined;
+  const draftParam = searchParams.get('draft') || '';
+  const autoSendParam = searchParams.get('autoSend') === '1';
 
   const { contextId, setContextId, setContexts, setAgentName, clearChat, setError } = useChatStore();
   const { sendMessage, loadContext, isStreaming, messages, error } = useChat(agentName || '');
   const [showSidebar, setShowSidebar] = useState(true);
   const [showTaskPanel, setShowTaskPanel] = useState(true);
+  const autoSentRef = useRef(false);
 
   // Initialize agent name from URL
   useEffect(() => {
@@ -71,9 +76,24 @@ export default function Chat() {
       }
     }
 
-    await sendMessage(content, currentContextId || undefined);
+    await sendMessage(content, currentContextId || undefined, {
+      groupId: groupIdParam,
+      rootContextId: currentContextId || undefined,
+    });
     loadContextList();
   };
+
+  useEffect(() => {
+    if (!autoSendParam || !draftParam || autoSentRef.current) return;
+    if (contextIdParam && contextId !== contextIdParam) return;
+    autoSentRef.current = true;
+    const nextParams = new URLSearchParams(window.location.search);
+    nextParams.delete('draft');
+    nextParams.delete('autoSend');
+    const nextQuery = nextParams.toString();
+    window.history.replaceState(null, '', `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ''}`);
+    handleSend(draftParam);
+  }, [autoSendParam, draftParam, contextIdParam, contextId, agentName]);
 
   const handleNewContext = async () => {
     if (!agentName) {
@@ -132,6 +152,7 @@ export default function Chat() {
         <ChatHeader
           agentName={agentName}
           contextId={contextId}
+          groupId={groupIdParam}
           onNewContext={handleNewContext}
           onDeleteContext={handleDeleteContext}
           onToggleTaskPanel={() => setShowTaskPanel(v => !v)}

@@ -4,13 +4,14 @@ import { useState } from 'react';
 interface ChatHeaderProps {
   agentName: string;
   contextId: string | null;
+  groupId?: string;
   onNewContext: () => void;
   onDeleteContext: () => void;
   onToggleTaskPanel?: () => void;
   showTaskPanel?: boolean;
 }
 
-export default function ChatHeader({ agentName, contextId, onNewContext, onDeleteContext, onToggleTaskPanel, showTaskPanel }: ChatHeaderProps) {
+export default function ChatHeader({ agentName, contextId, groupId, onNewContext, onDeleteContext, onToggleTaskPanel, showTaskPanel }: ChatHeaderProps) {
   const [showMenu, setShowMenu] = useState(false);
 
   return (
@@ -23,6 +24,9 @@ export default function ChatHeader({ agentName, contextId, onNewContext, onDelet
           <h1 className="text-lg font-semibold text-gray-900 dark:text-gray-100">{agentName}</h1>
           {contextId && (
             <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Session: {contextId.slice(0, 8)}</p>
+          )}
+          {groupId && (
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 max-w-[320px] truncate">Group: {groupId}</p>
           )}
         </div>
       </div>
