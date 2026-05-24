@@ -1,4 +1,5 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
+import AdminAuthGate from './components/AdminAuthGate'
 import Layout from './components/Layout'
 import Dashboard from './pages/Dashboard'
 import Agents from './pages/Agents'
@@ -16,23 +17,25 @@ import GroupDetail from './pages/GroupDetail'
 
 export default function App() {
   return (
-    <Routes>
-      <Route element={<Layout />}>
-        <Route path="/" element={<Dashboard />} />
-        <Route path="/agents" element={<Agents />} />
-        <Route path="/agents/:name" element={<AgentDetail />} />
-        <Route path="/humans" element={<Humans />} />
-        <Route path="/humans/:id" element={<HumanDetail />} />
-        <Route path="/builtin-agents" element={<BuiltinAgents />} />
-        <Route path="/groups" element={<Groups />} />
-        <Route path="/groups/:id" element={<GroupDetail />} />
-        <Route path="/tasks" element={<Tasks />} />
-        <Route path="/tasks/:id" element={<TaskDetail />} />
-        <Route path="/traces" element={<Traces />} />
-        <Route path="/traces/context/:contextId" element={<TraceContext />} />
-        <Route path="/chat/:agentName" element={<Chat />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Route>
-    </Routes>
+    <AdminAuthGate>
+      <Routes>
+        <Route element={<Layout />}>
+          <Route path="/" element={<Dashboard />} />
+          <Route path="/agents" element={<Agents />} />
+          <Route path="/agents/:name" element={<AgentDetail />} />
+          <Route path="/humans" element={<Humans />} />
+          <Route path="/humans/:id" element={<HumanDetail />} />
+          <Route path="/builtin-agents" element={<BuiltinAgents />} />
+          <Route path="/groups" element={<Groups />} />
+          <Route path="/groups/:id" element={<GroupDetail />} />
+          <Route path="/tasks" element={<Tasks />} />
+          <Route path="/tasks/:id" element={<TaskDetail />} />
+          <Route path="/traces" element={<Traces />} />
+          <Route path="/traces/context/:contextId" element={<TraceContext />} />
+          <Route path="/chat/:agentName" element={<Chat />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Route>
+      </Routes>
+    </AdminAuthGate>
   )
 }

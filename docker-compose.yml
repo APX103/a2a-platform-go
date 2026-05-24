@@ -28,6 +28,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        WITH_FRONTEND: "0"
     container_name: a2a-platform
     restart: unless-stopped
     ports:
@@ -45,6 +47,20 @@ services:
     volumes:
       - ./etc/config.yaml:/app/etc/config.yaml
       - ./data:/app/data
+
+  admin:
+    build:
+      context: .
+      dockerfile: web/admin/Dockerfile
+    container_name: a2a-admin
+    restart: unless-stopped
+    ports:
+      - "3001:80"
+    networks:
+      - a2a-net
+    depends_on:
+      platform:
+        condition: service_healthy
 
 volumes:
   mysql_data:

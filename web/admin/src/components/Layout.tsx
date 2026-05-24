@@ -1,6 +1,7 @@
 import { NavLink, Outlet } from 'react-router-dom'
-import { LayoutDashboard, Bot, ListTodo, Activity, Cpu, Sun, Moon, Users, UserRound } from 'lucide-react'
+import { Activity, Bot, Cpu, LayoutDashboard, ListTodo, LogOut, Moon, Sun, UserRound, Users } from 'lucide-react'
 import { useTheme } from '../hooks/useTheme'
+import { safeStorage } from '../utils/storage'
 
 const navItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
@@ -14,6 +15,10 @@ const navItems = [
 
 export default function Layout() {
   const { dark, toggle } = useTheme()
+  const signOut = () => {
+    safeStorage.removeItem('admin_token')
+    window.location.assign('/')
+  }
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -50,6 +55,13 @@ export default function Layout() {
           >
             {dark ? <Sun size={16} /> : <Moon size={16} />}
             {dark ? 'Light mode' : 'Dark mode'}
+          </button>
+          <button
+            onClick={signOut}
+            className="mt-1 flex items-center gap-2.5 w-full px-3 py-2 rounded-md text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)]/50 transition-colors"
+          >
+            <LogOut size={16} />
+            Sign out
           </button>
         </div>
       </aside>

@@ -149,9 +149,17 @@ func main() {
 	tools.SetPlatformBaseURL(hostURL)
 	tools.SetPlatformAdminToken(cfg.AdminToken)
 
-	// Embedded admin frontend (SPA)
-	distFS, _ := fs.Sub(web.AdminFS, web.AdminDir)
-	mux.HandleFunc("/", spaHandler(distFS))
+	if web.AdminEnabled {
+		// Embedded admin frontend (SPA)
+		distFS, err := fs.Sub(web.AdminFS, web.AdminDir)
+		if err != nil {
+			slog.Warn("Admin frontend disabled because embedded files are unavailable", "error", err)
+		} else {
+			mux.HandleFunc("/", spaHandler(distFS))
+		}
+	} else {
+		slog.Info("Admin frontend disabled; running headless API server")
+	}
 
 	// ===== Start server =====
 	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
@@ -582,24 +590,8 @@ func makeGroupRouteHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 
 func corsMiddleware(next http.Handler, cfg *config.Config) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		origins := cfg.CorsOrigins
-		allowAll := false
-		for _, o := range origins {
-			if o == "*" {
-				allowAll = true
-				break
-			}
-		}
-		if allowAll {
-			w.Header().Set("Access-Control-Allow-Origin", "*")
-		} else {
-			origin := r.Header.Get("Origin")
-			for _, o := range origins {
-				if origin == o {
-					w.Header().Set("Access-Control-Allow-Origin", origin)
-					break
-				}
-			}
+		if origin := allowedCorsOrigin(r, cfg); origin != "" {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
 		}
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, A2A-Version, Authorization, X-Admin-Token, X-Group-Member-Token")
@@ -609,6 +601,42 @@ func corsMiddleware(next http.Handler, cfg *config.Config) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func allowedCorsOrigin(r *http.Request, cfg *config.Config) string {
+	if cfg == nil {
+		return ""
+	}
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return ""
+	}
+	for _, allowed := range cfg.CorsOrigins {
+		if allowed == "*" {
+			return "*"
+		}
+		if allowed == origin {
+			return origin
+		}
+	}
+	if cfg.AdminToken != "" && tokenFromRequest(r) == cfg.AdminToken {
+		return origin
+	}
+	if r.Method == http.MethodOptions && preflightRequestsAdminToken(r) {
+		return origin
+	}
+	return ""
+}
+
+func preflightRequestsAdminToken(r *http.Request) bool {
+	headers := strings.Split(r.Header.Get("Access-Control-Request-Headers"), ",")
+	for _, header := range headers {
+		normalized := strings.ToLower(strings.TrimSpace(header))
+		if normalized == "x-admin-token" || normalized == "authorization" {
+			return true
+		}
+	}
+	return false
 }
 
 func authMiddleware(next http.Handler, svcCtx *svc.ServiceContext) http.Handler {

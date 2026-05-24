@@ -2,9 +2,10 @@ import { safeStorage } from '../utils/storage';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL?.trim() ?? '';
 const BASE = API_BASE_URL.endsWith('/') ? API_BASE_URL.slice(0, -1) : API_BASE_URL;
+const DEV_ADMIN_TOKEN = import.meta.env.DEV ? import.meta.env.VITE_DEV_ADMIN_TOKEN?.trim() ?? '' : '';
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const token = safeStorage.getItem('admin_token');
+  const token = safeStorage.getItem('admin_token') || DEV_ADMIN_TOKEN;
   const optionHeaders = headersToObject(options?.headers);
   const hasExplicitAuth = Object.keys(optionHeaders).some(key => {
     const normalized = key.toLowerCase();
@@ -35,7 +36,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 async function streamRequest(path: string, options: RequestInit, onEvent: (event: GroupStreamEvent) => void): Promise<void> {
-  const token = safeStorage.getItem('admin_token');
+  const token = safeStorage.getItem('admin_token') || DEV_ADMIN_TOKEN;
   const optionHeaders = headersToObject(options.headers);
   const hasExplicitAuth = Object.keys(optionHeaders).some(key => {
     const normalized = key.toLowerCase();
@@ -348,6 +349,15 @@ export interface GroupJoinResponse {
 
 export const api = {
   getHealth: () => request<HealthResponse>('/health'),
+  validateAdminToken: async (token: string) => {
+    const res = await fetch(`${BASE}/api/agents`, {
+      headers: { 'X-Admin-Token': token },
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`${res.status}: ${text}`);
+    }
+  },
 
   listAgents: () => request<Agent[]>('/api/agents'),
   listHumans: () => request<HumanPresence[]>('/api/humans'),

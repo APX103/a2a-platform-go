@@ -20,4 +20,14 @@ export const safeStorage = {
       // Storage may be unavailable in private or embedded browser contexts.
     }
   },
+
+  removeItem(key: string): void {
+    memoryStorage.delete(key)
+    try {
+      if (typeof window === 'undefined') return
+      window.localStorage?.removeItem(key)
+    } catch {
+      // Storage may be unavailable in private or embedded browser contexts.
+    }
+  },
 }

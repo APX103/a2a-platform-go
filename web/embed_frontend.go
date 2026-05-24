@@ -8,3 +8,5 @@ import "embed"
 var AdminFS embed.FS
 
 const AdminDir = "dist"
+
+const AdminEnabled = true

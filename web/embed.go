@@ -13,3 +13,5 @@ import "embed"
 var AdminFS embed.FS
 
 const AdminDir = "static"
+
+const AdminEnabled = false

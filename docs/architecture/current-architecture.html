@@ -383,7 +383,7 @@ flowchart LR
           <tr><td>Engine</td><td>内置 Agent LLM 调用循环、工具调用、SSE 输出、消息与 trace 持久化。</td><td><code>internal/engine/engine.go</code></td></tr>
           <tr><td>Tools</td><td>文件/HTTP/目录工具、A2A 平台工具、spawn_agent、task item 动态工具。</td><td><code>internal/tools/*.go</code></td></tr>
           <tr><td>Bridge</td><td>把配置化 skill 映射到 HTTP 或 CLI 调用，再包装成 A2A SSE 响应。</td><td><code>internal/bridge/*.go</code></td></tr>
-          <tr><td>Admin UI</td><td>管理 Agent、Human 身份资料与在线状态；Agents/Humans 列表可进入详情页查看 token 管理、资料修改和删除动作；同时管理 Builtin Agent、Task、Trace、Context Chat、Group 和 Artifact。</td><td><code>web/admin/src</code></td></tr>
+          <tr><td>Admin UI</td><td>先通过纯前端 Admin token 登录门禁；通过后管理 Agent、Human 身份资料与在线状态；Agents/Humans 列表可进入详情页查看 token 管理、资料修改和删除动作；同时管理 Builtin Agent、Task、Trace、Context Chat、Group 和 Artifact。</td><td><code>web/admin/src</code></td></tr>
           <tr><td>Human Client</td><td>通过 invite token 加入 group，以 member token 读取房间、发消息、看产物。</td><td><code>apps/human-client/src</code></td></tr>
         </tbody>
       </table>
@@ -930,7 +930,7 @@ erDiagram
         <pre class="mermaid">
 flowchart LR
   Request --> RID["requestIDMiddleware&lt;br/&gt;X-Request-ID"]
-  RID --> CORS["corsMiddleware"]
+  RID --> CORS["corsMiddleware&lt;br/&gt;configured origins + admin token origin"]
   CORS --> Rate["rateLimitMiddleware&lt;br/&gt;global + per IP"]
   Rate --> Auth["authMiddleware&lt;br/&gt;admin/member/scoped group"]
   Auth --> Log["loggingMiddleware"]
@@ -938,11 +938,12 @@ flowchart LR
   Mux --> Response
         </pre>
       </div>
+      <p>CORS 仍支持 <code>cors_origins</code> 白名单，但管理面请求有额外放行规则：实际请求如果携带合法 <code>X-Admin-Token</code> 或 <code>Authorization: Bearer admin-token</code>，服务端会回显该请求的 <code>Origin</code>；预检请求如果声明会携带 Admin header，也允许通过，真正权限仍由后续 <code>authMiddleware</code> 校验 Admin token。</p>
     </section>
 
     <section id="runtime">
       <h2>8. 前端与运行部署</h2>
-      <p>Admin UI 是主服务的一部分：<code>make build</code> 会先构建 <code>web/admin</code>，再用 Go build tag <code>frontend</code> 把静态产物嵌入二进制。当前 Admin 左侧有 Agents 与 Humans 两个独立列表：Agents 看机器 Agent 连接状态，并可点进 Agent 详情查看 AgentCard、上游 URL、context mode 和注册 token；Humans 看人类参与者在线状态，并可点进 Human 详情修改 handle/display name、删除身份或签发新的 human token。Human Client 是独立 Vite 应用，开发态默认把 <code>/api</code> 代理到平台 <code>http://127.0.0.1:18090</code>；也可以通过 <code>HUMAN_CLIENT_BFF</code> 显式改走自己的轻量 server 转发。</p>
+      <p>Admin UI 可以有三种运行形态：嵌入式构建通过 Go build tag <code>frontend</code> 把 <code>web/dist</code> 挂到主服务根路径；无头构建不注册 <code>/</code> SPA fallback，只暴露 API、A2A 代理和健康检查；compose 部署默认使用无头平台加独立 Admin 容器。当前 <code>docker-compose.yml</code> 使用 <code>WITH_FRONTEND=0</code> 启动无头平台，并用 <code>web/admin/Dockerfile</code> 构建 Nginx Admin 容器，Admin 容器把 <code>/api</code>、<code>/health</code>、<code>/agent/</code> 和 <code>/.well-known</code> 反向代理到 <code>platform:18090</code>。Admin SPA 入口由 <code>AdminAuthGate</code> 保护：用户必须输入 Admin token，前端用 <code>GET /api/agents</code> 验证后把 token 存入 localStorage；失败 3 次后纯前端锁定 1 分钟，所有真实权限仍由后端 <code>authMiddleware</code> 校验。当前 Admin 左侧有 Agents 与 Humans 两个独立列表：Agents 看机器 Agent 连接状态，并可点进 Agent 详情查看 AgentCard、上游 URL、context mode 和注册 token；Humans 看人类参与者在线状态，并可点进 Human 详情修改 handle/display name、删除身份或签发新的 human token。Admin 本地开发态默认把 <code>/api</code>、<code>/health</code>、<code>/agent/</code>、<code>/.well-known</code> 代理到平台 <code>http://127.0.0.1:18090</code>；注意代理路径使用 <code>/agent/</code> 而不是 <code>/agent</code>，避免误拦截 SPA 路由 <code>/agents</code>。本地开发可用 <code>VITE_DEV_ADMIN_TOKEN</code> 在 dev 模式下给受保护 API 自动附加 Admin token；生产构建不使用该兜底。Human Client 是独立 Vite 应用，开发态默认把 <code>/api</code> 代理到平台 <code>http://127.0.0.1:18090</code>；也可以通过 <code>HUMAN_CLIENT_BFF</code> 显式改走自己的轻量 server 转发。</p>
       <div class="diagram">
         <p class="diagram-title">构建与运行形态</p>
         <pre class="mermaid">
@@ -951,9 +952,17 @@ flowchart TD
   Vite --> Embed["web/embed_frontend.go&lt;br/&gt;AdminFS"]
   Embed --> GoBuild["go build -tags frontend&lt;br/&gt;cmd/server"]
   GoBuild --> Binary["server / container image"]
+  Headless["WITH_FRONTEND=0"] --> NoSPA["web/embed.go&lt;br/&gt;AdminEnabled=false"]
+  NoSPA --> APIOnly["API-only platform&lt;br/&gt;no / SPA fallback"]
   Compose["docker-compose.yml"] --> MySQL["mysql:8.0&lt;br/&gt;port 13306"]
-  Compose --> Platform["a2a-platform&lt;br/&gt;port 18090"]
-  Platform --> AdminSPA["GET /&lt;br/&gt;SPA fallback"]
+  Compose --> Headless
+  APIOnly --> Platform["a2a-platform&lt;br/&gt;port 18090"]
+  Platform --> APIs["/health /api /agent/"]
+  Compose --> AdminContainer["a2a-admin&lt;br/&gt;nginx port 3001"]
+  AdminContainer --> AdminAPIProxy["proxy /api /health /agent/ /.well-known"]
+  AdminAPIProxy --> Platform
+  AdminDev["cd web/admin&lt;br/&gt;VITE_DEV_ADMIN_TOKEN=... npm run dev"] --> AdminProxy["Vite proxy&lt;br/&gt;/api /agent /health"]
+  AdminProxy --> Platform
   HumanDev["make human-dev"] --> HumanUI["apps/human-client&lt;br/&gt;Vite dev server"]
   HumanUI --> Platform
         </pre>
@@ -961,8 +970,10 @@ flowchart TD
       <table>
         <thead><tr><th>入口</th><th>说明</th></tr></thead>
         <tbody>
-          <tr><td><code>docker-compose.yml</code></td><td>启动 MySQL 8 和平台服务，平台监听 <code>18090</code>，MySQL 映射到宿主 <code>13306</code>。</td></tr>
+          <tr><td><code>docker-compose.yml</code></td><td>启动 MySQL 8、无头平台服务和独立 Admin 容器；平台监听 <code>18090</code>，Admin 容器监听 <code>3001</code>，MySQL 映射到宿主 <code>13306</code>，平台构建参数 <code>WITH_FRONTEND=0</code>。</td></tr>
+          <tr><td><code>web/admin/Dockerfile</code> + <code>nginx.conf</code></td><td>构建 Admin 静态文件并用 Nginx 托管；SPA fallback 只在 Admin 容器内发生，API/A2A 路径反向代理到 <code>platform:18090</code>。</td></tr>
           <tr><td><code>etc/config.yaml</code></td><td>默认 host 为 <code>0.0.0.0</code>、port 为 <code>18090</code>、admin token 为 <code>a2a-admin-token</code>。</td></tr>
+          <tr><td><code>web/admin/vite.config.ts</code></td><td>Admin 本地开发服务默认监听 <code>3001</code>，把 API/A2A 路径代理到 <code>18090</code>；A2A 消息代理只匹配 <code>/agent/</code>，避免覆盖 <code>/agents</code> 页面路由；<code>VITE_DEV_ADMIN_TOKEN</code> 只在 dev 模式作为 Admin token 兜底。</td></tr>
           <tr><td><code>Makefile</code></td><td><code>build</code> 构建嵌入式版本；<code>dev</code> 跑 Admin Vite；<code>human-dev</code> 跑 Human Client。</td></tr>
         </tbody>
       </table>

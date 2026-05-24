@@ -15,7 +15,7 @@ export default defineConfig({
     proxy: {
       '/api': apiTarget,
       '/health': apiTarget,
-      '/agent': apiTarget,
+      '/agent/': apiTarget,
       '/.well-known': apiTarget,
     }
   }

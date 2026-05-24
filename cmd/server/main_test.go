@@ -521,6 +521,68 @@ func TestRequestIDMiddlewareSetsResponseHeader(t *testing.T) {
 	}
 }
 
+func TestCorsMiddlewareAllowsAdminTokenOrigin(t *testing.T) {
+	cfg := &config.Config{
+		AdminToken:  "secret",
+		CorsOrigins: []string{"http://allowed.example"},
+	}
+	protected := corsMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}), cfg)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/agents", nil)
+	req.Header.Set("Origin", "http://admin.example")
+	req.Header.Set("X-Admin-Token", "secret")
+	rec := httptest.NewRecorder()
+	protected.ServeHTTP(rec, req)
+
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "http://admin.example" {
+		t.Fatalf("allow origin = %q, want admin origin", got)
+	}
+}
+
+func TestCorsMiddlewareAllowsAdminTokenPreflight(t *testing.T) {
+	cfg := &config.Config{
+		AdminToken:  "secret",
+		CorsOrigins: []string{"http://allowed.example"},
+	}
+	protected := corsMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("preflight should not reach next handler")
+	}), cfg)
+
+	req := httptest.NewRequest(http.MethodOptions, "/api/agents", nil)
+	req.Header.Set("Origin", "http://admin.example")
+	req.Header.Set("Access-Control-Request-Headers", "Content-Type, X-Admin-Token")
+	rec := httptest.NewRecorder()
+	protected.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", rec.Code)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "http://admin.example" {
+		t.Fatalf("allow origin = %q, want admin origin", got)
+	}
+}
+
+func TestCorsMiddlewareRejectsUnknownOriginWithoutAdminToken(t *testing.T) {
+	cfg := &config.Config{
+		AdminToken:  "secret",
+		CorsOrigins: []string{"http://allowed.example"},
+	}
+	protected := corsMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}), cfg)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/agents", nil)
+	req.Header.Set("Origin", "http://unknown.example")
+	rec := httptest.NewRecorder()
+	protected.ServeHTTP(rec, req)
+
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Fatalf("allow origin = %q, want empty", got)
+	}
+}
+
 func TestAuthMiddlewareProtectsGroupManagement(t *testing.T) {
 	svcCtx := &svc.ServiceContext{Config: &config.Config{AdminToken: "secret"}}
 	called := false
