@@ -423,6 +423,7 @@ func TestRequiresAdminProductionEndpointMatrix(t *testing.T) {
 		{"/api/groups/g1", http.MethodPut, true},
 		{"/api/groups/g1/members", http.MethodPost, true},
 		{"/api/groups/g1/invites", http.MethodGet, true},
+		{"/api/groups/g1/join", http.MethodPost, true},
 		{"/api/group-joins", http.MethodPost, false},
 		{"/health", http.MethodGet, false},
 	}
