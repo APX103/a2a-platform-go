@@ -339,6 +339,26 @@ func newExternalAgentTestServer(t *testing.T, handler http.Handler) string {
 	return u.String()
 }
 
+func maliciousAgentReq(t *testing.T, agent, body string) (int, []byte) {
+	t.Helper()
+	limiter.Wait(context.Background())
+	client := &http.Client{Timeout: 5 * time.Second}
+	r, err := http.NewRequest("POST", baseURL+"/agent/"+agent, strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("create request: %v", err)
+	}
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Accept", "text/event-stream")
+	r.Header.Set("X-Admin-Token", adminToken)
+	resp, err := client.Do(r)
+	if err != nil {
+		t.Fatalf("POST /agent/%s: %v; if the platform cannot reach the fake httptest agent, set A2A_E2E_EXTERNAL_AGENT_HOST to a host/address reachable from the platform container or process", agent, err)
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, data
+}
+
 func connectedBuiltinAgents(t *testing.T, minCount int) []string {
 	t.Helper()
 	code, body := req(t, "GET", "/api/agents", "", auth())
@@ -1030,9 +1050,9 @@ func TestMaliciousExternalAgentInvalidJSONDoesNotCrash(t *testing.T) {
 	}))
 	registerStaticExternalAgent(t, name, agentURL)
 
-	code, data := req(t, "POST", "/agent/"+name, simpleA2ABody("hello malicious invalid json"), auth())
+	code, data := maliciousAgentReq(t, name, simpleA2ABody("hello malicious invalid json"))
 	if code != http.StatusOK {
-		t.Fatalf("status = %d, want upstream 200 relay, body=%s", code, string(data))
+		t.Fatalf("status = %d, want upstream 200 relay, body=%s; if this is a reachability failure, set A2A_E2E_EXTERNAL_AGENT_HOST to a host/address reachable from the platform container or process", code, string(data))
 	}
 	if strings.Contains(string(data), adminToken) {
 		t.Fatalf("response leaked admin token: %s", string(data))
@@ -1047,23 +1067,9 @@ func TestMaliciousExternalAgentBrokenSSEDoesNotHang(t *testing.T) {
 	}))
 	registerStaticExternalAgent(t, name, agentURL)
 
-	limiter.Wait(context.Background())
-	client := &http.Client{Timeout: 5 * time.Second}
-	r, err := http.NewRequest("POST", baseURL+"/agent/"+name, strings.NewReader(simpleA2ABody("hello broken sse")))
-	if err != nil {
-		t.Fatalf("create request: %v", err)
-	}
-	r.Header.Set("Content-Type", "application/json")
-	r.Header.Set("Accept", "text/event-stream")
-	r.Header.Set("X-Admin-Token", adminToken)
-	resp, err := client.Do(r)
-	if err != nil {
-		t.Fatalf("POST /agent/%s: %v", name, err)
-	}
-	defer resp.Body.Close()
-	data, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200 stream relay, body=%s", resp.StatusCode, string(data))
+	code, data := maliciousAgentReq(t, name, simpleA2ABody("hello broken sse"))
+	if code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 stream relay, body=%s; if this is a reachability failure, set A2A_E2E_EXTERNAL_AGENT_HOST to a host/address reachable from the platform container or process", code, string(data))
 	}
 	if strings.Contains(string(data), adminToken) {
 		t.Fatalf("response leaked admin token: %s", string(data))
