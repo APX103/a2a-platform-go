@@ -440,7 +440,11 @@ func (r *AgentRegistry) runHealthCheck() {
 			continue
 		}
 		// Phase 1: check if bridge HTTP is reachable (agent card endpoint)
-		cardURL := strings.TrimRight(a.url, "/") + "/.well-known/agent.json"
+		cardURL, err := discoverAgentCardURL(a.url, client)
+		if err != nil {
+			r.recordFailure(a.name, "offline", fmt.Sprintf("bridge unreachable: %v", err))
+			continue
+		}
 		resp, err := client.Get(cardURL)
 		if err != nil {
 			r.recordFailure(a.name, "offline", fmt.Sprintf("bridge unreachable: %v", err))
@@ -565,8 +569,11 @@ func (r *AgentRegistry) CountTotal() (int, error) {
 // ===== HTTP helpers =====
 
 func fetchAgentCard(url string) (*AgentCard, error) {
-	cardURL := strings.TrimRight(url, "/") + "/.well-known/agent.json"
 	client := &http.Client{Timeout: 10 * time.Second}
+	cardURL, err := discoverAgentCardURL(url, client)
+	if err != nil {
+		return nil, err
+	}
 	resp, err := client.Get(cardURL)
 	if err != nil {
 		return nil, err
@@ -584,8 +591,11 @@ func fetchAgentCard(url string) (*AgentCard, error) {
 
 func pingAgent(url string) error {
 	// Lightweight check: just verify the agent card endpoint is reachable
-	cardURL := strings.TrimRight(url, "/") + "/.well-known/agent.json"
 	client := &http.Client{Timeout: 5 * time.Second}
+	cardURL, err := discoverAgentCardURL(url, client)
+	if err != nil {
+		return err
+	}
 	resp, err := client.Get(cardURL)
 	if err != nil {
 		return err
@@ -595,6 +605,34 @@ func pingAgent(url string) error {
 		return fmt.Errorf("ping returned status %d", resp.StatusCode)
 	}
 	return nil
+}
+
+func discoverAgentCardURL(baseURL string, client *http.Client) (string, error) {
+	if client == nil {
+		client = &http.Client{Timeout: 5 * time.Second}
+	}
+	candidates := []string{
+		strings.TrimRight(baseURL, "/") + "/.well-known/agent-card.json",
+		strings.TrimRight(baseURL, "/") + "/.well-known/agent.json",
+	}
+	var lastStatus int
+	var lastErr error
+	for _, cardURL := range candidates {
+		resp, err := client.Get(cardURL)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		lastStatus = resp.StatusCode
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusOK {
+			return cardURL, nil
+		}
+	}
+	if lastErr != nil {
+		return "", lastErr
+	}
+	return "", fmt.Errorf("agent card returned status %d", lastStatus)
 }
 
 func checkHealthURL(url string) error {
@@ -617,6 +655,15 @@ func normalizeAgentCard(card *model.AgentCard, name, url string, skills []model.
 	card.Url = "/agent/" + name
 	if card.Version == "" {
 		card.Version = "1.0.0"
+	}
+	if card.Capabilities == nil {
+		card.Capabilities = &model.AgentCapabilities{Streaming: true}
+	}
+	if len(card.DefaultInputModes) == 0 {
+		card.DefaultInputModes = []string{"text/plain"}
+	}
+	if len(card.DefaultOutputModes) == 0 {
+		card.DefaultOutputModes = []string{"text/plain"}
 	}
 	card.ContextMode = normalizeContextMode(card.ContextMode)
 	if len(card.Skills) == 0 && len(skills) > 0 {
@@ -682,6 +729,20 @@ func hostedAgentCard(card *model.AgentCard, name string) *model.AgentCard {
 		c.Name = name
 	}
 	c.Url = "/agent/" + c.Name
+	c.SupportedInterfaces = []model.AgentInterface{{
+		Url:             c.Url,
+		ProtocolBinding: "JSONRPC",
+		ProtocolVersion: "1.0",
+	}}
+	if c.Capabilities == nil {
+		c.Capabilities = &model.AgentCapabilities{Streaming: true}
+	}
+	if len(c.DefaultInputModes) == 0 {
+		c.DefaultInputModes = []string{"text/plain"}
+	}
+	if len(c.DefaultOutputModes) == 0 {
+		c.DefaultOutputModes = []string{"text/plain"}
+	}
 	c.ContextMode = normalizeContextMode(c.ContextMode)
 	return &c
 }

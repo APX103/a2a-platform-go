@@ -1,7 +1,23 @@
 export interface Session {
-  client_id: string
+  human_id: string
+  handle: string
+  display_name: string
+  session_token: string
   group_id: string
   access_token: string
+}
+
+export interface HumanSession {
+  human_id: string
+  handle: string
+  display_name: string
+  session_token: string
+}
+
+export interface HumanJoinPayload {
+  session: HumanSession
+  default_group?: Group
+  default_access_token?: string
 }
 
 export interface Group {
@@ -67,11 +83,39 @@ export interface RoomSnapshot {
   orchestration: GroupOrchestrationState
 }
 
+export interface DirectAgentMessage {
+  id: string
+  sender: 'human' | 'agent'
+  agent: string
+  content: string
+  created_at: string
+}
+
 export interface GroupJoinResponse {
   group: Group
   member: GroupMember
+  human?: {
+    id: string
+    handle: string
+    display_name: string
+  }
   access_token: string
   orchestration: GroupOrchestrationState
+}
+
+export interface HumanAuthResponse {
+  human: {
+    id: string
+    handle: string
+    display_name: string
+  }
+  session_token: string
+  expires_at?: string
+  created?: boolean
+  default_group?: Group
+  default_member?: GroupMember
+  default_access_token?: string
+  orchestration?: GroupOrchestrationState
 }
 
 const PLATFORM_BASE = trimSlash(import.meta.env.VITE_A2A_PLATFORM_URL?.trim() || '')
@@ -103,14 +147,24 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ client_id: clientId }),
     }),
-  getGroup: (groupId: string, accessToken: string) => request<Group>(`/api/groups/${encodeURIComponent(groupId)}`, { accessToken }),
-  joinWithInvite: (inviteToken: string, clientId: string) => request<GroupJoinResponse>('/api/group-joins', {
+  registerHuman: (req: { handle: string; display_name?: string }) => request<HumanAuthResponse>('/api/humans/register', {
     method: 'POST',
+    body: JSON.stringify(req),
+  }),
+  loginHuman: (req: { token?: string; handle?: string; display_name?: string }) => request<HumanAuthResponse>('/api/humans/login', {
+    method: 'POST',
+    body: JSON.stringify(req),
+  }),
+  getHumanMe: (sessionToken: string) => request<{ human: HumanAuthResponse['human'] }>('/api/humans/me', {
+    headers: { Authorization: `Bearer ${sessionToken}` },
+  }),
+  getGroup: (groupId: string, accessToken: string) => request<Group>(`/api/groups/${encodeURIComponent(groupId)}`, { accessToken }),
+  joinWithInvite: (inviteToken: string, sessionToken: string) => request<GroupJoinResponse>('/api/group-joins', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${sessionToken}` },
     body: JSON.stringify({
       invite_token: inviteToken,
       actor_type: 'human',
-      actor_id: clientId,
-      client_id: clientId,
       capabilities: { ui: 'human-client' },
     }),
   }),
@@ -118,6 +172,35 @@ export const api = {
   listEvents: (groupId: string, accessToken: string) => request<GroupEvent[]>(`/api/groups/${encodeURIComponent(groupId)}/events?limit=100`, { accessToken }),
   listArtifacts: (groupId: string, accessToken: string) => request<GroupArtifact[]>(`/api/groups/${encodeURIComponent(groupId)}/artifacts`, { accessToken }),
   getOrchestration: (groupId: string, accessToken: string) => request<GroupOrchestrationState>(`/api/groups/${encodeURIComponent(groupId)}/orchestration`, { accessToken }),
+  sendDirectToAgent: async (agentName: string, accessToken: string, humanId: string, content: string) => {
+    const body = {
+      jsonrpc: '2.0',
+      id: `human-${Date.now()}`,
+      method: 'SendStreamingMessage',
+      params: {
+        contextId: `human:${humanId}:agent:${agentName}`,
+        message: {
+          role: 'ROLE_USER',
+          parts: [{ text: content }],
+        },
+      },
+    }
+    const res = await fetch(`${PLATFORM_BASE}/agent/${encodeURIComponent(agentName)}`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        accept: 'text/event-stream, application/json',
+        Authorization: `Bearer ${accessToken}`,
+        'X-A2A-Source-Agent': `human:${humanId}`,
+      },
+      body: JSON.stringify(body),
+    })
+    if (!res.ok) {
+      const text = await res.text()
+      throw new Error(`${res.status}: ${text}`)
+    }
+    return readAgentResponse(res)
+  },
   sendMessage: (groupId: string, accessToken: string, clientId: string, content: string) => {
     const path = directPlatform
       ? `/api/groups/${encodeURIComponent(groupId)}/events`
@@ -148,4 +231,60 @@ export async function loadRoom(groupId: string, accessToken: string): Promise<Ro
 
 function trimSlash(value: string) {
   return value.endsWith('/') ? value.slice(0, -1) : value
+}
+
+async function readAgentResponse(res: Response): Promise<string> {
+  const contentType = res.headers.get('content-type') || ''
+  if (!contentType.includes('text/event-stream') || !res.body) {
+    const text = await res.text()
+    return extractJSONText(text) || text
+  }
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let finalText = ''
+  while (true) {
+    const { value, done } = await reader.read()
+    if (value) {
+      buffer += decoder.decode(value, { stream: !done })
+      let frameEnd = buffer.indexOf('\n\n')
+      while (frameEnd >= 0) {
+        const frame = buffer.slice(0, frameEnd)
+        buffer = buffer.slice(frameEnd + 2)
+        finalText += extractSSEText(frame)
+        frameEnd = buffer.indexOf('\n\n')
+      }
+    }
+    if (done) break
+  }
+  if (buffer.trim()) {
+    finalText += extractSSEText(buffer)
+  }
+  return finalText.trim() || 'No response text'
+}
+
+function extractSSEText(frame: string) {
+  const data = frame.split('\n')
+    .map(line => line.trim())
+    .filter(line => line.startsWith('data:'))
+    .map(line => line.slice(5).trim())
+    .join('\n')
+  return extractJSONText(data)
+}
+
+function extractJSONText(text: string): string {
+  if (!text) return ''
+  try {
+    const value = JSON.parse(text)
+    if (typeof value?.text === 'string') return value.text
+    if (typeof value?.delta === 'string') return value.delta
+    if (value?.type === 'text.delta' && typeof value?.text === 'string') return value.text
+    const messageParts = value?.result?.message?.parts || value?.message?.parts
+    if (Array.isArray(messageParts)) {
+      return messageParts.map((part: { text?: string }) => part.text || '').join('')
+    }
+  } catch {
+    return ''
+  }
+  return ''
 }

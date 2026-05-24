@@ -3,6 +3,8 @@ package svc
 import (
 	"database/sql"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"a2a-platform/internal/model"
@@ -14,6 +16,69 @@ func setupRegistryTestDB(t *testing.T) *sql.DB {
 	db := testutil.TempMySQLDB(t)
 	migrate(db)
 	return db
+}
+
+func TestFetchAgentCardPrefersStandardAgentCardJSON(t *testing.T) {
+	var legacyHit bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/agent-card.json":
+			_ = json.NewEncoder(w).Encode(model.AgentCard{
+				Name:        "standard-card-agent",
+				Description: "standard",
+				Version:     "1.0.0",
+				Skills: []model.CardSkill{
+					{Id: "chat", Name: "Chat", Description: "Chat"},
+				},
+			})
+		case "/.well-known/agent.json":
+			legacyHit = true
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	card, err := fetchAgentCard(server.URL)
+	if err != nil {
+		t.Fatalf("fetchAgentCard: %v", err)
+	}
+	if card.Name != "standard-card-agent" {
+		t.Fatalf("card name = %q, want standard-card-agent", card.Name)
+	}
+	if legacyHit {
+		t.Fatal("legacy /.well-known/agent.json was hit even though standard card existed")
+	}
+}
+
+func TestFetchAgentCardFallsBackToLegacyAgentJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/agent-card.json":
+			http.NotFound(w, r)
+		case "/.well-known/agent.json":
+			_ = json.NewEncoder(w).Encode(model.AgentCard{
+				Name:        "legacy-card-agent",
+				Description: "legacy",
+				Version:     "1.0.0",
+				Skills: []model.CardSkill{
+					{Id: "chat", Name: "Chat", Description: "Chat"},
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	card, err := fetchAgentCard(server.URL)
+	if err != nil {
+		t.Fatalf("fetchAgentCard: %v", err)
+	}
+	if card.Name != "legacy-card-agent" {
+		t.Fatalf("card name = %q, want legacy-card-agent", card.Name)
+	}
 }
 
 func TestRegisterAgent_WithStaticAgentCard_DoesNotRequireDiscoveryEndpoint(t *testing.T) {

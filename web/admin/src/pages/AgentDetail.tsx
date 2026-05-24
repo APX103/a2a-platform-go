@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Trash2, Save } from 'lucide-react'
+import { ArrowLeft, Copy, Eye, Save, Trash2 } from 'lucide-react'
 import { api, Agent, AgentCard } from '../api/client'
 import { safeStorage } from '../utils/storage'
 
@@ -35,6 +35,9 @@ export default function AgentDetail() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const [token, setToken] = useState(() => safeStorage.getItem('admin_token'))
+  const [credential, setCredential] = useState<{ secret: string; available: boolean } | null>(null)
+  const [credentialLoading, setCredentialLoading] = useState(false)
+  const [credentialCopied, setCredentialCopied] = useState(false)
 
   useEffect(() => {
     if (!name) return
@@ -76,6 +79,27 @@ export default function AgentDetail() {
     } catch (err) {
       setError(String(err))
     }
+  }
+
+  const revealCredential = async () => {
+    if (!name) return
+    setCredentialLoading(true)
+    setCredentialCopied(false)
+    setError('')
+    try {
+      const resp = await api.getAgentCredential(name)
+      setCredential({ secret: resp.secret, available: resp.available })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setCredentialLoading(false)
+    }
+  }
+
+  const copyCredential = async () => {
+    if (!credential?.secret) return
+    await navigator.clipboard.writeText(credential.secret)
+    setCredentialCopied(true)
   }
 
   if (loading) return <div className="p-8 text-sm text-[var(--text-tertiary)]">Loading...</div>
@@ -130,6 +154,44 @@ export default function AgentDetail() {
               onChange={e => { setToken(e.target.value); safeStorage.setItem('admin_token', e.target.value) }}
               className="mt-1 w-full bg-[var(--bg-tertiary)] border border-[var(--border)] rounded-md px-3 py-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
             />
+          </div>
+          <div>
+            <label className="text-xs text-[var(--text-tertiary)] uppercase tracking-wider">Agent Registration Token</label>
+            {credential ? (
+              <div className="mt-1 rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] p-3">
+                {credential.available ? (
+                  <>
+                    <div className="flex items-center justify-between gap-3 mb-2">
+                      <span className="text-xs text-[var(--text-tertiary)]">Stored agent secret</span>
+                      <button
+                        onClick={copyCredential}
+                        className="flex items-center gap-1.5 px-2 py-1 text-xs bg-[var(--bg-secondary)] border border-[var(--border)] rounded-md text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                      >
+                        <Copy size={13} />
+                        {credentialCopied ? 'Copied' : 'Copy'}
+                      </button>
+                    </div>
+                    <textarea
+                      readOnly
+                      value={credential.secret}
+                      rows={2}
+                      className="w-full resize-none bg-[var(--bg-secondary)] border border-[var(--border)] rounded-md px-3 py-2 text-xs font-mono text-[var(--text-primary)]"
+                    />
+                  </>
+                ) : (
+                  <p className="text-sm text-[var(--text-tertiary)]">No agent registration token is stored for this agent.</p>
+                )}
+              </div>
+            ) : (
+              <button
+                onClick={revealCredential}
+                disabled={credentialLoading}
+                className="mt-1 flex items-center gap-1.5 px-3 py-1.5 text-sm bg-[var(--bg-tertiary)] text-[var(--text-secondary)] rounded-md hover:text-[var(--text-primary)] disabled:opacity-60"
+              >
+                <Eye size={14} />
+                {credentialLoading ? 'Loading...' : 'Show token'}
+              </button>
+            )}
           </div>
           <div>
             <label className="text-xs text-[var(--text-tertiary)] uppercase tracking-wider">Upstream URL</label>

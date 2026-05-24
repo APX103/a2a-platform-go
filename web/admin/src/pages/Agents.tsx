@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Plus, Trash2, MessageSquare } from 'lucide-react'
+import { ChevronRight, MessageSquare, Plus, Trash2 } from 'lucide-react'
 import { api, Agent } from '../api/client'
 
 export default function Agents() {
@@ -123,16 +123,17 @@ export default function Agents() {
             <div className="p-6 text-center text-sm text-[var(--text-tertiary)]">No agents registered</div>
           ) : (
             agents.map(agent => (
-              <div key={agent.name} className="flex items-center justify-between p-4 hover:bg-[var(--bg-tertiary)]/30 transition-colors">
-                <div className="flex-1">
+              <div key={agent.name} className="flex items-center justify-between gap-4 p-4 hover:bg-[var(--bg-tertiary)]/30 transition-colors">
+                <Link to={`/agents/${encodeURIComponent(agent.name)}`} className="flex-1 min-w-0 group">
                   <div className="flex items-center gap-3">
                     <div className={`w-2 h-2 rounded-full ${agent.status === 'connected' ? 'bg-[var(--success)]' : 'bg-[var(--text-tertiary)]'}`} />
-                    <div>
-                      <div className="text-sm font-medium text-[var(--text-primary)]">{agent.name}</div>
-                      <div className="text-xs text-[var(--text-tertiary)]">{agent.description || agent.url}</div>
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium text-[var(--text-primary)] truncate group-hover:text-[var(--accent)] transition-colors">{agent.name}</div>
+                      <div className="text-xs text-[var(--text-tertiary)] truncate">{agent.description || agent.url}</div>
                     </div>
+                    <ChevronRight size={15} className="ml-auto shrink-0 text-[var(--text-tertiary)] opacity-0 group-hover:opacity-100 transition-opacity" />
                   </div>
-                </div>
+                </Link>
                 <div className="flex items-center gap-2">
                   <span className={`text-xs px-2 py-0.5 rounded-full ${agent.status === 'connected' ? 'bg-[var(--success)]/10 text-[var(--success)]' : 'bg-[var(--text-tertiary)]/10 text-[var(--text-tertiary)]'}`}>
                     {agent.status || 'unknown'}

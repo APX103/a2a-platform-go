@@ -1,30 +1,112 @@
 import { FormEvent, useState } from 'react'
-import { LogIn, MessageSquare, Network, Shield } from 'lucide-react'
-import { api } from '../api/client'
+import { Copy, LogIn, MessageSquare, Network, Shield } from 'lucide-react'
+import { api, HumanAuthResponse, HumanJoinPayload, HumanSession } from '../api/client'
 
-export default function Join({ onJoin }: { onJoin: (clientId: string) => void }) {
-  const [clientId, setClientId] = useState(() => localStorage.getItem('a2a_human_client_id') || 'human-local')
+function toHumanSession(resp: HumanAuthResponse): HumanSession {
+  return {
+    human_id: resp.human.id,
+    handle: resp.human.handle,
+    display_name: resp.human.display_name,
+    session_token: resp.session_token,
+  }
+}
+
+function toHumanJoinPayload(resp: HumanAuthResponse): HumanJoinPayload {
+  return {
+    session: toHumanSession(resp),
+    default_group: resp.default_group,
+    default_access_token: resp.default_access_token,
+  }
+}
+
+export default function Join({ onJoin }: { onJoin: (payload: HumanJoinPayload) => void }) {
+  const [mode, setMode] = useState<'login' | 'register'>('login')
+  const [loginMethod, setLoginMethod] = useState<'name' | 'token'>('name')
+  const [handle, setHandle] = useState('')
+  const [displayName, setDisplayName] = useState('')
+  const [token, setToken] = useState('')
+  const [issued, setIssued] = useState<HumanJoinPayload | null>(null)
+  const [copied, setCopied] = useState(false)
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
   const submit = async (event: FormEvent) => {
     event.preventDefault()
     setError('')
-    const client_id = clientId.trim()
-    if (!client_id) {
-      setError('Client id is required')
-      return
-    }
+    setCopied(false)
     setSubmitting(true)
     try {
-      await api.saveSession(client_id)
-      localStorage.setItem('a2a_human_client_id', client_id)
-      onJoin(client_id)
+      if (mode === 'register') {
+        const cleanHandle = handle.trim()
+        if (!cleanHandle) {
+          setError('Name is required')
+          return
+        }
+        const resp = await api.registerHuman({ handle: cleanHandle, display_name: displayName.trim() })
+        setIssued(toHumanJoinPayload(resp))
+        return
+      }
+      if (loginMethod === 'name') {
+        const cleanHandle = handle.trim()
+        if (!cleanHandle) {
+          setError('Name is required')
+          return
+        }
+        const resp = await api.loginHuman({ handle: cleanHandle })
+        onJoin(toHumanJoinPayload(resp))
+        return
+      }
+      const cleanToken = token.trim()
+      if (!cleanToken) {
+        setError('Human token is required')
+        return
+      }
+      const resp = await api.loginHuman({ token: cleanToken })
+      onJoin(toHumanJoinPayload(resp))
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Sign in failed')
+      setError(err instanceof Error ? err.message : mode === 'register' ? 'Registration failed' : 'Login failed')
     } finally {
       setSubmitting(false)
     }
+  }
+
+  const copyIssuedToken = async () => {
+    if (!issued?.session.session_token) return
+    await navigator.clipboard.writeText(issued.session.session_token)
+    setCopied(true)
+  }
+
+  if (issued) {
+    return (
+      <main className="join-shell">
+        <section className="join-hero">
+          <div className="brand-row">
+            <div className="brand-mark"><MessageSquare size={22} /></div>
+            <span>A2A Human Client</span>
+          </div>
+          <h1>Your human token has been issued.</h1>
+          <p>
+            Save this token if you want a stable credential for this human identity. You can also come back later
+            by entering the same unique name.
+          </p>
+        </section>
+
+        <section className="join-panel">
+          <label>
+            <span>Human token</span>
+            <textarea readOnly value={issued.session.session_token} />
+          </label>
+          <button type="button" onClick={copyIssuedToken}>
+            <Copy size={16} />
+            {copied ? 'Copied' : 'Copy Token'}
+          </button>
+          <button type="button" onClick={() => onJoin(issued)}>
+            <LogIn size={16} />
+            Enter Client
+          </button>
+        </section>
+      </main>
+    )
   }
 
   return (
@@ -36,8 +118,8 @@ export default function Join({ onJoin }: { onJoin: (clientId: string) => void })
         </div>
         <h1>Join an agent group as a human participant.</h1>
         <p>
-          Pick a client id first. After that, you can join groups by token, inspect the visible
-          participants in each group, and talk with agents through group-scoped rooms.
+          Register a unique name once, then log in later with that name or with a saved token. New humans are
+          added to the default group automatically.
         </p>
         <div className="feature-strip">
           <div><Network size={16} /> Group-scoped discovery</div>
@@ -47,19 +129,54 @@ export default function Join({ onJoin }: { onJoin: (clientId: string) => void })
       </section>
 
       <form className="join-panel" onSubmit={submit}>
-        <label>
-          <span>Client ID</span>
-          <input
-            value={clientId}
-            onChange={e => setClientId(e.target.value)}
-            placeholder="human-local"
-            autoComplete="username"
-          />
-        </label>
+        <div className="mode-tabs">
+          <button type="button" className={mode === 'login' ? 'active' : ''} onClick={() => setMode('login')}>Login</button>
+          <button type="button" className={mode === 'register' ? 'active' : ''} onClick={() => setMode('register')}>Register</button>
+        </div>
+        {mode === 'login' && (
+          <div className="mode-tabs compact">
+            <button type="button" className={loginMethod === 'name' ? 'active' : ''} onClick={() => setLoginMethod('name')}>Name</button>
+            <button type="button" className={loginMethod === 'token' ? 'active' : ''} onClick={() => setLoginMethod('token')}>Token</button>
+          </div>
+        )}
+        {mode === 'register' || loginMethod === 'name' ? (
+          <>
+            <label>
+              <span>Name</span>
+              <input
+                value={handle}
+                onChange={e => setHandle(e.target.value)}
+                placeholder="alice"
+                autoComplete="username"
+              />
+            </label>
+            {mode === 'register' && (
+              <label>
+                <span>Display name</span>
+                <input
+                  value={displayName}
+                  onChange={e => setDisplayName(e.target.value)}
+                  placeholder="Alice"
+                  autoComplete="name"
+                />
+              </label>
+            )}
+          </>
+        ) : (
+          <label>
+            <span>Human token</span>
+            <input
+              value={token}
+              onChange={e => setToken(e.target.value)}
+              placeholder="paste issued token"
+              autoComplete="off"
+            />
+          </label>
+        )}
         {error && <div className="error-box">{error}</div>}
         <button type="submit" disabled={submitting}>
           <LogIn size={16} />
-          {submitting ? 'Entering...' : 'Enter Client'}
+          {submitting ? 'Working...' : mode === 'register' ? 'Register Human' : loginMethod === 'name' ? 'Login With Name' : 'Login With Token'}
         </button>
       </form>
     </main>

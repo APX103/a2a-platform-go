@@ -120,6 +120,13 @@ func main() {
 	mux.HandleFunc("/api/contexts/", makeContextRouteHandler(svcCtx))
 	mux.HandleFunc("/api/subagents/", makeSubagentRouteHandler(svcCtx))
 
+	// Human identity API for human-client sessions
+	mux.HandleFunc("/api/humans", handler.NewHumanListHandler(svcCtx).ServeHTTP)
+	mux.HandleFunc("/api/humans/register", handler.NewHumanRegisterHandler(svcCtx).ServeHTTP)
+	mux.HandleFunc("/api/humans/login", handler.NewHumanLoginHandler(svcCtx).ServeHTTP)
+	mux.HandleFunc("/api/humans/me", handler.NewHumanMeHandler(svcCtx).ServeHTTP)
+	mux.HandleFunc("/api/humans/", handler.NewHumanDetailHandler(svcCtx).ServeHTTP)
+
 	// Native A2A group orchestration API
 	mux.HandleFunc("/api/groups", handler.NewGroupListHandler(svcCtx).ServeHTTP)
 	mux.HandleFunc("/api/groups/", makeGroupRouteHandler(svcCtx))
@@ -259,6 +266,10 @@ func makeAgentDetailHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			}
 			return
 		}
+		if len(parts) == 2 && parts[1] == "credential" {
+			handler.NewAgentCredentialHandler(svcCtx).ServeHTTP(w, r)
+			return
+		}
 		if len(parts) != 1 {
 			jsonError(w, "not found", 404)
 			return
@@ -306,6 +317,21 @@ func makeHostedAgentCardHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 
 func makeAgentProxyRoute(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if name, ok := agentCardSubresourceName(r.URL.Path); ok {
+			if name == "" {
+				jsonError(w, "missing agent name", 400)
+				return
+			}
+			r.Header.Set("X-Path-Param-Name", name)
+			switch r.Method {
+			case http.MethodGet:
+				handler.NewDiscoveryHandler(svcCtx).ServeHTTP(w, r)
+			default:
+				jsonError(w, "method not allowed", 405)
+			}
+			return
+		}
+
 		name := pathTail(r.URL.Path, "/agent/")
 		if name == "" {
 			w.Header().Set("Content-Type", "application/json")
@@ -316,6 +342,16 @@ func makeAgentProxyRoute(svcCtx *svc.ServiceContext) http.HandlerFunc {
 		r.Header.Set("X-Path-Param-Name", name)
 		handler.NewAgentProxyHandler(svcCtx).ServeHTTP(w, r)
 	}
+}
+
+func agentCardSubresourceName(path string) (string, bool) {
+	tail := pathTail(path, "/agent/")
+	for _, suffix := range []string{"/.well-known/agent-card.json", "/.well-known/agent.json"} {
+		if strings.HasSuffix(tail, suffix) {
+			return strings.TrimSuffix(tail, suffix), true
+		}
+	}
+	return "", false
 }
 
 func makeTaskDetailHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
@@ -648,6 +684,9 @@ func authMiddleware(next http.Handler, svcCtx *svc.ServiceContext) http.Handler 
 				return
 			}
 			target := pathTail(path, "/agent/")
+			if cardTarget, ok := agentCardSubresourceName(path); ok {
+				target = cardTarget
+			}
 			if target == "" {
 				jsonError(w, "missing agent name", http.StatusBadRequest)
 				return
@@ -724,6 +763,12 @@ func bearerToken(r *http.Request) string {
 
 func requiresAdmin(path, method string) bool {
 	if strings.HasPrefix(path, "/api/agents") || strings.HasPrefix(path, "/api/builtin-agents") {
+		return true
+	}
+	if path == "/api/humans" {
+		return true
+	}
+	if strings.HasPrefix(path, "/api/humans/") && path != "/api/humans/register" && path != "/api/humans/login" && path != "/api/humans/me" {
 		return true
 	}
 	if strings.HasPrefix(path, "/api/tasks") || strings.HasPrefix(path, "/api/traces") || strings.HasPrefix(path, "/api/contexts") || strings.HasPrefix(path, "/api/subagents") || path == "/api/events" {

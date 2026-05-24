@@ -3,6 +3,8 @@ import Layout from './components/Layout'
 import Dashboard from './pages/Dashboard'
 import Agents from './pages/Agents'
 import AgentDetail from './pages/AgentDetail'
+import Humans from './pages/Humans'
+import HumanDetail from './pages/HumanDetail'
 import BuiltinAgents from './pages/BuiltinAgents'
 import Tasks from './pages/Tasks'
 import TaskDetail from './pages/TaskDetail'
@@ -19,6 +21,8 @@ export default function App() {
         <Route path="/" element={<Dashboard />} />
         <Route path="/agents" element={<Agents />} />
         <Route path="/agents/:name" element={<AgentDetail />} />
+        <Route path="/humans" element={<Humans />} />
+        <Route path="/humans/:id" element={<HumanDetail />} />
         <Route path="/builtin-agents" element={<BuiltinAgents />} />
         <Route path="/groups" element={<Groups />} />
         <Route path="/groups/:id" element={<GroupDetail />} />

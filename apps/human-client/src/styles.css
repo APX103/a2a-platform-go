@@ -113,6 +113,37 @@ button:disabled {
   box-shadow: 0 20px 45px rgba(15, 31, 46, 0.08);
 }
 
+.mode-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  padding: 4px;
+  margin-bottom: 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #eef3f5;
+}
+
+.mode-tabs.compact {
+  margin-top: -8px;
+  margin-bottom: 16px;
+}
+
+.mode-tabs button {
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+}
+
+.mode-tabs button.active {
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 1px 4px rgba(15, 31, 46, 0.08);
+}
+
 .join-panel label {
   display: block;
   margin-bottom: 16px;
@@ -125,7 +156,8 @@ button:disabled {
   font-size: 13px;
 }
 
-.join-panel input {
+.join-panel input,
+.join-panel textarea {
   width: 100%;
   padding: 11px 12px;
   border: 1px solid var(--line);
@@ -135,11 +167,18 @@ button:disabled {
   outline: none;
 }
 
-.join-panel input:focus {
+.join-panel textarea {
+  min-height: 112px;
+  resize: vertical;
+  word-break: break-all;
+}
+
+.join-panel input:focus,
+.join-panel textarea:focus {
   border-color: var(--accent);
 }
 
-.join-panel button,
+.join-panel > button,
 .loading-screen button {
   width: 100%;
   display: flex;
@@ -151,6 +190,11 @@ button:disabled {
   border-radius: 7px;
   background: var(--accent);
   color: #ffffff;
+}
+
+.join-panel > button + button {
+  margin-top: 10px;
+  background: var(--text);
 }
 
 .error-box,
@@ -469,6 +513,13 @@ button:disabled {
   padding: 7px 0;
 }
 
+.member-row.active {
+  margin: 0 -7px;
+  padding: 7px;
+  border-radius: 8px;
+  background: rgba(37, 99, 235, 0.07);
+}
+
 .member-avatar {
   display: grid;
   place-items: center;
@@ -488,6 +539,7 @@ button:disabled {
 }
 
 .member-meta {
+  flex: 1;
   min-width: 0;
 }
 
@@ -502,6 +554,17 @@ button:disabled {
 .member-meta span {
   color: var(--soft);
   font-size: 12px;
+}
+
+.member-action {
+  flex: 0 0 auto;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .chat-pane {
@@ -542,12 +605,15 @@ button:disabled {
 .header-actions button {
   display: grid;
   place-items: center;
-  width: 34px;
+  min-width: 34px;
   height: 34px;
+  padding: 0 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel);
   color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .timeline-wrap {

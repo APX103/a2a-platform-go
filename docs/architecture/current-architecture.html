@@ -325,7 +325,7 @@
       </div>
       <aside class="hero-panel">
         <strong>一句话定位</strong>
-        <p>A2A Platform 是一个带持久化、权限边界、任务追踪和群组协作能力的 Agent 中枢：它注册 Agent，代理 A2A 消息，运行内置 LLM Agent，并把人类、外部 Agent、桥接 Agent 放进同一个 group 协作边界中。</p>
+        <p>A2A Platform 是一个带持久化、权限边界、任务追踪和群组协作能力的 Agent 中枢：它注册 Agent，代理 A2A 消息与 AgentCard 发现，运行内置 LLM Agent，并把人类、外部 Agent、桥接 Agent 放进同一个 group 协作边界中。</p>
       </aside>
     </header>
 
@@ -335,6 +335,7 @@
         <a href="#modules">模块</a>
         <a href="#flows">流程</a>
         <a href="#groups">群组编排</a>
+        <a href="#human-client">Human Client</a>
         <a href="#data">数据模型</a>
         <a href="#api">API</a>
         <a href="#runtime">运行部署</a>
@@ -363,7 +364,7 @@ flowchart LR
         </pre>
       </div>
       <div class="grid">
-        <article class="tile accent-teal"><b>核心中枢</b><p><code>/agent/{name}</code> 是 A2A 消息代理入口，统一记录 task/message/trace，再按目标类型分发给内置、桥接或外部 Agent。</p></article>
+        <article class="tile accent-teal"><b>核心中枢</b><p><code>/agent/{name}</code> 是 A2A JSON-RPC 消息代理入口，<code>/agent/{name}/.well-known/agent-card.json</code> 暴露该代理面的 AgentCard。</p></article>
         <article class="tile accent-blue"><b>协作边界</b><p>Group 是成员发现、权限校验、群聊事件、自动产物和编排状态的边界。人类和 Agent 都必须作为成员进入 group。</p></article>
         <article class="tile accent-coral"><b>内置智能体</b><p>Builtin Agent 由配置或数据库注册，支持 OpenAI/Anthropic provider、SSE 流式输出、工具调用、subagent 和任务工具。</p></article>
       </div>
@@ -382,7 +383,7 @@ flowchart LR
           <tr><td>Engine</td><td>内置 Agent LLM 调用循环、工具调用、SSE 输出、消息与 trace 持久化。</td><td><code>internal/engine/engine.go</code></td></tr>
           <tr><td>Tools</td><td>文件/HTTP/目录工具、A2A 平台工具、spawn_agent、task item 动态工具。</td><td><code>internal/tools/*.go</code></td></tr>
           <tr><td>Bridge</td><td>把配置化 skill 映射到 HTTP 或 CLI 调用，再包装成 A2A SSE 响应。</td><td><code>internal/bridge/*.go</code></td></tr>
-          <tr><td>Admin UI</td><td>管理 Agent、Builtin Agent、Task、Trace、Context Chat、Group 和 Artifact。</td><td><code>web/admin/src</code></td></tr>
+          <tr><td>Admin UI</td><td>管理 Agent、Human 身份资料与在线状态；Agents/Humans 列表可进入详情页查看 token 管理、资料修改和删除动作；同时管理 Builtin Agent、Task、Trace、Context Chat、Group 和 Artifact。</td><td><code>web/admin/src</code></td></tr>
           <tr><td>Human Client</td><td>通过 invite token 加入 group，以 member token 读取房间、发消息、看产物。</td><td><code>apps/human-client/src</code></td></tr>
         </tbody>
       </table>
@@ -443,7 +444,7 @@ sequenceDiagram
       </div>
 
       <h3>3.2 Agent 注册与 AgentCard</h3>
-      <p>外部 Agent 通过 <code>POST /api/agents</code> 注册。若请求提供 <code>agent_card</code>，平台托管静态 card；否则平台会访问上游 URL 发现 AgentCard 并做健康检查。</p>
+      <p>外部 Agent 通过 <code>POST /api/agents</code> 注册。若请求提供 <code>agent_card</code>，平台托管静态 card；否则平台会访问上游 URL 发现 AgentCard 并做健康检查。发现优先使用 A2A 标准路径 <code>/.well-known/agent-card.json</code>，再兼容旧路径 <code>/.well-known/agent.json</code>。</p>
       <div class="diagram">
         <p class="diagram-title">外部 Agent 注册</p>
         <pre class="mermaid">
@@ -455,7 +456,7 @@ flowchart TD
   C --> E{"请求提供 agent_card?"}
   D --> E
   E -->|是| F["规范化并标记 x_static"]
-  E -->|否| G["fetch /.well-known/agent-card&lt;br/&gt;ping agent url"]
+  E -->|否| G["fetch /.well-known/agent-card.json&lt;br/&gt;fallback /.well-known/agent.json"]
   F --> H["写入内存 connections"]
   G --> H
   H --> I["Upsert agents 表&lt;br/&gt;status=connected"]
@@ -463,6 +464,23 @@ flowchart TD
   J -->|是| K["确保 default-p2p group&lt;br/&gt;加入 group_members"]
   J -->|否| L["返回注册结果"]
   K --> L
+        </pre>
+      </div>
+
+      <h3>3.2.1 平台托管 AgentCard</h3>
+      <p>平台返回给调用方的公开 AgentCard 会重写为平台代理面：<code>url</code> 和 <code>supportedInterfaces[0].url</code> 都指向 <code>/agent/{name}</code>，<code>protocolBinding</code> 为 <code>JSONRPC</code>，<code>protocolVersion</code> 为 <code>1.0</code>，并默认声明 <code>capabilities.streaming=true</code>、<code>defaultInputModes=["text/plain"]</code>、<code>defaultOutputModes=["text/plain"]</code>。</p>
+      <div class="diagram">
+        <p class="diagram-title">AgentCard 代理发现</p>
+        <pre class="mermaid">
+flowchart LR
+  Client["A2A Client"] --> Standard["GET /agent/{name}/.well-known/agent-card.json"]
+  Client --> Legacy["GET /agent/{name}/.well-known/agent.json"]
+  Standard --> Route["makeAgentProxyRoute"]
+  Legacy --> Route
+  Route --> Discovery["DiscoveryHandler"]
+  Discovery --> Registry["Registry.PublicAgentCard"]
+  Registry --> Card["Hosted AgentCard&lt;br/&gt;url=/agent/{name}&lt;br/&gt;supportedInterfaces=JSONRPC 1.0"]
+  Card --> Client
         </pre>
       </div>
 
@@ -613,9 +631,174 @@ flowchart LR
       </div>
     </section>
 
+    <section id="human-client">
+      <h2>5. Human Client 设计审查</h2>
+      <p><code>apps/human-client</code> 当前是一个“人类参与者房间 UI”，不是完整 A2A Agent。它不托管 AgentCard，不暴露 <code>/agent/{name}</code>，也不默认让人“扮演 agent”。它注册时只声明唯一 <code>handle</code> 和展示名，由平台分发 human token；默认加入 <code>default-p2p</code>，并拿到 group-scoped member token。</p>
+
+      <div class="callout">
+        <strong>当前实现：</strong> Human 身份已从本地自报 <code>client_id</code> 升级为服务端身份。注册时 <code>handle</code> 全局唯一，重复返回 409；human token 由后端生成并返回给用户保存，前端不能修改。以后重新进入时可以用唯一 <code>handle</code> 登录，也可以用已保存的 token 登录。注册、name 登录和 token 登录都会为默认 <code>default-p2p</code> group 分发新的 group member token；使用 invite token 加入其他 group 时，后端会用 human token 里的 <code>human_id</code> 覆盖请求中的 actor_id，避免前端伪造身份。Human Client 登录后会周期性调用 <code>/api/humans/me</code>，平台据此更新 <code>human_users.last_seen_at</code>，Admin 的 Humans 页面用该字段判断在线状态。Admin 也可以修改 human 的 handle/display name 或删除 human，但不会读取或改写 token 明文。
+      </div>
+
+      <div class="diagram">
+        <p class="diagram-title">当前 Human Client 身份与 token 流程</p>
+        <pre class="mermaid">
+sequenceDiagram
+  participant UI as Human Client UI
+  participant LS as localStorage
+  participant BFF as Optional Node BFF
+  participant API as A2A Platform API
+  participant DB as MySQL
+  UI->>API: POST /api/humans/register(handle, display_name)
+  API->>DB: 检查 handle 唯一并保存 human_users
+  API->>DB: Upsert default-p2p group_members(human,human_id)
+  API->>DB: Insert group_member_tokens(default-p2p)
+  API-->>UI: human token + default group access_token
+  UI->>LS: 保存 a2a_human_session
+  UI->>API: POST /api/humans/login(handle 或 token)
+  API-->>UI: human + default group access_token
+  UI->>API: POST /api/group-joins(invite_token) + Bearer human session
+  API->>DB: 校验 invite 可用
+  API->>DB: Upsert group_members(group,human,human_id)
+  API->>DB: Insert group_member_tokens
+  API-->>UI: group + member + access_token
+  UI->>LS: 按 human_id 保存 group access_token
+  UI->>API: Bearer access_token 读取 room / 发 group event
+        </pre>
+      </div>
+
+      <div class="diagram">
+        <p class="diagram-title">Human 在线状态与 Admin Humans 页面</p>
+        <pre class="mermaid">
+sequenceDiagram
+  participant UI as Human Client
+  participant API as A2A Platform API
+  participant DB as MySQL
+  participant Admin as Admin Humans Page
+  UI->>API: GET /api/humans/me + Bearer human token
+  API->>DB: 校验 human_sessions
+  API->>DB: UPDATE human_users.last_seen_at
+  Admin->>API: GET /api/humans + X-Admin-Token
+  API->>DB: 读取 humans + active_sessions
+  API-->>Admin: online/offline, last_seen_at, active_sessions
+  Note over API,Admin: last_seen_at 在 90 秒窗口内视为 online
+        </pre>
+      </div>
+
+      <div class="diagram">
+        <p class="diagram-title">Admin 管理 Human 资料与删除</p>
+        <pre class="mermaid">
+sequenceDiagram
+  participant Admin as Admin Humans Page
+  participant API as A2A Platform API
+  participant DB as MySQL
+  Admin->>API: PUT /api/humans/{id}(handle, display_name) + X-Admin-Token
+  API->>DB: 校验 handle 唯一并更新 human_users
+  API-->>Admin: 返回更新后的 human profile
+  Admin->>API: DELETE /api/humans/{id} + X-Admin-Token
+  API->>DB: revoke/delete human_sessions
+  API->>DB: revoke/delete group_member_tokens
+  API->>DB: delete group_members + human_users
+  API-->>Admin: 204 No Content
+  Admin->>API: POST /api/humans/{id}/tokens + X-Admin-Token
+  API->>DB: insert human_sessions(token_hash)
+  API-->>Admin: 返回新 human token，仅本次明文展示
+        </pre>
+      </div>
+
+      <h3>当前设计的合理部分</h3>
+      <ul class="list">
+        <li><code>human_users</code> 保存不可变 <code>human_id</code>、唯一 <code>handle</code>、展示名和 <code>last_seen_at</code>；<code>human_sessions</code> 保存平台分发 human token 的 hash 和撤销状态。</li>
+        <li>权限粒度是 group-scoped，而不是全局 human token；这和 group 作为协作/发现边界的设计一致。</li>
+        <li>默认 group 行为和 simple-mode Agent 对齐：未指定 group 的 human 注册后进入 <code>default-p2p</code>。</li>
+        <li>Human Client 不进入全局 Agent Registry，也不被当作可调用 A2A Agent；这避免了把人类聊天 UI 误暴露成机器可调用服务。</li>
+        <li>Room 读取 group、members、events、artifacts、orchestration；在 <code>default-p2p</code> 中从 Participants 选择 agent 后，Human Client 用 group member token 直接调用 <code>/agent/{name}</code> 做点对点 A2A 消息。</li>
+      </ul>
+
+      <h3>仍需注意的边界</h3>
+      <table>
+        <thead><tr><th>项目</th><th>当前行为</th><th>后续方向</th></tr></thead>
+        <tbody>
+          <tr><td>human token</td><td>注册时由平台生成，用户可保存；登录可以使用唯一 handle 或粘贴 token，不输入 password；Admin 不能反查旧 token 明文，但可以签发新 token 并一次性展示。</td><td>可以增加 token 轮换、撤销和一次性展示策略。</td></tr>
+          <tr><td>多 session/token</td><td>注册生成 human token；每次 name/token 登录和入群会新增 group member token；Admin 统计未撤销且未过期的 active sessions。</td><td>可以增加登出、设备管理、旧 token 自动撤销或短 TTL。</td></tr>
+          <tr><td>token 存 localStorage</td><td>human session 和 group access token 都存浏览器 localStorage。</td><td>生产环境可改为 httpOnly cookie + CSRF 防护，或更严格的前端安全策略。</td></tr>
+          <tr><td>旧 invite join 兼容</td><td>无 human session 的 <code>/api/group-joins</code> 仍保留旧的 actor_id 模式。</td><td>后续可为 human actor 强制要求 human session，只给 agent/legacy client 留迁移窗口。</td></tr>
+        </tbody>
+      </table>
+
+      <div class="diagram">
+        <p class="diagram-title">Authenticated Invite Join 如何阻断伪造 actor_id</p>
+        <pre class="mermaid">
+flowchart LR
+  Register["Register&lt;br/&gt;handle + display_name"] --> Session["issued human token&lt;br/&gt;绑定 human_id"]
+  NameLogin["Name login&lt;br/&gt;handle"] --> Session
+  TokenLogin["Token login"] --> Session
+  Join["POST /api/group-joins&lt;br/&gt;body actor_id 可为空或被伪造"] --> Auth["humanFromRequest&lt;br/&gt;解析 Bearer session"]
+  Session --> Auth
+  Auth --> Override["actor_type=human&lt;br/&gt;actor_id=human_id"]
+  Override --> Member["group_members 使用 human_id"]
+  Member --> GroupToken["颁发 group_member_token"]
+        </pre>
+      </div>
+
+      <h3>身份模型</h3>
+      <table>
+        <thead><tr><th>概念</th><th>含义</th><th>校验规则</th></tr></thead>
+        <tbody>
+          <tr><td><code>human_id</code></td><td>服务端生成的不可变唯一用户 ID。</td><td>由注册生成，不允许用户任意声明。</td></tr>
+          <tr><td><code>handle</code></td><td>用户可输入的唯一登录/展示名，例如 <code>alice</code>。</td><td>注册时全局唯一；重复注册拒绝；重新进入时可直接用 handle，也可用 human token。</td></tr>
+          <tr><td><code>display_name</code></td><td>房间内展示名，可改名。</td><td>可按 group 策略决定是否唯一，不作为认证依据。</td></tr>
+          <tr><td><code>human_session_token</code></td><td>平台分发的人类身份 token。</td><td>服务端只保存 hash；用户保存明文 token，用它重新进入。</td></tr>
+          <tr><td><code>group_member_token</code></td><td>某个 human 在某个 group 的访问凭证。</td><td>由 invite/join 颁发，绑定 <code>human_id</code> 和 group，支持撤销/过期。</td></tr>
+        </tbody>
+      </table>
+
+      <div class="diagram">
+        <p class="diagram-title">Human 注册/登录/入群流程</p>
+        <pre class="mermaid">
+sequenceDiagram
+  participant UI as Human Client UI
+  participant API as Platform Auth/API
+  participant DB as MySQL
+  UI->>API: Register(handle, display_name)
+  API->>DB: 检查 handle 唯一
+  alt handle 已存在
+    API-->>UI: 409 duplicate handle
+  else 可注册
+    API->>DB: Create human_id
+    API->>DB: Upsert default-p2p membership
+    API-->>UI: issued human token + default group access token
+  end
+  UI->>API: Login(handle 或 token)
+  API-->>UI: human + fresh human token + default group access token
+  UI->>API: POST /api/group-joins(invite_token, human token)
+  API->>DB: 绑定 group_members(group,human,human_id)
+  API->>DB: 颁发 group_member_token
+  API-->>UI: room access token
+        </pre>
+      </div>
+
+      <div class="diagram">
+        <p class="diagram-title">Human 与 Agent 单聊流程</p>
+        <pre class="mermaid">
+sequenceDiagram
+  participant UI as Human Client UI
+  participant API as Platform API
+  participant Agent as /agent/{name}
+  UI->>API: GET /api/groups/default-p2p/members
+  API-->>UI: agents + humans(display_name/handle)
+  UI->>Agent: POST /agent/{name} + Bearer group_member_token
+  Agent-->>UI: SSE / JSON-RPC response
+  UI->>UI: 在本地 direct timeline 显示本轮单聊
+        </pre>
+      </div>
+
+      <h3>是否要“人扮演 Agent”</h3>
+      <p>如果目标只是让人参与讨论，保持 <code>actor_type=human</code> 是合理的。如果目标是让外部 A2A Client 把这个人当成完整 Agent 调用，则应另建一个“Human-backed Agent”能力：它需要注册到 Agent Registry、提供 AgentCard、拥有自己的 <code>/agent/{name}</code> 或平台代理入口，并把 A2A 任务转成人类待处理队列。这个能力不应和普通 Human Client 的 group room 身份混用。</p>
+    </section>
+
     <section id="data">
-      <h2>5. 数据模型</h2>
-      <p>当前 schema 由 <code>internal/svc/servicecontext.go</code> 内置迁移。核心设计是：Agent 连接状态、每次 A2A 调用的 task/message/trace、聊天 context、subagent/task item，以及 group 协作对象都在 MySQL 中持久化。</p>
+      <h2>6. 数据模型</h2>
+      <p>当前 schema 由 <code>internal/svc/servicecontext.go</code> 内置迁移。核心设计是：Agent 连接状态、Human 身份与登录态、每次 A2A 调用的 task/message/trace、聊天 context、subagent/task item，以及 group 协作对象都在 MySQL 中持久化。</p>
 
       <div class="diagram">
         <p class="diagram-title">核心 ER 图</p>
@@ -628,6 +811,8 @@ erDiagram
   contexts ||--o{ tasks : context_id
   contexts ||--o{ subagent_sessions : parent_context_id
   contexts ||--o{ task_items : context_id
+  human_users ||--o{ human_sessions : authenticates
+  human_users ||--o{ group_members : joins_as_human_id
   a2a_groups ||--o{ group_members : has
   a2a_groups ||--o{ group_invites : issues
   a2a_groups ||--o{ group_member_tokens : grants
@@ -671,6 +856,18 @@ erDiagram
     text memory_policy_json
     string status
   }
+  human_users {
+    string id
+    string handle
+    string display_name
+    datetime last_seen_at
+  }
+  human_sessions {
+    string human_id
+    string token_hash
+    datetime expires_at
+    datetime revoked_at
+  }
         </pre>
       </div>
 
@@ -683,6 +880,8 @@ erDiagram
           <tr><td><code>traces</code></td><td>记录 send/stream/response/tool_call/error 等观测事件。</td><td>支持按 task、context、root context 查询。</td></tr>
           <tr><td><code>contexts</code></td><td>Admin Chat 的会话容器。</td><td>与 messages/tasks/subagents/task_items 形成工作上下文。</td></tr>
           <tr><td><code>subagent_sessions</code></td><td>spawn_agent 的隔离执行记录。</td><td>由父 context 和 tool_call_id 追溯。</td></tr>
+          <tr><td><code>human_users</code></td><td>Human Client 的服务端身份，包含唯一 handle、display name 和 last_seen_at。</td><td><code>group_members.actor_id</code> 对 human 成员使用 <code>human_users.id</code>；Admin Humans 页面用 <code>last_seen_at</code> 判断在线状态，并可修改 handle/display name；当前表内 credential 字段为兼容保留，不再由 UI 填写 password。</td></tr>
+          <tr><td><code>human_sessions</code></td><td>平台分发 human token 的 hash、过期和撤销状态。</td><td>入群时通过 Bearer human token 解析真实 <code>human_id</code>。</td></tr>
           <tr><td><code>a2a_groups</code></td><td>协作空间，定义编排模式、规则、记忆策略和状态。</td><td>拥有 members、events、artifacts、tokens、invites。</td></tr>
           <tr><td><code>group_events</code></td><td>群聊消息和编排错误等事件流。</td><td>驱动 leader/free_chat 自动回复。</td></tr>
           <tr><td><code>group_artifacts</code></td><td>群组产物，支持人工创建和自动 upsert。</td><td>自动产物按 group/name 更新 version。</td></tr>
@@ -691,15 +890,28 @@ erDiagram
     </section>
 
     <section id="api">
-      <h2>6. API 与权限面</h2>
+      <h2>7. API 与权限面</h2>
       <div class="two-col">
         <div>
           <h3>Admin Token 面</h3>
           <ul class="list">
             <li><code>/api/agents</code>：Agent 注册、查询、更新、删除。</li>
+            <li><code>/api/agents/{name}/credential</code>：Admin 查看 agent 注册 secret。该值当前在 <code>agents.secret</code> 中明文保存，因此可以显示；空 secret 会返回 unavailable。</li>
+            <li><code>/api/humans</code>：Human 列表与在线状态，只返回身份、last seen 和 active session 计数，不返回 token。</li>
+            <li><code>/api/humans/{id}</code>：Admin 查询、修改或删除 human；修改仅覆盖 handle/display name，删除会清理 sessions、group membership 和 group-scoped tokens。</li>
+            <li><code>POST /api/humans/{id}/tokens</code>：Admin 为 human 签发新 session token；旧 token 只保存 hash，不能被反查。</li>
             <li><code>/api/builtin-agents</code>：内置 Agent CRUD，并同步 Engine 和 Registry。</li>
             <li><code>/api/tasks</code>、<code>/api/traces</code>、<code>/api/contexts</code>、<code>/api/subagents</code>：观测和会话管理。</li>
             <li><code>POST /api/groups</code>、成员管理、invite 管理、group join 管理。</li>
+          </ul>
+        </div>
+        <div>
+          <h3>Human Session 面</h3>
+          <ul class="list">
+            <li><code>/api/humans/register</code>：创建唯一 handle 和 display name，返回后端分发的 human token，并自动加入 <code>default-p2p</code>。</li>
+            <li><code>/api/humans/login</code>：用唯一 handle 或 human token 登录，返回 human 身份、新 human token 和新的默认 group member token。</li>
+            <li><code>/api/humans/me</code>：用 Bearer human token 查询当前 human，同时刷新 <code>last_seen_at</code>，作为 Human Client 的轻量心跳。</li>
+            <li><code>/api/group-joins</code>：如果带 human token，后端用 token 的 <code>human_id</code> 作为 human member actor_id。</li>
           </ul>
         </div>
         <div>
@@ -707,7 +919,7 @@ erDiagram
           <ul class="list">
             <li><code>GET /api/groups</code>：仅返回当前成员可见的 group。</li>
             <li><code>/api/groups/{id}/members/events/artifacts/orchestration</code>：限定在 token 所属 group。</li>
-            <li><code>/.well-known/agent-card/{name}</code> 与 <code>/agent/{name}</code>：目标 Agent 必须是同 group 成员。</li>
+            <li><code>/.well-known/agent-card/{name}</code>、<code>/agent/{name}/.well-known/agent-card.json</code> 与 <code>/agent/{name}</code>：目标 Agent 必须是同 group 成员。</li>
             <li><code>/api/group-joins</code>：公开入口，用 invite token 换 member access token。</li>
           </ul>
         </div>
@@ -729,8 +941,8 @@ flowchart LR
     </section>
 
     <section id="runtime">
-      <h2>7. 前端与运行部署</h2>
-      <p>Admin UI 是主服务的一部分：<code>make build</code> 会先构建 <code>web/admin</code>，再用 Go build tag <code>frontend</code> 把静态产物嵌入二进制。Human Client 是独立 Vite 应用，可直连平台，也可通过自己的轻量 server 转发。</p>
+      <h2>8. 前端与运行部署</h2>
+      <p>Admin UI 是主服务的一部分：<code>make build</code> 会先构建 <code>web/admin</code>，再用 Go build tag <code>frontend</code> 把静态产物嵌入二进制。当前 Admin 左侧有 Agents 与 Humans 两个独立列表：Agents 看机器 Agent 连接状态，并可点进 Agent 详情查看 AgentCard、上游 URL、context mode 和注册 token；Humans 看人类参与者在线状态，并可点进 Human 详情修改 handle/display name、删除身份或签发新的 human token。Human Client 是独立 Vite 应用，开发态默认把 <code>/api</code> 代理到平台 <code>http://127.0.0.1:18090</code>；也可以通过 <code>HUMAN_CLIENT_BFF</code> 显式改走自己的轻量 server 转发。</p>
       <div class="diagram">
         <p class="diagram-title">构建与运行形态</p>
         <pre class="mermaid">
@@ -757,15 +969,27 @@ flowchart TD
     </section>
 
     <section id="boundaries">
-      <h2>8. 当前边界与设计判断</h2>
+      <h2>9. 当前边界与设计判断</h2>
       <div class="grid">
         <article class="tile accent-gold"><b>编排模式边界</b><p>Group mode 的状态描述比执行逻辑更完整。当前可认为 <code>leader_led</code> 和 <code>free_chat</code> 是主要可执行模式，其他模式是面向后续扩展的语义接口。</p></article>
         <article class="tile accent-teal"><b>上下文边界</b><p>Agent 可声明 <code>context</code> 或 <code>stateless</code>。代理入口会根据 Registry 中的 context mode 决定是否保留 contextId。</p></article>
-        <article class="tile accent-blue"><b>安全边界</b><p>Admin token 管理全局资源；member token 只能访问所属 group，并且调用 Agent 时要求目标 Agent 是同 group 成员。</p></article>
+        <article class="tile accent-blue"><b>安全边界</b><p>Admin token 管理全局资源；member token 只能访问所属 group，并且调用 Agent 或读取其代理 AgentCard 时要求目标 Agent 是同 group 成员。</p></article>
         <article class="tile accent-coral"><b>观测边界</b><p>Task/message/trace 是所有调用的主审计链路；Group event/artifact 是协作房间的主审计链路，两者通过 group context 与 parent headers 间接连通。</p></article>
         <article class="tile accent-green"><b>工具边界</b><p>工具注册是全局的。内置 Agent 获取基础工具、A2A 平台工具和动态工具；只读工具会并行预执行，写工具串行执行。</p></article>
         <article class="tile accent-gold"><b>Bridge 边界</b><p>Bridge Agent 是进程内适配器，不是外部常驻连接。它按 skill 选择 HTTP/CLI target，并包装成 A2A SSE。</p></article>
       </div>
+
+      <h3>A2A 完整兼容性缺口</h3>
+      <table>
+        <thead><tr><th>项目</th><th>当前状态</th><th>后续方向</th></tr></thead>
+        <tbody>
+          <tr><td>AgentCard 发现</td><td>已支持代理路径 <code>/agent/{name}/.well-known/agent-card.json</code>，并兼容 legacy <code>agent.json</code>。</td><td>生产部署应结合 public base URL 输出绝对 HTTPS URL。</td></tr>
+          <tr><td>AgentCard 字段</td><td>已补 <code>supportedInterfaces</code>、<code>capabilities</code>、默认输入输出模式等 A2A 1.0 关键字段。</td><td>继续完善 <code>securitySchemes</code> / <code>securityRequirements</code>，准确表达平台 token 规则。</td></tr>
+          <tr><td>JSON-RPC 方法</td><td><code>/agent/{name}</code> 目前主要按发消息代理处理。</td><td>按 method dispatch 实现 <code>SendMessage</code>、<code>SendStreamingMessage</code>、<code>GetTask</code>、<code>ListTasks</code>、<code>CancelTask</code>、<code>SubscribeToTask</code>、<code>GetExtendedAgentCard</code>。</td></tr>
+          <tr><td>SSE 响应格式</td><td>内置 Agent 仍输出平台自定义 <code>text.delta</code>、<code>task.status</code> 等事件。</td><td>对外 A2A facade 应输出 JSON-RPC response 包裹的 <code>StreamResponse</code>，同时保留内部 UI 可用事件时需要明确分层。</td></tr>
+          <tr><td>错误格式</td><td>部分错误仍是普通 <code>{"error": "..."} </code> HTTP JSON。</td><td>A2A JSON-RPC 入口应返回标准 <code>error.code/message/data</code>。</td></tr>
+        </tbody>
+      </table>
 
       <div class="callout">
         <strong>建议后续同步：</strong> 如果要把本文作为长期架构文档，建议在每次新增编排模式、DB 字段迁移或权限规则时更新本页，尤其是 group orchestration 的“状态语义”和“真实执行路径”。

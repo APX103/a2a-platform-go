@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { RefreshCw, Send } from 'lucide-react'
-import { api, loadRoom, RoomSnapshot, Session } from '../api/client'
+import { api, DirectAgentMessage, loadRoom, RoomSnapshot, Session } from '../api/client'
 import MemberList from '../components/MemberList'
 import MessageTimeline from '../components/MessageTimeline'
 import OrchestrationPanel from '../components/OrchestrationPanel'
@@ -22,6 +22,8 @@ export default function Room({
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const [sending, setSending] = useState(false)
+  const [activeAgent, setActiveAgent] = useState('')
+  const [directMessages, setDirectMessages] = useState<Record<string, DirectAgentMessage[]>>({})
   const timelineRef = useRef<HTMLDivElement | null>(null)
 
   const refresh = async () => {
@@ -44,10 +46,11 @@ export default function Room({
 
   useEffect(() => {
     timelineRef.current?.scrollTo({ top: timelineRef.current.scrollHeight })
-  }, [snapshot?.events.length])
+  }, [snapshot?.events.length, activeAgent, directMessages])
 
   const humans = useMemo(() => snapshot?.members.filter(m => m.actor_type === 'human') || [], [snapshot])
   const agents = useMemo(() => snapshot?.members.filter(m => m.actor_type === 'agent') || [], [snapshot])
+  const isP2P = snapshot?.group.orchestration_mode === 'p2p'
 
   const send = async (event: FormEvent) => {
     event.preventDefault()
@@ -56,7 +59,38 @@ export default function Room({
     setSending(true)
     setError('')
     try {
-      await api.sendMessage(session.group_id, session.access_token, session.client_id, content)
+      if (activeAgent) {
+        const humanMessage: DirectAgentMessage = {
+          id: `human-${Date.now()}`,
+          sender: 'human',
+          agent: activeAgent,
+          content,
+          created_at: new Date().toISOString(),
+        }
+        setDirectMessages(prev => ({
+          ...prev,
+          [activeAgent]: [...(prev[activeAgent] || []), humanMessage],
+        }))
+        setMessage('')
+        const response = await api.sendDirectToAgent(activeAgent, session.access_token, session.human_id, content)
+        const agentMessage: DirectAgentMessage = {
+          id: `agent-${Date.now()}`,
+          sender: 'agent',
+          agent: activeAgent,
+          content: response,
+          created_at: new Date().toISOString(),
+        }
+        setDirectMessages(prev => ({
+          ...prev,
+          [activeAgent]: [...(prev[activeAgent] || []), agentMessage],
+        }))
+        return
+      }
+      if (isP2P) {
+        setError('Select an agent from Participants to start a direct P2P chat.')
+        return
+      }
+      await api.sendMessage(session.group_id, session.access_token, session.human_id, content)
       setMessage('')
       await refresh()
     } catch (err) {
@@ -65,6 +99,8 @@ export default function Room({
       setSending(false)
     }
   }
+
+  const activeDirectMessages = activeAgent ? directMessages[activeAgent] || [] : []
 
   if (loading && !snapshot) {
     return <div className="loading-screen">Loading room...</div>
@@ -92,7 +128,7 @@ export default function Room({
           </div>
           <div className="group-updated">Updated {formatDate(snapshot.group.updated_at)}</div>
         </section>
-        <MemberList members={snapshot.members} />
+        <MemberList members={snapshot.members} activeAgent={activeAgent} onSelectAgent={setActiveAgent} />
         <OrchestrationPanel group={snapshot.group} orchestration={snapshot.orchestration} />
         <ArtifactPanel artifacts={snapshot.artifacts} />
       </aside>
@@ -101,9 +137,18 @@ export default function Room({
         <header className="chat-header">
           <div>
             <h2>{snapshot.group.name}</h2>
-            <p>{session.client_id} in {session.group_id}</p>
+            <p>
+              {activeAgent
+                ? `${session.display_name} (@${session.handle}) -> ${activeAgent}`
+                : `${session.display_name} (@${session.handle}) in ${session.group_id}`}
+            </p>
           </div>
           <div className="header-actions">
+            {activeAgent && (
+              <button onClick={() => setActiveAgent('')} title="Back to group">
+                Group
+              </button>
+            )}
             <button onClick={refresh} title="Refresh">
               <RefreshCw size={16} />
             </button>
@@ -113,14 +158,33 @@ export default function Room({
         {error && <div className="room-error">{error}</div>}
 
         <div className="timeline-wrap" ref={timelineRef}>
-          <MessageTimeline events={snapshot.events} clientId={session.client_id} />
+          {activeAgent ? (
+            activeDirectMessages.length === 0 ? (
+              <div className="empty-timeline">No direct messages with {activeAgent}</div>
+            ) : (
+              <div className="timeline">
+                {activeDirectMessages.map(item => (
+                  <article className={`message ${item.sender === 'human' ? 'mine' : ''}`} key={item.id}>
+                    <div className="message-head">
+                      <span>{item.sender === 'human' ? session.display_name : item.agent}</span>
+                      <b>{item.sender === 'human' ? 'you' : 'agent'}</b>
+                      <time>{new Date(item.created_at).toLocaleTimeString()}</time>
+                    </div>
+                    <div className="message-body">{item.content}</div>
+                  </article>
+                ))}
+              </div>
+            )
+          ) : (
+            <MessageTimeline events={snapshot.events} clientId={session.human_id} />
+          )}
         </div>
 
         <form className="composer" onSubmit={send}>
           <textarea
             value={message}
             onChange={e => setMessage(e.target.value)}
-            placeholder="Message the group"
+            placeholder={activeAgent ? `Message ${activeAgent}` : isP2P ? 'Select an agent to start a direct chat' : 'Message the group'}
             rows={2}
             onKeyDown={e => {
               if (e.key === 'Enter' && !e.shiftKey) {
@@ -129,7 +193,7 @@ export default function Room({
               }
             }}
           />
-          <button disabled={sending || !message.trim()} title="Send">
+          <button disabled={sending || !message.trim() || (!activeAgent && isP2P)} title="Send">
             <Send size={18} />
           </button>
         </form>

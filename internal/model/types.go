@@ -102,6 +102,39 @@ type SubagentSession struct {
 	CompletedAt      *time.Time `db:"completed_at" json:"completed_at,omitempty"`
 }
 
+type HumanUser struct {
+	ID          string     `db:"id" json:"id"`
+	Handle      string     `db:"handle" json:"handle"`
+	DisplayName string     `db:"display_name" json:"display_name"`
+	LastSeenAt  *time.Time `db:"last_seen_at" json:"last_seen_at,omitempty"`
+	// Legacy credential columns are retained for schema compatibility; issued human tokens live in human_sessions.
+	SecretHash string    `db:"secret_hash" json:"-"`
+	SecretSalt string    `db:"secret_salt" json:"-"`
+	CreatedAt  time.Time `db:"created_at" json:"created_at"`
+	UpdatedAt  time.Time `db:"updated_at" json:"updated_at"`
+}
+
+type HumanPresence struct {
+	ID             string     `json:"id"`
+	Handle         string     `json:"handle"`
+	DisplayName    string     `json:"display_name"`
+	LastSeenAt     *time.Time `json:"last_seen_at,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
+	ActiveSessions int        `json:"active_sessions"`
+	Online         bool       `json:"online"`
+	Status         string     `json:"status"`
+}
+
+type HumanSession struct {
+	ID        int64      `db:"id" json:"id"`
+	HumanID   string     `db:"human_id" json:"human_id"`
+	TokenHash string     `db:"token_hash" json:"-"`
+	ExpiresAt *time.Time `db:"expires_at" json:"expires_at,omitempty"`
+	RevokedAt *time.Time `db:"revoked_at" json:"revoked_at,omitempty"`
+	CreatedAt time.Time  `db:"created_at" json:"created_at"`
+}
+
 // TraceEvent represents a trace event for observability.
 type TraceEvent struct {
 	Id            int64     `db:"id" json:"id"`
@@ -134,22 +167,62 @@ type AgentInfo struct {
 
 // AgentCard describes an external A2A agent's identity and capabilities.
 type AgentCard struct {
-	Name        string      `json:"name"`
-	Description string      `json:"description"`
-	Version     string      `json:"version"`
-	Url         string      `json:"url"`
-	Skills      []CardSkill `json:"skills"`
-	HealthUrl   string      `json:"health_url,omitempty"`
-	Static      bool        `json:"x_static,omitempty"`
-	ContextMode string      `json:"x_context_mode,omitempty"`
+	Name                 string                `json:"name"`
+	Description          string                `json:"description"`
+	SupportedInterfaces  []AgentInterface      `json:"supportedInterfaces,omitempty"`
+	Provider             *AgentProvider        `json:"provider,omitempty"`
+	Version              string                `json:"version"`
+	DocumentationUrl     string                `json:"documentationUrl,omitempty"`
+	Capabilities         *AgentCapabilities    `json:"capabilities,omitempty"`
+	SecuritySchemes      map[string]any        `json:"securitySchemes,omitempty"`
+	SecurityRequirements []map[string][]string `json:"securityRequirements,omitempty"`
+	DefaultInputModes    []string              `json:"defaultInputModes,omitempty"`
+	DefaultOutputModes   []string              `json:"defaultOutputModes,omitempty"`
+	Skills               []CardSkill           `json:"skills"`
+	Signatures           []map[string]any      `json:"signatures,omitempty"`
+	IconUrl              string                `json:"iconUrl,omitempty"`
+	Url                  string                `json:"url,omitempty"`
+	Security             []map[string][]string `json:"security,omitempty"`
+	HealthUrl            string                `json:"health_url,omitempty"`
+	Static               bool                  `json:"x_static,omitempty"`
+	ContextMode          string                `json:"x_context_mode,omitempty"`
 }
 
 type CardSkill struct {
-	Id          string   `json:"id"`
-	Name        string   `json:"name"`
-	Description string   `json:"description"`
-	Tags        []string `json:"tags"`
-	Examples    []string `json:"examples"`
+	Id                   string                `json:"id"`
+	Name                 string                `json:"name"`
+	Description          string                `json:"description"`
+	Tags                 []string              `json:"tags"`
+	Examples             []string              `json:"examples,omitempty"`
+	InputModes           []string              `json:"inputModes,omitempty"`
+	OutputModes          []string              `json:"outputModes,omitempty"`
+	SecurityRequirements []map[string][]string `json:"securityRequirements,omitempty"`
+}
+
+type AgentProvider struct {
+	Url          string `json:"url"`
+	Organization string `json:"organization"`
+}
+
+type AgentCapabilities struct {
+	Streaming         bool             `json:"streaming,omitempty"`
+	PushNotifications bool             `json:"pushNotifications,omitempty"`
+	Extensions        []AgentExtension `json:"extensions,omitempty"`
+	ExtendedAgentCard bool             `json:"extendedAgentCard,omitempty"`
+}
+
+type AgentExtension struct {
+	URI         string         `json:"uri,omitempty"`
+	Description string         `json:"description,omitempty"`
+	Required    bool           `json:"required,omitempty"`
+	Params      map[string]any `json:"params,omitempty"`
+}
+
+type AgentInterface struct {
+	Url             string `json:"url"`
+	ProtocolBinding string `json:"protocolBinding"`
+	Tenant          string `json:"tenant,omitempty"`
+	ProtocolVersion string `json:"protocolVersion"`
 }
 
 type Skill struct {

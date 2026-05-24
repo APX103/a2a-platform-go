@@ -63,6 +63,7 @@ type groupJoinReq struct {
 type groupJoinResp struct {
 	Group         *model.Group                  `json:"group"`
 	Member        *model.GroupMember            `json:"member"`
+	Human         *humanPublic                  `json:"human,omitempty"`
 	AccessToken   string                        `json:"access_token"`
 	Orchestration model.GroupOrchestrationState `json:"orchestration"`
 }
@@ -343,6 +344,17 @@ func (h *GroupJoinByInviteHandler) ServeHTTP(w http.ResponseWriter, r *http.Requ
 	if actorID == "" {
 		actorID = strings.TrimSpace(req.ClientID)
 	}
+
+	human, _, hasHumanSession, err := humanFromRequest(r, h.svcCtx)
+	if err != nil {
+		errHTTP(w, err)
+		return
+	}
+	if hasHumanSession {
+		actorType = model.GroupActorHuman
+		actorID = human.ID
+	}
+
 	if actorID == "" {
 		jsonError(w, "actor_id is required", 400)
 		return
@@ -372,6 +384,9 @@ func (h *GroupJoinByInviteHandler) ServeHTTP(w http.ResponseWriter, r *http.Requ
 		Role:             invite.Role,
 		CapabilitiesJson: rawJSONToString(req.Capabilities),
 	}
+	if hasHumanSession {
+		member.CapabilitiesJson = mergeHumanCapabilities(req.Capabilities, human)
+	}
 	if err := h.svcCtx.GroupMembers.Upsert(member); err != nil {
 		errHTTP(w, err)
 		return
@@ -394,9 +409,27 @@ func (h *GroupJoinByInviteHandler) ServeHTTP(w http.ResponseWriter, r *http.Requ
 	okJSON(w, groupJoinResp{
 		Group:         group,
 		Member:        member,
+		Human:         publicHuman(human),
 		AccessToken:   accessToken,
 		Orchestration: svc.BuildGroupOrchestrationState(group, members),
 	})
+}
+
+func mergeHumanCapabilities(raw json.RawMessage, human *model.HumanUser) string {
+	capabilities := map[string]interface{}{}
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &capabilities)
+	}
+	if capabilities == nil {
+		capabilities = map[string]interface{}{}
+	}
+	if human != nil {
+		capabilities["human_id"] = human.ID
+		capabilities["handle"] = human.Handle
+		capabilities["display_name"] = human.DisplayName
+	}
+	out, _ := json.Marshal(capabilities)
+	return string(out)
 }
 
 type GroupDetailHandler struct {

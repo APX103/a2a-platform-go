@@ -2,16 +2,16 @@ import { FormEvent, useEffect, useMemo, useState } from 'react'
 import { LogOut, Plus, Users } from 'lucide-react'
 import Join from './pages/Join'
 import Room from './pages/Room'
-import { api, Group, Session } from './api/client'
+import { api, Group, HumanJoinPayload, HumanSession, Session } from './api/client'
 
-const clientKey = 'a2a_human_client_id'
+const sessionKey = 'a2a_human_session'
 
-function groupsKey(clientId: string) {
-  return `a2a_human_groups:${clientId}`
+function groupsKey(humanId: string) {
+  return `a2a_human_groups:${humanId}`
 }
 
-function activeGroupKey(clientId: string) {
-  return `a2a_human_active_group:${clientId}`
+function activeGroupKey(humanId: string) {
+  return `a2a_human_active_group:${humanId}`
 }
 
 interface LocalGroup {
@@ -23,9 +23,24 @@ interface LocalGroup {
   joined_at: string
 }
 
-function loadGroups(clientId: string): LocalGroup[] {
-  if (!clientId) return []
-  const raw = localStorage.getItem(groupsKey(clientId))
+function loadHumanSession(): HumanSession | null {
+  const raw = localStorage.getItem(sessionKey)
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw) as HumanSession
+    return parsed.human_id && parsed.handle && parsed.session_token ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function saveHumanSession(session: HumanSession) {
+  localStorage.setItem(sessionKey, JSON.stringify(session))
+}
+
+function loadGroups(humanId: string): LocalGroup[] {
+  if (!humanId) return []
+  const raw = localStorage.getItem(groupsKey(humanId))
   if (!raw) return []
   try {
     const parsed = JSON.parse(raw) as LocalGroup[]
@@ -35,9 +50,9 @@ function loadGroups(clientId: string): LocalGroup[] {
   }
 }
 
-function saveGroups(clientId: string, groups: LocalGroup[]) {
-  if (!clientId) return
-  localStorage.setItem(groupsKey(clientId), JSON.stringify(groups))
+function saveGroups(humanId: string, groups: LocalGroup[]) {
+  if (!humanId) return
+  localStorage.setItem(groupsKey(humanId), JSON.stringify(groups))
 }
 
 function toLocalGroup(group: Group, accessToken: string): LocalGroup {
@@ -51,12 +66,20 @@ function toLocalGroup(group: Group, accessToken: string): LocalGroup {
   }
 }
 
+function mergeDefaultGroup(groups: LocalGroup[], payload: HumanJoinPayload): LocalGroup[] {
+  if (!payload.default_group || !payload.default_access_token) {
+    return groups
+  }
+  const defaultGroup = toLocalGroup(payload.default_group, payload.default_access_token)
+  return [defaultGroup, ...groups.filter(group => group.id !== defaultGroup.id)]
+}
+
 export default function App() {
-  const [clientId, setClientId] = useState(() => localStorage.getItem(clientKey) || '')
-  const [groups, setGroups] = useState<LocalGroup[]>(() => loadGroups(localStorage.getItem(clientKey) || ''))
+  const [humanSession, setHumanSession] = useState<HumanSession | null>(() => loadHumanSession())
+  const [groups, setGroups] = useState<LocalGroup[]>(() => loadGroups(loadHumanSession()?.human_id || ''))
   const [activeGroupId, setActiveGroupId] = useState(() => {
-    const savedClientId = localStorage.getItem(clientKey) || ''
-    return savedClientId ? localStorage.getItem(activeGroupKey(savedClientId)) || '' : ''
+    const savedSession = loadHumanSession()
+    return savedSession ? localStorage.getItem(activeGroupKey(savedSession.human_id)) || '' : ''
   })
   const [joinOpen, setJoinOpen] = useState(false)
   const [groupToken, setGroupToken] = useState('')
@@ -64,26 +87,36 @@ export default function App() {
   const [error, setError] = useState('')
 
   useEffect(() => {
-    document.title = clientId ? 'A2A Human Client' : 'Join A2A'
-  }, [clientId])
+    document.title = humanSession ? 'A2A Human Client' : 'Join A2A'
+  }, [humanSession])
 
   useEffect(() => {
-    saveGroups(clientId, groups)
-  }, [clientId, groups])
-
-  useEffect(() => {
-    setGroups(loadGroups(clientId))
-    setActiveGroupId(clientId ? localStorage.getItem(activeGroupKey(clientId)) || '' : '')
-  }, [clientId])
-
-  useEffect(() => {
-    if (!clientId) return
-    if (activeGroupId) {
-      localStorage.setItem(activeGroupKey(clientId), activeGroupId)
-    } else {
-      localStorage.removeItem(activeGroupKey(clientId))
+    if (!humanSession?.session_token) return
+    const ping = () => {
+      api.getHumanMe(humanSession.session_token).catch(() => {})
     }
-  }, [activeGroupId, clientId])
+    ping()
+    const timer = window.setInterval(ping, 30000)
+    return () => window.clearInterval(timer)
+  }, [humanSession?.session_token])
+
+  useEffect(() => {
+    saveGroups(humanSession?.human_id || '', groups)
+  }, [humanSession?.human_id, groups])
+
+  useEffect(() => {
+    setGroups(loadGroups(humanSession?.human_id || ''))
+    setActiveGroupId(humanSession ? localStorage.getItem(activeGroupKey(humanSession.human_id)) || '' : '')
+  }, [humanSession])
+
+  useEffect(() => {
+    if (!humanSession) return
+    if (activeGroupId) {
+      localStorage.setItem(activeGroupKey(humanSession.human_id), activeGroupId)
+    } else {
+      localStorage.removeItem(activeGroupKey(humanSession.human_id))
+    }
+  }, [activeGroupId, humanSession])
 
   const activeGroup = useMemo(() => groups.find(group => group.id === activeGroupId) || null, [groups, activeGroupId])
 
@@ -97,7 +130,11 @@ export default function App() {
     setJoining(true)
     setError('')
     try {
-      const join = await api.joinWithInvite(token, clientId)
+      if (!humanSession) {
+        setError('Human session is required')
+        return
+      }
+      const join = await api.joinWithInvite(token, humanSession.session_token)
       setGroups(prev => {
         const next = [toLocalGroup(join.group, join.access_token), ...prev.filter(item => item.id !== join.group.id)]
         return next
@@ -113,20 +150,23 @@ export default function App() {
   }
 
   const leaveClient = () => {
-    localStorage.removeItem(clientKey)
-    setClientId('')
+    localStorage.removeItem(sessionKey)
+    setHumanSession(null)
     setActiveGroupId('')
     setGroups([])
   }
 
-  if (!clientId) {
+  if (!humanSession) {
     return (
       <Join
-        onJoin={nextClientId => {
-          localStorage.setItem(clientKey, nextClientId)
-          setGroups(loadGroups(nextClientId))
-          setActiveGroupId(localStorage.getItem(activeGroupKey(nextClientId)) || '')
-          setClientId(nextClientId)
+        onJoin={payload => {
+          const nextSession = payload.session
+          const nextGroups = mergeDefaultGroup(loadGroups(nextSession.human_id), payload)
+          saveHumanSession(nextSession)
+          saveGroups(nextSession.human_id, nextGroups)
+          setGroups(nextGroups)
+          setActiveGroupId(payload.default_group?.id || localStorage.getItem(activeGroupKey(nextSession.human_id)) || '')
+          setHumanSession(nextSession)
         }}
       />
     )
@@ -136,12 +176,12 @@ export default function App() {
     <main className="im-shell">
       <aside className="conversation-list">
         <div className="client-card">
-          <div className="client-mark">{clientId.slice(0, 2).toUpperCase()}</div>
+          <div className="client-mark">{humanSession.display_name.slice(0, 2).toUpperCase()}</div>
           <div className="client-meta">
-            <strong>{clientId}</strong>
-            <span>human client</span>
+            <strong>{humanSession.display_name}</strong>
+            <span>@{humanSession.handle}</span>
           </div>
-          <button onClick={leaveClient} title="Switch client"><LogOut size={15} /></button>
+          <button onClick={leaveClient} title="Sign out"><LogOut size={15} /></button>
         </div>
 
         <button className="add-group-button" onClick={() => setJoinOpen(value => !value)}>
@@ -183,7 +223,14 @@ export default function App() {
       </aside>
 
       {activeGroup ? (
-        <Room session={{ client_id: clientId, group_id: activeGroup.id, access_token: activeGroup.access_token } satisfies Session} />
+        <Room session={{
+          human_id: humanSession.human_id,
+          handle: humanSession.handle,
+          display_name: humanSession.display_name,
+          session_token: humanSession.session_token,
+          group_id: activeGroup.id,
+          access_token: activeGroup.access_token,
+        } satisfies Session} />
       ) : (
         <section className="empty-room">
           <h1>Select or join a group</h1>

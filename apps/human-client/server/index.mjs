@@ -30,6 +30,11 @@ const server = http.createServer(async (req, res) => {
       return
     }
 
+    if (url.pathname.startsWith('/agent/')) {
+      await proxyPlatform(req, res, url.pathname)
+      return
+    }
+
     await serveStatic(res, url.pathname)
   } catch (error) {
     sendJSON(res, 500, { error: error instanceof Error ? error.message : 'internal error' })
@@ -60,6 +65,21 @@ async function handleAPI(req, res, url) {
       return
     }
     sendJSON(res, 200, { client_id: clientId })
+    return
+  }
+
+  if (url.pathname === '/api/humans/register' && req.method === 'POST') {
+    await proxyPlatform(req, res, '/api/humans/register')
+    return
+  }
+
+  if (url.pathname === '/api/humans/login' && req.method === 'POST') {
+    await proxyPlatform(req, res, '/api/humans/login')
+    return
+  }
+
+  if (url.pathname === '/api/humans/me' && req.method === 'GET') {
+    await proxyPlatform(req, res, '/api/humans/me')
     return
   }
 
@@ -135,8 +155,14 @@ async function proxyPlatform(req, res, platformPath) {
   if (req.headers.authorization) {
     headers.authorization = req.headers.authorization
   }
+  if (req.headers.accept) {
+    headers.accept = req.headers.accept
+  }
   if (req.headers['x-group-member-token']) {
     headers['x-group-member-token'] = req.headers['x-group-member-token']
+  }
+  if (req.headers['x-a2a-source-agent']) {
+    headers['x-a2a-source-agent'] = req.headers['x-a2a-source-agent']
   }
   if (clientToken) {
     headers['x-client-token'] = clientToken

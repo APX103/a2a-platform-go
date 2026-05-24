@@ -27,6 +27,8 @@ type ServiceContext struct {
 	Traces         *TraceStore
 	Contexts       *ContextStore
 	Subagents      *SubagentStore
+	Humans         *HumanUserStore
+	HumanSessions  *HumanSessionStore
 	TaskItems      *TaskItemStore
 	BuiltinAgents  *BuiltinAgentStore
 	Groups         *GroupStore
@@ -80,6 +82,8 @@ func NewServiceContext(c *config.Config) (*ServiceContext, error) {
 	traces := NewTraceStore(db)
 	contexts := NewContextStore(db)
 	subagents := NewSubagentStore(db)
+	humans := NewHumanUserStore(db)
+	humanSessions := NewHumanSessionStore(db)
 	taskItems := NewTaskItemStore(db)
 	builtinAgents := NewBuiltinAgentStore(db)
 	groups := NewGroupStore(db)
@@ -102,6 +106,8 @@ func NewServiceContext(c *config.Config) (*ServiceContext, error) {
 		Traces:         traces,
 		Contexts:       contexts,
 		Subagents:      subagents,
+		Humans:         humans,
+		HumanSessions:  humanSessions,
 		TaskItems:      taskItems,
 		BuiltinAgents:  builtinAgents,
 		Groups:         groups,
@@ -168,6 +174,7 @@ func migrate(db *sql.DB) {
 	repairLegacyContextLineageFromToolCalls(db)
 	ensureMessageDirectionColumns(db)
 	backfillMessageDirections(db)
+	ensureHumanPresenceColumns(db)
 }
 
 func ensureTaskDirectionColumns(db *sql.DB) {
@@ -191,6 +198,18 @@ func ensureMessageDirectionColumns(db *sql.DB) {
 		"ALTER TABLE messages ADD COLUMN recipient_agent VARCHAR(255)",
 		"CREATE INDEX idx_messages_sender_agent ON messages(sender_agent)",
 		"CREATE INDEX idx_messages_recipient_agent ON messages(recipient_agent)",
+	}
+	for _, stmt := range statements {
+		if _, err := db.Exec(stmt); err != nil {
+			slog.Debug("Migration note", "statement", stmt, "error", err)
+		}
+	}
+}
+
+func ensureHumanPresenceColumns(db *sql.DB) {
+	statements := []string{
+		"ALTER TABLE human_users ADD COLUMN last_seen_at TIMESTAMP NULL",
+		"CREATE INDEX idx_human_users_last_seen ON human_users(last_seen_at)",
 	}
 	for _, stmt := range statements {
 		if _, err := db.Exec(stmt); err != nil {
@@ -627,6 +646,30 @@ CREATE TABLE IF NOT EXISTS subagent_sessions (
 	completed_at TIMESTAMP,
 	INDEX idx_parent_context (parent_context_id),
 	INDEX idx_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS human_users (
+	id VARCHAR(36) PRIMARY KEY,
+	handle VARCHAR(128) NOT NULL UNIQUE,
+	display_name VARCHAR(255) NOT NULL,
+	last_seen_at TIMESTAMP NULL,
+	secret_hash VARCHAR(128) NOT NULL DEFAULT '',
+	secret_salt VARCHAR(64) NOT NULL DEFAULT '',
+	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+	updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+	INDEX idx_human_users_handle (handle),
+	INDEX idx_human_users_last_seen (last_seen_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS human_sessions (
+	id BIGINT AUTO_INCREMENT PRIMARY KEY,
+	human_id VARCHAR(36) NOT NULL,
+	token_hash VARCHAR(64) NOT NULL UNIQUE,
+	expires_at TIMESTAMP NULL,
+	revoked_at TIMESTAMP NULL,
+	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+	INDEX idx_human_sessions_human (human_id),
+	INDEX idx_human_sessions_token (token_hash)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS task_items (

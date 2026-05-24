@@ -205,6 +205,36 @@ export interface BuiltinAgent {
   max_tool_rounds: number;
 }
 
+export interface HumanPresence {
+  id: string;
+  handle: string;
+  display_name: string;
+  last_seen_at?: string;
+  created_at: string;
+  updated_at: string;
+  active_sessions: number;
+  online: boolean;
+  status: 'online' | 'offline' | string;
+}
+
+export interface HumanTokenIssueResponse {
+  human: { id: string; handle: string; display_name: string };
+  session_token: string;
+  expires_at?: string;
+}
+
+export interface HumanProfile {
+  id: string;
+  handle: string;
+  display_name: string;
+}
+
+export interface AgentCredentialResponse {
+  name: string;
+  secret: string;
+  available: boolean;
+}
+
 export interface CreateBuiltinAgentReq {
   name: string;
   provider: string;
@@ -320,7 +350,23 @@ export const api = {
   getHealth: () => request<HealthResponse>('/health'),
 
   listAgents: () => request<Agent[]>('/api/agents'),
+  listHumans: () => request<HumanPresence[]>('/api/humans'),
+  getHuman: (id: string) => request<HumanProfile>(`/api/humans/${encodeURIComponent(id)}`),
+  updateHuman: (id: string, human: { handle?: string; display_name?: string }) =>
+    request<HumanProfile>(`/api/humans/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      body: JSON.stringify(human),
+    }),
+  issueHumanToken: (id: string) =>
+    request<HumanTokenIssueResponse>(`/api/humans/${encodeURIComponent(id)}/tokens`, {
+      method: 'POST',
+    }),
+  deleteHuman: (id: string) =>
+    request<void>(`/api/humans/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    }),
   getAgent: (name: string) => request<Agent>(`/api/agents/${name}`),
+  getAgentCredential: (name: string) => request<AgentCredentialResponse>(`/api/agents/${encodeURIComponent(name)}/credential`),
   registerAgent: (agent: Partial<Agent>, token: string) =>
     request<Agent>('/api/agents', {
       method: 'POST',

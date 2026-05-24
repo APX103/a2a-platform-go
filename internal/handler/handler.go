@@ -102,6 +102,42 @@ func (h *GetAgentHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // =====
 
+type AgentCredentialHandler struct {
+	svcCtx *svc.ServiceContext
+}
+
+func NewAgentCredentialHandler(svcCtx *svc.ServiceContext) *AgentCredentialHandler {
+	return &AgentCredentialHandler{svcCtx: svcCtx}
+}
+
+func (h *AgentCredentialHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		jsonError(w, "method not allowed", 405)
+		return
+	}
+	name := getPathParam(r, "name")
+	if name == "" {
+		jsonError(w, "missing agent name", 400)
+		return
+	}
+	agent, err := h.svcCtx.Agents.Get(name)
+	if err != nil {
+		errHTTP(w, err)
+		return
+	}
+	if agent == nil {
+		jsonError(w, "not found", 404)
+		return
+	}
+	okJSON(w, map[string]interface{}{
+		"name":      agent.Name,
+		"secret":    agent.Secret,
+		"available": agent.Secret != "",
+	})
+}
+
+// =====
+
 type UpdateAgentHandler struct {
 	svcCtx *svc.ServiceContext
 }
@@ -314,7 +350,7 @@ func (h *DiscoveryHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "not found", 404)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Type", "application/a2a+json")
 	json.NewEncoder(w).Encode(card)
 }
 
