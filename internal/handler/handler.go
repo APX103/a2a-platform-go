@@ -656,7 +656,7 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			EventType:     "response",
 			AgentName:     name,
 			TargetAgent:   &sourceAgent,
-			DataJson:      finalText,
+			DataJson:      safeTraceData(finalText, 1000),
 		}
 		if finalText == "" {
 			respTrace.DataJson = `{"text_length":0}`

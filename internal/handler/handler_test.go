@@ -232,6 +232,76 @@ func TestAgentProxyRedactsRequestBodyInSendTrace(t *testing.T) {
 	}
 }
 
+func TestAgentProxyRedactsStreamingResponseTrace(t *testing.T) {
+	db := setupAgentProxyLineageDB(t)
+	agentServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher := w.(http.Flusher)
+		w.Write([]byte(`event: text.delta
+data: {"type":"text.delta","text":"sk-stream-secret"}
+
+`))
+		flusher.Flush()
+	}))
+	defer agentServer.Close()
+
+	agentStore := svc.NewAgentStore(db)
+	registry := svc.NewAgentRegistry(agentStore)
+	if _, err := registry.RegisterAgent("stream-secret-agent", "external", agentServer.URL, 0, nil, "", model.ContextModeContext, &model.AgentCard{
+		Name:        "stream-secret-agent",
+		Description: "stream secret agent",
+		Version:     "1.0.0",
+	}); err != nil {
+		t.Fatalf("register agent: %v", err)
+	}
+	svcCtx := &svc.ServiceContext{
+		DB:             db,
+		Agents:         agentStore,
+		Tasks:          svc.NewTaskStore(db),
+		Messages:       svc.NewMessageStore(db),
+		Traces:         svc.NewTraceStore(db),
+		Registry:       registry,
+		Engine:         engine.New(),
+		BridgeRegistry: bridge.NewRegistry(),
+	}
+
+	body := `{"jsonrpc":"2.0","id":"1","method":"SendStreamingMessage","params":{"message":{"role":"ROLE_USER","parts":[{"text":"hello"}]}}}`
+	req := httptest.NewRequest(http.MethodPost, "/agent/stream-secret-agent", strings.NewReader(body))
+	req.Header.Set("X-Path-Param-Name", "stream-secret-agent")
+	rec := httptest.NewRecorder()
+
+	NewAgentProxyHandler(svcCtx).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "sk-stream-secret") {
+		t.Fatalf("relayed body = %q, want original stream secret", rec.Body.String())
+	}
+
+	rows, err := db.Query(`SELECT data_json FROM traces`)
+	if err != nil {
+		t.Fatalf("query traces: %v", err)
+	}
+	defer rows.Close()
+	traceCount := 0
+	for rows.Next() {
+		traceCount++
+		var data string
+		if err := rows.Scan(&data); err != nil {
+			t.Fatalf("scan trace data: %v", err)
+		}
+		if strings.Contains(data, "sk-stream-secret") {
+			t.Fatalf("trace data leaked streaming secret: %s", data)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate traces: %v", err)
+	}
+	if traceCount == 0 {
+		t.Fatal("expected traces to be recorded")
+	}
+}
+
 func TestFreeChatCandidates(t *testing.T) {
 	members := []*model.GroupMember{
 		{ActorType: model.GroupActorAgent, ActorID: "planner", Role: "member"},
