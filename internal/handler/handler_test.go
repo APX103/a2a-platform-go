@@ -302,6 +302,55 @@ data: {"type":"text.delta","text":"sk-stream-secret"}
 	}
 }
 
+func TestAgentProxyConnectionFailureRecordsErrorTrace(t *testing.T) {
+	db := setupAgentProxyLineageDB(t)
+	agentStore := svc.NewAgentStore(db)
+	registry := svc.NewAgentRegistry(agentStore)
+	if _, err := registry.RegisterAgent("down-agent", "external", "http://127.0.0.1:1", 0, nil, "", model.ContextModeContext, &model.AgentCard{
+		Name:        "down-agent",
+		Description: "down agent",
+		Version:     "1.0.0",
+	}); err != nil {
+		t.Fatalf("register agent: %v", err)
+	}
+	svcCtx := &svc.ServiceContext{
+		DB:             db,
+		Agents:         agentStore,
+		Tasks:          svc.NewTaskStore(db),
+		Messages:       svc.NewMessageStore(db),
+		Traces:         svc.NewTraceStore(db),
+		Registry:       registry,
+		Engine:         engine.New(),
+		BridgeRegistry: bridge.NewRegistry(),
+	}
+
+	body := `{"jsonrpc":"2.0","id":"1","method":"SendMessage","params":{"message":{"role":"ROLE_USER","parts":[{"text":"hello"}]}}}`
+	req := httptest.NewRequest(http.MethodPost, "/agent/down-agent", strings.NewReader(body))
+	req.Header.Set("X-Path-Param-Name", "down-agent")
+	rec := httptest.NewRecorder()
+
+	NewAgentProxyHandler(svcCtx).ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502, body=%s", rec.Code, rec.Body.String())
+	}
+
+	var taskID, state string
+	if err := db.QueryRow(`SELECT local_task_id, state FROM tasks WHERE target_agent='down-agent'`).Scan(&taskID, &state); err != nil {
+		t.Fatalf("query task: %v", err)
+	}
+	if state != "ERROR" {
+		t.Fatalf("state = %q, want ERROR", state)
+	}
+
+	var errorTraceCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM traces WHERE task_id=? AND event_type='error' AND target_agent='down-agent'`, taskID).Scan(&errorTraceCount); err != nil {
+		t.Fatalf("query error traces: %v", err)
+	}
+	if errorTraceCount != 1 {
+		t.Fatalf("error trace count = %d, want 1", errorTraceCount)
+	}
+}
+
 func TestFreeChatCandidates(t *testing.T) {
 	members := []*model.GroupMember{
 		{ActorType: model.GroupActorAgent, ActorID: "planner", Role: "member"},

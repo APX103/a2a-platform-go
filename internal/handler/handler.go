@@ -364,6 +364,26 @@ func NewAgentProxyHandler(svcCtx *svc.ServiceContext) *AgentProxyHandler {
 	return &AgentProxyHandler{svcCtx: svcCtx}
 }
 
+func (h *AgentProxyHandler) recordProxyErrorTrace(taskId string, contextId, rootContextId, parentTaskId *string, sourceAgent, targetAgent, message string) {
+	if h == nil || h.svcCtx == nil || h.svcCtx.Traces == nil {
+		return
+	}
+	trace := &model.TraceEvent{
+		TaskId:        taskId,
+		ContextId:     contextId,
+		RootContextId: rootContextId,
+		ParentTaskId:  parentTaskId,
+		EventType:     "error",
+		AgentName:     sourceAgent,
+		TargetAgent:   &targetAgent,
+		DataJson:      safeTraceData(message, 1000),
+	}
+	h.svcCtx.Traces.Append(trace)
+	if h.svcCtx.EventBus != nil {
+		h.svcCtx.EventBus.TraceEvent(trace)
+	}
+}
+
 func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		jsonError(w, "method not allowed", 405)
@@ -542,7 +562,11 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	proxyResp, err := client.Do(proxyReq)
 	if err != nil {
 		h.svcCtx.Tasks.Update(taskId, map[string]interface{}{"state": "ERROR"})
-		jsonError(w, fmt.Sprintf("proxy failed: %s", err), 502)
+		if h.svcCtx.EventBus != nil {
+			h.svcCtx.EventBus.Task("update", taskId, name, "ERROR")
+		}
+		h.recordProxyErrorTrace(taskId, contextId, rootContextId, parentTaskId, sourceAgent, name, err.Error())
+		jsonError(w, "proxy failed", http.StatusBadGateway)
 		return
 	}
 	defer proxyResp.Body.Close()
