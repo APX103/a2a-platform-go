@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"a2a-platform/internal/model"
+	"a2a-platform/internal/redact"
 
 	"github.com/google/uuid"
 )
@@ -179,10 +180,12 @@ func NewSubagentStore(db *sql.DB) *SubagentStore {
 func (s *SubagentStore) Create(parentContextId, parentToolCallId, task, context string) (*model.SubagentSession, error) {
 	id := uuid.New().String()
 	now := time.Now()
+	safeTask := redact.Text(task)
+	safeContext := redact.Text(context)
 
 	query := `INSERT INTO subagent_sessions (id, parent_context_id, parent_tool_call_id, task, context, status, created_at)
 			  VALUES (?, ?, ?, ?, ?, 'running', ?)`
-	_, err := s.db.Exec(query, id, parentContextId, parentToolCallId, task, context, now)
+	_, err := s.db.Exec(query, id, parentContextId, parentToolCallId, safeTask, safeContext, now)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create subagent session: %w", err)
 	}
@@ -191,8 +194,8 @@ func (s *SubagentStore) Create(parentContextId, parentToolCallId, task, context 
 		ID:               id,
 		ParentContextId:  parentContextId,
 		ParentToolCallId: parentToolCallId,
-		Task:             task,
-		Context:          context,
+		Task:             safeTask,
+		Context:          safeContext,
 		Status:           "running",
 		CreatedAt:        now,
 	}, nil
@@ -247,21 +250,21 @@ func (s *SubagentStore) UpdateStatus(id, status string) error {
 
 // UpdateMessages stores the message history as JSON.
 func (s *SubagentStore) UpdateMessages(id, messagesJSON string) error {
-	_, err := s.db.Exec(`UPDATE subagent_sessions SET messages = ? WHERE id = ?`, messagesJSON, id)
+	_, err := s.db.Exec(`UPDATE subagent_sessions SET messages = ? WHERE id = ?`, redact.Text(messagesJSON), id)
 	return err
 }
 
 // Complete marks a subagent as completed with a result.
 func (s *SubagentStore) Complete(id, result string) error {
 	now := time.Now()
-	_, err := s.db.Exec(`UPDATE subagent_sessions SET status = 'completed', result = ?, completed_at = ? WHERE id = ?`, result, now, id)
+	_, err := s.db.Exec(`UPDATE subagent_sessions SET status = 'completed', result = ?, completed_at = ? WHERE id = ?`, redact.Text(result), now, id)
 	return err
 }
 
 // Fail marks a subagent as failed with an error.
 func (s *SubagentStore) Fail(id, errorMsg string) error {
 	now := time.Now()
-	_, err := s.db.Exec(`UPDATE subagent_sessions SET status = 'failed', error = ?, completed_at = ? WHERE id = ?`, errorMsg, now, id)
+	_, err := s.db.Exec(`UPDATE subagent_sessions SET status = 'failed', error = ?, completed_at = ? WHERE id = ?`, redact.Text(errorMsg), now, id)
 	return err
 }
 

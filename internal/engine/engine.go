@@ -13,6 +13,7 @@ import (
 	"a2a-platform/internal/config"
 	"a2a-platform/internal/llm"
 	"a2a-platform/internal/model"
+	"a2a-platform/internal/redact"
 	"a2a-platform/internal/tools"
 )
 
@@ -335,7 +336,7 @@ func (e *Engine) runLoop(
 
 		// Persist assistant message with tool calls
 		if deps.SaveMessage != nil {
-			tcJSON, _ := json.Marshal(toolCalls)
+			tcJSON, _ := json.Marshal(redactToolCallsForPersistence(toolCalls))
 			msg := &model.Message{
 				TaskId:    taskId,
 				ContextId: &contextId,
@@ -394,13 +395,14 @@ func (e *Engine) runLoop(
 		// Process all tool calls serially (SSE + persist must be thread-safe)
 		for _, tc := range toolCalls {
 			toolStart := time.Now()
+			redactedArguments := redact.Text(tc.Arguments)
 
 			writeSSE(w, flusher, sseEventToolCallStart, map[string]interface{}{
 				"taskId": taskId,
 				"tool": map[string]interface{}{
 					"id":         tc.ID,
 					"name":       tc.Name,
-					"arguments":  tc.Arguments,
+					"arguments":  redactedArguments,
 					"status":     "started",
 					"start_time": toolStart.Format(time.RFC3339),
 				},
@@ -413,7 +415,7 @@ func (e *Engine) runLoop(
 				RootContextId: stringPtr(rootContextId),
 				EventType:     "tool_call",
 				AgentName:     agent.Config.Name,
-				DataJson:      string(traceData),
+				DataJson:      redact.SafeTraceData(string(traceData), 4000),
 			})
 
 			var result string
@@ -424,7 +426,7 @@ func (e *Engine) runLoop(
 					"tool": map[string]interface{}{
 						"id":              tc.ID,
 						"name":            tc.Name,
-						"arguments":       tc.Arguments,
+						"arguments":       redactedArguments,
 						"status":          "started",
 						"elapsed_seconds": int(elapsed.Seconds()),
 					},
@@ -441,12 +443,12 @@ func (e *Engine) runLoop(
 				contextStr, _ := args["context"].(string)
 
 				// Create subagent session first to get the ID
-				subSession, createErr := e.subagentEngine.Store().Create(contextId, tc.ID, task, contextStr)
+				subSession, createErr := e.subagentEngine.Store().Create(contextId, tc.ID, redact.Text(task), redact.Text(contextStr))
 				if createErr == nil && subSession != nil {
 					writeSSE(w, flusher, sseEventSubagentStarted, map[string]interface{}{
 						"taskId":        taskId,
 						"subagent_id":   subSession.ID,
-						"subagent_task": task,
+						"subagent_task": redact.Text(task),
 						"tool_call_id":  tc.ID,
 					})
 
@@ -456,14 +458,14 @@ func (e *Engine) runLoop(
 						writeSSE(w, flusher, sseEventSubagentError, map[string]interface{}{
 							"taskId":       taskId,
 							"subagent_id":  subSession.ID,
-							"error":        err.Error(),
+							"error":        redact.Text(err.Error()),
 							"tool_call_id": tc.ID,
 						})
 					} else {
 						writeSSE(w, flusher, sseEventSubagentComplete, map[string]interface{}{
 							"taskId":       taskId,
 							"subagent_id":  subSession.ID,
-							"result":       truncate(result, 500),
+							"result":       truncate(redact.Text(result), 500),
 							"tool_call_id": tc.ID,
 						})
 					}
@@ -514,16 +516,17 @@ func (e *Engine) runLoop(
 				"tool": map[string]interface{}{
 					"id":        tc.ID,
 					"name":      tc.Name,
-					"arguments": tc.Arguments,
+					"arguments": redactedArguments,
 				},
 			})
 
+			redactedResult := redact.Text(truncatedResult)
 			writeSSE(w, flusher, sseEventToolResult, map[string]interface{}{
 				"taskId": taskId,
 				"tool": map[string]interface{}{
 					"id":       tc.ID,
 					"name":     tc.Name,
-					"result":   truncate(truncatedResult, 2000),
+					"result":   truncate(redactedResult, 2000),
 					"status":   "completed",
 					"end_time": time.Now().Format(time.RFC3339),
 				},
@@ -541,7 +544,7 @@ func (e *Engine) runLoop(
 					TaskId:     taskId,
 					ContextId:  &contextId,
 					Role:       "tool",
-					Content:    truncatedResult,
+					Content:    redactedResult,
 					ToolCallId: &tc.ID,
 				})
 			}
@@ -549,6 +552,15 @@ func (e *Engine) runLoop(
 	}
 
 	return "", fmt.Errorf("max tool rounds (%d) exceeded", maxRounds)
+}
+
+func redactToolCallsForPersistence(toolCalls []llm.ToolCall) []llm.ToolCall {
+	out := make([]llm.ToolCall, len(toolCalls))
+	copy(out, toolCalls)
+	for i := range out {
+		out[i].Arguments = redact.Text(out[i].Arguments)
+	}
+	return out
 }
 
 func (e *Engine) callToolWithTimeout(ctx context.Context, agent *BuiltinAgent, name string, arguments string, execCtx ToolExecutionContext, onProgress func(time.Duration)) (string, error) {

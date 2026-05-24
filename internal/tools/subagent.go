@@ -11,6 +11,7 @@ import (
 
 	"a2a-platform/internal/llm"
 	"a2a-platform/internal/model"
+	"a2a-platform/internal/redact"
 )
 
 const (
@@ -61,7 +62,7 @@ func (e *SubagentEngine) Run(
 	parentToolCallId string,
 ) (string, error) {
 	// Create subagent session
-	subId, err := e.store.Create(parentContextId, parentToolCallId, task, contextStr)
+	subId, err := e.store.Create(parentContextId, parentToolCallId, redact.Text(task), redact.Text(contextStr))
 	if err != nil {
 		return "", fmt.Errorf("failed to create subagent session: %w", err)
 	}
@@ -92,7 +93,7 @@ func (e *SubagentEngine) RunExisting(
 		e.mu.Unlock()
 	}()
 
-	slog.Info("Subagent started", "id", sessionID, "task", task)
+	slog.Info("Subagent started", "id", sessionID, "task", redact.Text(task))
 
 	// Prepare system prompt for subagent
 	toolNames := ""
@@ -131,20 +132,38 @@ func (e *SubagentEngine) RunExisting(
 
 	if err != nil {
 		// Store error result
-		slog.Error("Subagent failed", "id", sessionID, "error", err)
-		e.store.Fail(sessionID, err.Error())
+		slog.Error("Subagent failed", "id", sessionID, "error", redact.Text(err.Error()))
+		e.store.Fail(sessionID, redact.Text(err.Error()))
 		return "", err
 	}
 
 	// Save final messages
-	messagesJSON, _ := json.Marshal(messages)
+	messagesJSON, _ := json.Marshal(redactChatMessagesForPersistence(messages))
 	e.store.UpdateMessages(sessionID, string(messagesJSON))
 
 	// Complete session
-	e.store.Complete(sessionID, result)
+	e.store.Complete(sessionID, redact.Text(result))
 
 	slog.Info("Subagent completed", "id", sessionID, "duration", time.Since(startTime))
 	return result, nil
+}
+
+func redactChatMessagesForPersistence(messages []llm.ChatMessage) []llm.ChatMessage {
+	out := make([]llm.ChatMessage, len(messages))
+	copy(out, messages)
+	for i := range out {
+		out[i].Content = redact.Text(out[i].Content)
+		out[i].ReasoningContent = redact.Text(out[i].ReasoningContent)
+		if len(out[i].ToolCalls) == 0 {
+			continue
+		}
+		out[i].ToolCalls = make([]llm.ToolCall, len(messages[i].ToolCalls))
+		copy(out[i].ToolCalls, messages[i].ToolCalls)
+		for j := range out[i].ToolCalls {
+			out[i].ToolCalls[j].Arguments = redact.Text(out[i].ToolCalls[j].Arguments)
+		}
+	}
+	return out
 }
 
 func (e *SubagentEngine) runLLMLoop(

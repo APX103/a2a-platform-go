@@ -55,6 +55,46 @@ func TestRedactSensitiveTextMasksGroupMemberTokenInJSON(t *testing.T) {
 	}
 }
 
+func TestRedactSensitiveTextMasksKnownTokenFieldNames(t *testing.T) {
+	input := `{
+		"session_token":"session-secret",
+		"default_access_token":"default-secret",
+		"access_token":"access-secret",
+		"invite_token":"invite-secret",
+		"x-api-key":"x-api-secret",
+		"apiKey":"camel-secret",
+		"normal":"keep-me"
+	}`
+
+	got := redactSensitiveText(input)
+
+	for _, leaked := range []string{
+		"session-secret",
+		"default-secret",
+		"access-secret",
+		"invite-secret",
+		"x-api-secret",
+		"camel-secret",
+	} {
+		if strings.Contains(got, leaked) {
+			t.Fatalf("redacted text leaked %q: %s", leaked, got)
+		}
+	}
+	if !strings.Contains(got, "keep-me") {
+		t.Fatalf("redacted text removed non-sensitive value: %s", got)
+	}
+}
+
+func TestRedactSensitiveTextMasksURLQuerySecrets(t *testing.T) {
+	got := redactSensitiveText(`{"url":"https://user:pass@example.test/path?token=query-secret&ok=keep-me"}`)
+	if strings.Contains(got, "query-secret") || strings.Contains(got, "user:pass") {
+		t.Fatalf("redacted text leaked URL secret: %s", got)
+	}
+	if !strings.Contains(got, "keep-me") {
+		t.Fatalf("redacted text removed non-sensitive query value: %s", got)
+	}
+}
+
 func TestRedactSensitiveTextMasksQuotedJSONValueWithComma(t *testing.T) {
 	got := redactSensitiveText(`{"secret":"abc,def","normal":"keep-me"}`)
 	if strings.Contains(got, "abc") || strings.Contains(got, "def") {

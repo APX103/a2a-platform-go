@@ -485,7 +485,7 @@ flowchart LR
       </div>
 
       <h3>3.3 A2A 消息代理流程</h3>
-      <p><code>/agent/{name}</code> 是统一代理入口。它会注入或调整 contextId，创建本地 task，保存用户消息和 send trace，然后根据目标 Agent 类型走三条路径：内置 Engine、Bridge Agent、外部 HTTP Agent。代理 trace 在持久化前会对已知敏感字段、Bearer token、Admin token、agent secret、human/member token、API key 等值做脱敏；这只影响 trace/error 等审计数据，不会改写返回给调用方的普通响应体或 SSE 字节流。</p>
+      <p><code>/agent/{name}</code> 是统一代理入口。它会注入或调整 contextId，创建本地 task，保存用户消息和 send trace，然后根据目标 Agent 类型走三条路径：内置 Engine、Bridge Agent、外部 HTTP Agent。代理 trace 和内置 Engine 的 <code>tool_call</code> trace 在持久化前会通过共享脱敏模块处理已知敏感字段、Bearer token、Admin token、agent secret、human/member token、API key、URL 凭据和敏感 query 参数；外部代理的普通响应体或 SSE 字节流仍按协议透传给调用方。内置 Engine 执行工具和子代理时使用原始 arguments/result/task/context，但发给前端的工具/子代理展示事件、保存到消息历史的工具 arguments/result，以及保存到 subagent session 的 task/context/messages/result/error 会写入脱敏副本。</p>
       <div class="diagram">
         <p class="diagram-title">/agent/{name} 代理分发</p>
         <pre class="mermaid">
@@ -986,7 +986,7 @@ flowchart TD
         <article class="tile accent-gold"><b>编排模式边界</b><p>Group mode 的状态描述比执行逻辑更完整。当前可认为 <code>leader_led</code> 和 <code>free_chat</code> 是主要可执行模式，其他模式是面向后续扩展的语义接口。</p></article>
         <article class="tile accent-teal"><b>上下文边界</b><p>Agent 可声明 <code>context</code> 或 <code>stateless</code>。代理入口会根据 Registry 中的 context mode 决定是否保留 contextId。</p></article>
         <article class="tile accent-blue"><b>安全边界</b><p>Admin token 管理全局资源；member token 只能访问所属 group，并且调用 Agent 或读取其代理 AgentCard 时要求目标 Agent 是同 group 成员。</p></article>
-        <article class="tile accent-coral"><b>观测边界</b><p>Task/message/trace 是所有调用的主审计链路；代理 trace 持久化前会脱敏已知 token/API key/secret 字段，但不会改变调用方收到的代理响应或 SSE 字节。</p></article>
+        <article class="tile accent-coral"><b>观测边界</b><p>Task/message/trace 是所有调用的主审计链路；代理、内置工具调用和子代理会话持久化前会脱敏已知 token/API key/secret 字段、URL 凭据和敏感 query 参数。内置工具/子代理执行仍使用原始值，UI 事件、消息历史和 subagent session 写入脱敏副本；外部代理响应和 SSE 字节按协议透传。</p></article>
         <article class="tile accent-green"><b>工具边界</b><p>工具注册是全局的。内置 Agent 获取基础工具、A2A 平台工具和动态工具；只读工具会并行预执行，写工具串行执行。</p></article>
         <article class="tile accent-gold"><b>Bridge 边界</b><p>Bridge Agent 是进程内适配器，不是外部常驻连接。它按 skill 选择 HTTP/CLI target，并包装成 A2A SSE。</p></article>
       </div>

@@ -37,6 +37,52 @@ func (m *mockProvider) ChatStream(ctx context.Context, req *llm.ChatRequest) (<-
 	return ch, nil
 }
 
+type recordingSubagentStore struct {
+	session  *model.SubagentSession
+	messages string
+	result   string
+	errorMsg string
+}
+
+func (s *recordingSubagentStore) Create(parentContextId, parentToolCallId, task, context string) (*model.SubagentSession, error) {
+	s.session = &model.SubagentSession{
+		ID:               "sub-1",
+		ParentContextId:  parentContextId,
+		ParentToolCallId: parentToolCallId,
+		Task:             task,
+		Context:          context,
+		Status:           "running",
+		CreatedAt:        time.Now(),
+	}
+	return s.session, nil
+}
+
+func (s *recordingSubagentStore) Complete(id, result string) error {
+	s.result = result
+	if s.session != nil {
+		s.session.Status = "completed"
+		s.session.Result = result
+	}
+	return nil
+}
+
+func (s *recordingSubagentStore) Fail(id, errorMsg string) error {
+	s.errorMsg = errorMsg
+	if s.session != nil {
+		s.session.Status = "failed"
+		s.session.Error = errorMsg
+	}
+	return nil
+}
+
+func (s *recordingSubagentStore) UpdateMessages(id, messagesJSON string) error {
+	s.messages = messagesJSON
+	if s.session != nil {
+		s.session.Messages = messagesJSON
+	}
+	return nil
+}
+
 func TestBuildChatHistory_RestoresToolCallIDs(t *testing.T) {
 	ctxId := "ctx-1"
 	toolCallId := "call-1"
@@ -301,6 +347,200 @@ func TestRunLoop_ToolCallsWithinLimit(t *testing.T) {
 	}
 	if result != "Here is the answer." {
 		t.Errorf("Expected 'Here is the answer.', got %q", result)
+	}
+}
+
+func TestRunLoop_RedactsToolCallArgumentsInTrace(t *testing.T) {
+	eng := New()
+
+	agent := &BuiltinAgent{
+		Config: config.BuiltinAgent{
+			Name:          "test-agent",
+			Provider:      "openai",
+			Model:         "gpt-4",
+			MaxToolRounds: 5,
+		},
+		Provider: &mockProvider{
+			events: []llm.StreamEvent{
+				{
+					Type: "tool_call",
+					ToolCall: &llm.ToolCall{
+						ID:   "tc-1",
+						Name: "fetch_url",
+						Arguments: `{
+							"url":"https://user:pass@example.test/path?token=query-secret&ok=keep-me",
+							"headers":{"Authorization":"Bearer bearer-secret","X-Api-Key":"x-api-secret"},
+							"session_token":"session-secret",
+							"apiKey":"camel-secret"
+						}`,
+					},
+				},
+				{Type: "done"},
+				{Type: "text", Text: "done"},
+				{Type: "done"},
+			},
+		},
+	}
+
+	eng.callTool = func(a *BuiltinAgent, name string, arguments string, execCtx ToolExecutionContext) (string, error) {
+		return `{"access_token":"tool-result-secret","ok":"keep-me"}`, nil
+	}
+
+	var traces []*model.TraceEvent
+	var savedMessages []*model.Message
+	deps := &Deps{
+		LoadHistory: func(cid string) ([]*model.Message, error) { return nil, nil },
+		RecordTrace: func(e *model.TraceEvent) error {
+			traces = append(traces, e)
+			return nil
+		},
+		SaveMessage: func(m *model.Message) error {
+			savedMessages = append(savedMessages, m)
+			return nil
+		},
+	}
+	rec := httptest.NewRecorder()
+	flusher := &mockFlusher{recorder: rec}
+
+	if _, err := eng.runLoop(context.Background(), agent, []llm.ChatMessage{{Role: "user", Content: "hi"}}, rec, flusher, "task-1", "ctx-1", "root-1", "", deps); err != nil {
+		t.Fatalf("runLoop failed: %v", err)
+	}
+
+	var toolTrace string
+	for _, trace := range traces {
+		if trace.EventType == "tool_call" {
+			toolTrace = trace.DataJson
+			break
+		}
+	}
+	if toolTrace == "" {
+		t.Fatalf("tool_call trace was not recorded")
+	}
+	for _, leaked := range []string{
+		"query-secret",
+		"user:pass",
+		"bearer-secret",
+		"x-api-secret",
+		"session-secret",
+		"camel-secret",
+		"tool-result-secret",
+	} {
+		if strings.Contains(toolTrace, leaked) {
+			t.Fatalf("tool_call trace leaked %q: %s", leaked, toolTrace)
+		}
+		if strings.Contains(rec.Body.String(), leaked) {
+			t.Fatalf("tool SSE leaked %q: %s", leaked, rec.Body.String())
+		}
+		for _, msg := range savedMessages {
+			if strings.Contains(msg.ToolCalls, leaked) || strings.Contains(msg.Content, leaked) {
+				t.Fatalf("saved message leaked %q: %#v", leaked, msg)
+			}
+		}
+	}
+	if !strings.Contains(toolTrace, "[REDACTED]") {
+		t.Fatalf("tool_call trace does not contain redaction marker: %s", toolTrace)
+	}
+	if !strings.Contains(rec.Body.String(), "[REDACTED]") {
+		t.Fatalf("tool SSE does not contain redaction marker: %s", rec.Body.String())
+	}
+	var foundSavedRedaction bool
+	for _, msg := range savedMessages {
+		if strings.Contains(msg.ToolCalls, "[REDACTED]") || strings.Contains(msg.Content, "[REDACTED]") {
+			foundSavedRedaction = true
+			break
+		}
+	}
+	if !foundSavedRedaction {
+		t.Fatalf("saved messages do not contain redaction marker: %#v", savedMessages)
+	}
+}
+
+func TestRunLoop_RedactsSpawnAgentSSEAndPersistence(t *testing.T) {
+	eng := New()
+	store := &recordingSubagentStore{}
+	subProvider := &mockProvider{
+		events: []llm.StreamEvent{
+			{Type: "text", Text: `subagent result access_token=result-secret https://user:pass@example.test/path?token=result-query`},
+			{Type: "done"},
+		},
+	}
+	eng.SetSubagentEngine(tools.NewSubagentEngine(store, subProvider, "subagent", llm.ChatRequest{Model: "gpt-4"}))
+
+	agent := &BuiltinAgent{
+		Config: config.BuiltinAgent{
+			Name:          "test-agent",
+			Provider:      "openai",
+			Model:         "gpt-4",
+			MaxToolRounds: 5,
+		},
+		Provider: &mockProvider{
+			events: []llm.StreamEvent{
+				{
+					Type: "tool_call",
+					ToolCall: &llm.ToolCall{
+						ID:   "tc-spawn",
+						Name: "spawn_agent",
+						Arguments: `{
+							"task":"investigate with session_token=task-secret",
+							"context":"use Authorization: Bearer context-secret"
+						}`,
+					},
+				},
+				{Type: "done"},
+				{Type: "text", Text: "done"},
+				{Type: "done"},
+			},
+		},
+	}
+
+	var savedMessages []*model.Message
+	deps := &Deps{
+		LoadHistory: func(cid string) ([]*model.Message, error) { return nil, nil },
+		RecordTrace: func(e *model.TraceEvent) error { return nil },
+		SaveMessage: func(m *model.Message) error {
+			savedMessages = append(savedMessages, m)
+			return nil
+		},
+	}
+	rec := httptest.NewRecorder()
+	flusher := &mockFlusher{recorder: rec}
+
+	if _, err := eng.runLoop(context.Background(), agent, []llm.ChatMessage{{Role: "user", Content: "hi"}}, rec, flusher, "task-1", "ctx-1", "root-1", "", deps); err != nil {
+		t.Fatalf("runLoop failed: %v", err)
+	}
+
+	observed := strings.Join([]string{
+		rec.Body.String(),
+		store.session.Task,
+		store.session.Context,
+		store.messages,
+		store.result,
+		store.errorMsg,
+	}, "\n")
+	for _, msg := range savedMessages {
+		observed += "\n" + msg.ToolCalls + "\n" + msg.Content
+	}
+
+	for _, leaked := range []string{
+		"task-secret",
+		"context-secret",
+		"result-secret",
+		"user:pass",
+		"result-query",
+	} {
+		if strings.Contains(observed, leaked) {
+			t.Fatalf("spawn_agent UI or persistence leaked %q: %s", leaked, observed)
+		}
+	}
+	if !strings.Contains(observed, "[REDACTED]") {
+		t.Fatalf("spawn_agent UI or persistence does not contain redaction marker: %s", observed)
+	}
+	if len(subProvider.requests) != 1 {
+		t.Fatalf("subagent provider requests len = %d, want 1", len(subProvider.requests))
+	}
+	subPrompt := subProvider.requests[0].Messages[0].Content
+	if !strings.Contains(subPrompt, "task-secret") || !strings.Contains(subPrompt, "context-secret") {
+		t.Fatalf("subagent execution did not receive raw task/context: %q", subPrompt)
 	}
 }
 
