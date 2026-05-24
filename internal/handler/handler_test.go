@@ -170,6 +170,68 @@ data: {"type":"text.delta","text":"lo"}
 	}
 }
 
+func TestAgentProxyRedactsRequestBodyInSendTrace(t *testing.T) {
+	db := setupAgentProxyLineageDB(t)
+	agentServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"jsonrpc":"2.0","id":"1","result":{"message":{"role":"ROLE_AGENT","parts":[{"text":"ok"}]}}}`))
+	}))
+	defer agentServer.Close()
+
+	agentStore := svc.NewAgentStore(db)
+	registry := svc.NewAgentRegistry(agentStore)
+	if _, err := registry.RegisterAgent("secret-agent", "external", agentServer.URL, 0, nil, "", model.ContextModeContext, &model.AgentCard{
+		Name:        "secret-agent",
+		Description: "secret agent",
+		Version:     "1.0.0",
+	}); err != nil {
+		t.Fatalf("register agent: %v", err)
+	}
+	svcCtx := &svc.ServiceContext{
+		DB:             db,
+		Agents:         agentStore,
+		Tasks:          svc.NewTaskStore(db),
+		Messages:       svc.NewMessageStore(db),
+		Traces:         svc.NewTraceStore(db),
+		Registry:       registry,
+		Engine:         engine.New(),
+		BridgeRegistry: bridge.NewRegistry(),
+	}
+
+	body := `{"jsonrpc":"2.0","id":"1","method":"SendMessage","params":{"message":{"role":"ROLE_USER","parts":[{"text":"use sk-secret-value"}],"metadata":{"secret":"root-secret"}}}}`
+	req := httptest.NewRequest(http.MethodPost, "/agent/secret-agent", strings.NewReader(body))
+	req.Header.Set("X-Path-Param-Name", "secret-agent")
+	rec := httptest.NewRecorder()
+
+	NewAgentProxyHandler(svcCtx).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body=%s", rec.Code, rec.Body.String())
+	}
+
+	rows, err := db.Query(`SELECT data_json FROM traces`)
+	if err != nil {
+		t.Fatalf("query traces: %v", err)
+	}
+	defer rows.Close()
+	traceCount := 0
+	for rows.Next() {
+		traceCount++
+		var data string
+		if err := rows.Scan(&data); err != nil {
+			t.Fatalf("scan trace data: %v", err)
+		}
+		if strings.Contains(data, "sk-secret-value") || strings.Contains(data, "root-secret") {
+			t.Fatalf("trace data leaked secret: %s", data)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate traces: %v", err)
+	}
+	if traceCount == 0 {
+		t.Fatal("expected traces to be recorded")
+	}
+}
+
 func TestFreeChatCandidates(t *testing.T) {
 	members := []*model.GroupMember{
 		{ActorType: model.GroupActorAgent, ActorID: "planner", Role: "member"},

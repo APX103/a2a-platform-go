@@ -461,7 +461,7 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		EventType:     "send",
 		AgentName:     sourceAgent,
 		TargetAgent:   &name,
-		DataJson:      string(body),
+		DataJson:      safeTraceData(string(body), 4000),
 	}
 	h.svcCtx.Traces.Append(sendTrace)
 	if h.svcCtx.EventBus != nil {
@@ -594,7 +594,7 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						EventType:     "stream",
 						AgentName:     name,
 						TargetAgent:   &sourceAgent,
-						DataJson:      truncateString(data, 500),
+						DataJson:      safeTraceData(data, 500),
 					}
 					h.svcCtx.Traces.Append(streamTrace)
 					if h.svcCtx.EventBus != nil {
@@ -663,7 +663,7 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if streamErr != nil {
 			respTrace.EventType = "error"
-			respTrace.DataJson = streamErr.Error()
+			respTrace.DataJson = safeTraceData(streamErr.Error(), 1000)
 		}
 		h.svcCtx.Traces.Append(respTrace)
 		if h.svcCtx.EventBus != nil {
@@ -696,7 +696,7 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			EventType:     "response",
 			AgentName:     name,
 			TargetAgent:   &sourceAgent,
-			DataJson:      truncateString(string(respBody), 1000),
+			DataJson:      safeTraceData(string(respBody), 1000),
 		}
 		h.svcCtx.Traces.Append(respTrace)
 		if h.svcCtx.EventBus != nil {
