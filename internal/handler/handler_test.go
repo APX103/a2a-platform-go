@@ -3,6 +3,7 @@ package handler
 import (
 	"database/sql"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -304,9 +305,10 @@ data: {"type":"text.delta","text":"sk-stream-secret"}
 
 func TestAgentProxyConnectionFailureRecordsErrorTrace(t *testing.T) {
 	db := setupAgentProxyLineageDB(t)
+	closedAddr := closedLocalAddr(t)
 	agentStore := svc.NewAgentStore(db)
 	registry := svc.NewAgentRegistry(agentStore)
-	if _, err := registry.RegisterAgent("down-agent", "external", "http://127.0.0.1:1", 0, nil, "", model.ContextModeContext, &model.AgentCard{
+	if _, err := registry.RegisterAgent("down-agent", "external", "http://"+closedAddr, 0, nil, "", model.ContextModeContext, &model.AgentCard{
 		Name:        "down-agent",
 		Description: "down agent",
 		Version:     "1.0.0",
@@ -348,6 +350,53 @@ func TestAgentProxyConnectionFailureRecordsErrorTrace(t *testing.T) {
 	}
 	if errorTraceCount != 1 {
 		t.Fatalf("error trace count = %d, want 1", errorTraceCount)
+	}
+}
+
+func TestAgentProxyConnectionFailureSanitizesTraceURL(t *testing.T) {
+	db := setupAgentProxyLineageDB(t)
+	closedAddr := closedLocalAddr(t)
+	agentStore := svc.NewAgentStore(db)
+	registry := svc.NewAgentRegistry(agentStore)
+	agentURL := "http://user:pass@" + closedAddr + "?token=query-secret&safe=keep"
+	if _, err := registry.RegisterAgent("secret-down-agent", "external", agentURL, 0, nil, "", model.ContextModeContext, &model.AgentCard{
+		Name:        "secret-down-agent",
+		Description: "secret down agent",
+		Version:     "1.0.0",
+	}); err != nil {
+		t.Fatalf("register agent: %v", err)
+	}
+	svcCtx := &svc.ServiceContext{
+		DB:             db,
+		Agents:         agentStore,
+		Tasks:          svc.NewTaskStore(db),
+		Messages:       svc.NewMessageStore(db),
+		Traces:         svc.NewTraceStore(db),
+		Registry:       registry,
+		Engine:         engine.New(),
+		BridgeRegistry: bridge.NewRegistry(),
+	}
+
+	body := `{"jsonrpc":"2.0","id":"1","method":"SendMessage","params":{"message":{"role":"ROLE_USER","parts":[{"text":"hello"}]}}}`
+	req := httptest.NewRequest(http.MethodPost, "/agent/secret-down-agent", strings.NewReader(body))
+	req.Header.Set("X-Path-Param-Name", "secret-down-agent")
+	rec := httptest.NewRecorder()
+
+	NewAgentProxyHandler(svcCtx).ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502, body=%s", rec.Code, rec.Body.String())
+	}
+
+	var taskID string
+	if err := db.QueryRow(`SELECT local_task_id FROM tasks WHERE target_agent='secret-down-agent'`).Scan(&taskID); err != nil {
+		t.Fatalf("query task: %v", err)
+	}
+	var traceData string
+	if err := db.QueryRow(`SELECT data_json FROM traces WHERE task_id=? AND event_type='error' AND target_agent='secret-down-agent'`, taskID).Scan(&traceData); err != nil {
+		t.Fatalf("query error trace: %v", err)
+	}
+	if strings.Contains(traceData, "pass") || strings.Contains(traceData, "query-secret") {
+		t.Fatalf("trace data leaked secret URL data: %s", traceData)
 	}
 }
 
@@ -530,4 +579,17 @@ func setupAgentProxyLineageDB(t *testing.T) *sql.DB {
 		t.Fatalf("create schema: %v", err)
 	}
 	return db
+}
+
+func closedLocalAddr(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen on local addr: %v", err)
+	}
+	addr := ln.Addr().String()
+	if err := ln.Close(); err != nil {
+		t.Fatalf("close local listener: %v", err)
+	}
+	return addr
 }

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -384,6 +385,58 @@ func (h *AgentProxyHandler) recordProxyErrorTrace(taskId string, contextId, root
 	}
 }
 
+func sanitizeProxyTransportError(err error) string {
+	if err == nil {
+		return ""
+	}
+	var urlErr *url.Error
+	if !errors.As(err, &urlErr) {
+		return err.Error()
+	}
+
+	sanitizedURL := sanitizeProxyErrorURL(urlErr.URL)
+	switch {
+	case urlErr.Op != "" && sanitizedURL != "" && urlErr.Err != nil:
+		return fmt.Sprintf("%s %q: %v", urlErr.Op, sanitizedURL, urlErr.Err)
+	case urlErr.Op != "" && sanitizedURL != "":
+		return fmt.Sprintf("%s %q", urlErr.Op, sanitizedURL)
+	case urlErr.Op != "" && urlErr.Err != nil:
+		return fmt.Sprintf("%s: %v", urlErr.Op, urlErr.Err)
+	case urlErr.Err != nil:
+		return urlErr.Err.Error()
+	default:
+		return "proxy transport error"
+	}
+}
+
+func sanitizeProxyErrorURL(rawURL string) string {
+	if rawURL == "" {
+		return ""
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return "[invalid URL redacted]"
+	}
+	u.User = nil
+	query := u.Query()
+	for key := range query {
+		if isSensitiveProxyQueryKey(key) {
+			query.Set(key, "[redacted]")
+		}
+	}
+	u.RawQuery = query.Encode()
+	return u.String()
+}
+
+func isSensitiveProxyQueryKey(key string) bool {
+	switch strings.ToLower(key) {
+	case "token", "access_token", "admin_token", "api_key", "secret", "key", "password", "authorization":
+		return true
+	default:
+		return false
+	}
+}
+
 func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		jsonError(w, "method not allowed", 405)
@@ -565,7 +618,7 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if h.svcCtx.EventBus != nil {
 			h.svcCtx.EventBus.Task("update", taskId, name, "ERROR")
 		}
-		h.recordProxyErrorTrace(taskId, contextId, rootContextId, parentTaskId, sourceAgent, name, err.Error())
+		h.recordProxyErrorTrace(taskId, contextId, rootContextId, parentTaskId, sourceAgent, name, sanitizeProxyTransportError(err))
 		jsonError(w, "proxy failed", http.StatusBadGateway)
 		return
 	}
