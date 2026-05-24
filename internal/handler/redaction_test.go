@@ -45,6 +45,26 @@ func TestRedactSensitiveTextMasksBearerInPlainError(t *testing.T) {
 	}
 }
 
+func TestRedactSensitiveTextMasksGroupMemberTokenInJSON(t *testing.T) {
+	got := redactSensitiveText(`{"X-Group-Member-Token":"member-secret","normal":"keep-me"}`)
+	if strings.Contains(got, "member-secret") {
+		t.Fatalf("redacted text leaked group member token: %s", got)
+	}
+	if !strings.Contains(got, "keep-me") {
+		t.Fatalf("redacted text removed non-sensitive value: %s", got)
+	}
+}
+
+func TestRedactSensitiveTextMasksQuotedJSONValueWithComma(t *testing.T) {
+	got := redactSensitiveText(`{"secret":"abc,def","normal":"keep-me"}`)
+	if strings.Contains(got, "abc") || strings.Contains(got, "def") {
+		t.Fatalf("redacted text leaked comma-delimited secret: %s", got)
+	}
+	if !strings.Contains(got, "keep-me") {
+		t.Fatalf("redacted text removed non-sensitive value: %s", got)
+	}
+}
+
 func TestSafeTraceDataRedactsThenTruncates(t *testing.T) {
 	input := strings.Repeat("x", 20) + `"api_key":"sk-secret"` + strings.Repeat("y", 20)
 	got := safeTraceData(input, 32)
