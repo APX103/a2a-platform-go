@@ -1,0 +1,57 @@
+package handler
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestRedactSensitiveTextMasksKnownSecretShapes(t *testing.T) {
+	input := `{
+		"admin_token":"a2a-admin-token",
+		"api_key":"sk-live-secret",
+		"secret":"agent-secret",
+		"token":"human-token",
+		"Authorization":"Bearer member-token",
+		"X-Admin-Token":"root-token",
+		"normal":"keep-me"
+	}`
+
+	got := redactSensitiveText(input)
+
+	for _, leaked := range []string{
+		"a2a-admin-token",
+		"sk-live-secret",
+		"agent-secret",
+		"human-token",
+		"member-token",
+		"root-token",
+	} {
+		if strings.Contains(got, leaked) {
+			t.Fatalf("redacted text leaked %q: %s", leaked, got)
+		}
+	}
+	if !strings.Contains(got, "keep-me") {
+		t.Fatalf("redacted text removed non-sensitive value: %s", got)
+	}
+	if !strings.Contains(got, "[REDACTED]") {
+		t.Fatalf("redacted text does not contain marker: %s", got)
+	}
+}
+
+func TestRedactSensitiveTextMasksBearerInPlainError(t *testing.T) {
+	got := redactSensitiveText("upstream said Authorization: Bearer abc.def.ghi and X-Admin-Token: secret")
+	if strings.Contains(got, "abc.def.ghi") || strings.Contains(got, "secret") {
+		t.Fatalf("plain error leaked token: %s", got)
+	}
+}
+
+func TestSafeTraceDataRedactsThenTruncates(t *testing.T) {
+	input := strings.Repeat("x", 20) + `"api_key":"sk-secret"` + strings.Repeat("y", 20)
+	got := safeTraceData(input, 32)
+	if len(got) > 32 {
+		t.Fatalf("len = %d, want <= 32: %q", len(got), got)
+	}
+	if strings.Contains(got, "sk-secret") {
+		t.Fatalf("safe trace data leaked secret: %s", got)
+	}
+}
