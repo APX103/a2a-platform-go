@@ -8,7 +8,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -275,6 +278,65 @@ func arr(t *testing.T, data []byte) []interface{} {
 
 func auth() map[string]string {
 	return map[string]string{"X-Admin-Token": adminToken}
+}
+
+func registerStaticExternalAgent(t *testing.T, name, url string) {
+	t.Helper()
+	body := fmt.Sprintf(`{
+		"name": %q,
+		"type": "external",
+		"url": %q,
+		"context_mode": "stateless",
+		"agent_card": {
+			"name": %q,
+			"description": "Static e2e external agent",
+			"version": "1.0.0",
+			"skills": [{"id":"chat","name":"Chat","description":"General chat"}]
+		}
+	}`, name, url, name)
+	code, data := req(t, "POST", "/api/agents", body, auth())
+	expect(t, code, 200)
+	if obj(t, data)["ok"] != true {
+		t.Fatalf("register response = %s", string(data))
+	}
+	t.Cleanup(func() {
+		req(t, "DELETE", "/api/agents/"+name, "", auth())
+	})
+}
+
+func simpleA2ABody(text string) string {
+	return fmt.Sprintf(`{"jsonrpc":"2.0","id":"1","method":"SendMessage","params":{"message":{"role":"ROLE_USER","parts":[{"text":%q}]}}}`, text)
+}
+
+func uniqueName(prefix string) string {
+	return fmt.Sprintf("%s-%d", prefix, time.Now().UnixNano())
+}
+
+func newExternalAgentTestServer(t *testing.T, handler http.Handler) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "0.0.0.0:0")
+	if err != nil {
+		t.Fatalf("listen for external agent test server: %v", err)
+	}
+	server := httptest.NewUnstartedServer(handler)
+	server.Listener = listener
+	server.Start()
+	t.Cleanup(server.Close)
+
+	host := strings.TrimSpace(os.Getenv("A2A_E2E_EXTERNAL_AGENT_HOST"))
+	if host == "" {
+		host = "host.docker.internal"
+	}
+	u, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatalf("parse test server URL: %v", err)
+	}
+	_, port, err := net.SplitHostPort(u.Host)
+	if err != nil {
+		t.Fatalf("parse test server host: %v", err)
+	}
+	u.Host = net.JoinHostPort(host, port)
+	return u.String()
 }
 
 func connectedBuiltinAgents(t *testing.T, minCount int) []string {
@@ -957,6 +1019,54 @@ func TestExternalAgentCardHostingAndUpdate(t *testing.T) {
 	}
 	if agent["context_mode"] != "context" {
 		t.Fatalf("updated context mode = %v", agent["context_mode"])
+	}
+}
+
+func TestMaliciousExternalAgentInvalidJSONDoesNotCrash(t *testing.T) {
+	name := uniqueName("e2e-malicious-invalid-json")
+	agentURL := newExternalAgentTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"result":`))
+	}))
+	registerStaticExternalAgent(t, name, agentURL)
+
+	code, data := req(t, "POST", "/agent/"+name, simpleA2ABody("hello malicious invalid json"), auth())
+	if code != http.StatusOK {
+		t.Fatalf("status = %d, want upstream 200 relay, body=%s", code, string(data))
+	}
+	if strings.Contains(string(data), adminToken) {
+		t.Fatalf("response leaked admin token: %s", string(data))
+	}
+}
+
+func TestMaliciousExternalAgentBrokenSSEDoesNotHang(t *testing.T) {
+	name := uniqueName("e2e-malicious-broken-sse")
+	agentURL := newExternalAgentTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {not-json}\n\n"))
+	}))
+	registerStaticExternalAgent(t, name, agentURL)
+
+	limiter.Wait(context.Background())
+	client := &http.Client{Timeout: 5 * time.Second}
+	r, err := http.NewRequest("POST", baseURL+"/agent/"+name, strings.NewReader(simpleA2ABody("hello broken sse")))
+	if err != nil {
+		t.Fatalf("create request: %v", err)
+	}
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Accept", "text/event-stream")
+	r.Header.Set("X-Admin-Token", adminToken)
+	resp, err := client.Do(r)
+	if err != nil {
+		t.Fatalf("POST /agent/%s: %v", name, err)
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 stream relay, body=%s", resp.StatusCode, string(data))
+	}
+	if strings.Contains(string(data), adminToken) {
+		t.Fatalf("response leaked admin token: %s", string(data))
 	}
 }
 
