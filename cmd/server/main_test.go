@@ -400,6 +400,42 @@ func TestHumanAdminRoutesRequireAdminWithoutBlockingPublicAuth(t *testing.T) {
 	}
 }
 
+func TestRequiresAdminProductionEndpointMatrix(t *testing.T) {
+	tests := []struct {
+		path      string
+		method    string
+		wantAdmin bool
+	}{
+		{"/api/agents", http.MethodPost, true},
+		{"/api/agents/alpha", http.MethodPut, true},
+		{"/api/agents/alpha", http.MethodDelete, true},
+		{"/api/builtin-agents", http.MethodPost, true},
+		{"/api/builtin-agents/alpha", http.MethodPut, true},
+		{"/api/builtin-agents/alpha", http.MethodDelete, true},
+		{"/api/humans", http.MethodGet, true},
+		{"/api/humans/h1", http.MethodPut, true},
+		{"/api/tasks", http.MethodGet, true},
+		{"/api/traces", http.MethodGet, true},
+		{"/api/contexts/alpha", http.MethodGet, true},
+		{"/api/subagents/alpha", http.MethodGet, true},
+		{"/api/events", http.MethodGet, true},
+		{"/api/groups", http.MethodPost, true},
+		{"/api/groups/g1", http.MethodPut, true},
+		{"/api/groups/g1/members", http.MethodPost, true},
+		{"/api/groups/g1/invites", http.MethodGet, true},
+		{"/api/group-joins", http.MethodPost, false},
+		{"/health", http.MethodGet, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.method+" "+tt.path, func(t *testing.T) {
+			if got := requiresAdmin(tt.path, tt.method); got != tt.wantAdmin {
+				t.Fatalf("requiresAdmin(%q, %q) = %v, want %v", tt.path, tt.method, got, tt.wantAdmin)
+			}
+		})
+	}
+}
+
 func TestGroupRoute_JoinAndEventReturnOrchestration(t *testing.T) {
 	svcCtx, groupID := setupGroupRouteTestContext(t)
 
@@ -748,5 +784,46 @@ func TestAuthMiddlewareRestrictsAgentProxyToSameGroup(t *testing.T) {
 	protected.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("other agent status = %d, want 403", rec.Code)
+	}
+}
+
+func TestAuthMiddlewareRestrictsAgentCardProxyToSameGroup(t *testing.T) {
+	svcCtx, groupID := setupGroupRouteTestContext(t)
+	svcCtx.Config = &config.Config{AdminToken: "secret"}
+
+	if err := svcCtx.GroupMembers.Upsert(&model.GroupMember{
+		GroupID:   groupID,
+		ActorType: model.GroupActorHuman,
+		ActorID:   "human-route",
+		Role:      "member",
+	}); err != nil {
+		t.Fatalf("create human member: %v", err)
+	}
+	accessToken, err := svcCtx.GroupTokens.Create(&model.GroupMemberToken{
+		GroupID:   groupID,
+		ActorType: model.GroupActorHuman,
+		ActorID:   "human-route",
+	})
+	if err != nil {
+		t.Fatalf("create member token: %v", err)
+	}
+	protected := authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}), svcCtx)
+
+	req := httptest.NewRequest(http.MethodGet, "/agent/leader-agent/.well-known/agent-card.json", nil)
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	rec := httptest.NewRecorder()
+	protected.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("same group agent card status = %d, want 204", rec.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/agent/not-in-room/.well-known/agent-card.json", nil)
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	rec = httptest.NewRecorder()
+	protected.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("other agent card status = %d, want 403", rec.Code)
 	}
 }
