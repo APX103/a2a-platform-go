@@ -526,22 +526,25 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 
 		buf := make([]byte, 4096)
+		var deltaText strings.Builder
 		finalText := ""
+		streamRemainder := ""
+		var streamErr error
 		for {
 			n, err := proxyResp.Body.Read(buf)
 			if n > 0 {
 				chunk := buf[:n]
 				w.Write(chunk)
 
-				// Parse each SSE data line in the chunk and record stream traces
-				lines := strings.Split(string(chunk), "\n")
-				for _, line := range lines {
-					line = strings.TrimSpace(line)
-					if !strings.HasPrefix(line, "data:") {
-						continue
+				streamRemainder += string(chunk)
+				for {
+					frameEnd := strings.Index(streamRemainder, "\n\n")
+					if frameEnd < 0 {
+						break
 					}
-					data := strings.TrimPrefix(line, "data:")
-					data = strings.TrimSpace(data)
+					frame := streamRemainder[:frameEnd]
+					streamRemainder = streamRemainder[frameEnd+2:]
+					data := extractSSEFrameData(frame)
 					if data == "" {
 						continue
 					}
@@ -563,8 +566,9 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					}
 
 					// Try to extract meaningful text for final response
-					text := extractTextFromSSEData(data)
-					if text != "" {
+					if delta := extractTextDeltaFromSSEData(data); delta != "" {
+						deltaText.WriteString(delta)
+					} else if text := extractTextFromSSEData(data); text != "" {
 						finalText = text
 					}
 				}
@@ -572,8 +576,15 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				flusher.Flush()
 			}
 			if err != nil {
+				if err != io.EOF {
+					streamErr = err
+				}
 				break
 			}
+		}
+
+		if deltaText.Len() > 0 {
+			finalText = deltaText.String()
 		}
 
 		// Record agent response
@@ -591,6 +602,16 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				h.svcCtx.EventBus.Task("update", taskId, name, "RESPONDED")
 			}
 		}
+		finalState := "RESPONDED"
+		if streamErr != nil {
+			finalState = "ERROR"
+		}
+		if finalText == "" || streamErr != nil {
+			h.svcCtx.Tasks.Update(taskId, map[string]interface{}{"state": finalState})
+			if h.svcCtx.EventBus != nil {
+				h.svcCtx.EventBus.Task("update", taskId, name, finalState)
+			}
+		}
 		respTrace := &model.TraceEvent{
 			TaskId:        taskId,
 			ContextId:     contextId,
@@ -603,6 +624,10 @@ func (h *AgentProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if finalText == "" {
 			respTrace.DataJson = `{"text_length":0}`
+		}
+		if streamErr != nil {
+			respTrace.EventType = "error"
+			respTrace.DataJson = streamErr.Error()
 		}
 		h.svcCtx.Traces.Append(respTrace)
 		if h.svcCtx.EventBus != nil {
@@ -1034,6 +1059,29 @@ func extractTextFromSSEData(data string) string {
 		}
 	}
 	return ""
+}
+
+func extractTextDeltaFromSSEData(data string) string {
+	var evt map[string]interface{}
+	if json.Unmarshal([]byte(data), &evt) != nil {
+		return ""
+	}
+	if evt["type"] != "text.delta" {
+		return ""
+	}
+	text, _ := evt["text"].(string)
+	return text
+}
+
+func extractSSEFrameData(frame string) string {
+	dataLines := []string{}
+	for _, line := range strings.Split(frame, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "data:") {
+			dataLines = append(dataLines, strings.TrimSpace(strings.TrimPrefix(line, "data:")))
+		}
+	}
+	return strings.Join(dataLines, "\n")
 }
 
 func extractSSEText(chunk []byte) string {

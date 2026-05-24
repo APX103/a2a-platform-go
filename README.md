@@ -18,7 +18,7 @@ Go 实现的 [Agent-to-Agent (A2A)](https://github.com/google/A2A) 协议平台�
 │  └────────────────────┬─────────────────────────────────┘   │
 │                       │                                     │
 │  ┌────────────────────┴────────────────────┐                │
-│  │   SQLite (默认) / MySQL 8.0 (可选)       │                │
+│  │              MySQL 8.0                  │                │
 │  │   agents | tasks | messages | traces    │                │
 │  └─────────────────────────────────────────┘                │
 │                                                             │
@@ -48,34 +48,36 @@ Go 实现的 [Agent-to-Agent (A2A)](https://github.com/google/A2A) 协议平台�
 | **任务追踪** | 每条消息自动创建 Task，记录状态流转 |
 | **调用链追踪** | traces 表记录完整的 send → stream → response 调用链 |
 | **Admin Web UI** | 内嵌 React 管理界面，单二进制部署 |
-| **双数据库** | 默认 SQLite（零配置），可选 MySQL 8.0 |
+| **MySQL 存储** | 使用 MySQL 8.0 持久化 agents、tasks、messages、traces 等数据 |
 | **自动恢复** | 重启后从 DB 恢复已注册的 Agent 连接 |
 | **聊天界面** | 内置对话界面，支持流式响应、思维可视化、工具调用展示 |
 
 ## 快速开始
 
-### 方式一：单二进制（SQLite，推荐本地开发）
+### 方式一：Docker Compose（推荐本地开发和生产部署）
+
+```bash
+docker compose up -d --build
+curl http://localhost:18090/health
+# → {"status":"ok","db":"ok","agents_connected":0,"agents_total":0}
+```
+
+Compose 会启动 MySQL 和平台服务，数据保存在 Docker volume 中。
+
+### 方式二：单二进制连接 MySQL
 
 ```bash
 # 构建（需要 Node.js + Go 1.25+）
 make build
 
-# 启动
-./server -f etc/config-sqlite.yaml
+# 启动，配置文件里的 mysql.host 需要指向可访问的 MySQL
+./server -f /path/to/mysql-config.yaml
 
 # 访问 Admin UI
 open http://localhost:18090
 ```
 
-无需安装 MySQL，数据存储在 `./data/a2a.db`。
-
-### 方式二：Docker Compose（MySQL，推荐生产部署）
-
-```bash
-docker compose up -d
-curl http://localhost:18090/health
-# → {"status":"ok","db":"ok","agents_connected":0,"agents_total":0}
-```
+需要先准备好配置文件中指定的 MySQL 实例；Docker Compose 内的 `etc/config.yaml` 使用容器网络主机名 `mysql`。
 
 ### 创建内建 Agent
 
@@ -277,7 +279,7 @@ Task 会记录 `source_agent -> target_agent`；旧字段 `agent_name` 仍保留
 │   │   ├── http.go              # HTTP Skill 调用
 │   │   ├── cli.go               # CLI Skill 调用
 │   │   └── template.go          # {{var}} 模板渲染 + 响应提取
-│   ├── config/config.go         # YAML 配置（双数据库自动检测）
+│   ├── config/config.go         # YAML 配置（MySQL）
 │   ├── engine/engine.go         # 内建 Agent 引擎（LLM + 平台工具循环）
 │   ├── llm/                     # LLM Provider（OpenAI、Anthropic）
 │   ├── handler/
@@ -286,8 +288,8 @@ Task 会记录 `source_agent -> target_agent`；旧字段 `agent_name` 仍保留
 │   │   └── stats.go             # 统计
 │   ├── model/types.go           # 数据模型
 │   └── svc/
-│       ├── servicecontext.go    # DB 初始化（SQLite/MySQL） + 自动迁移
-│       ├── store.go             # CRUD（双方言兼容）
+│       ├── servicecontext.go    # MySQL 初始化 + 自动迁移
+│       ├── store.go             # CRUD
 │       └── registry.go          # Agent 注册表 + 心跳
 ├── web/
 │   ├── admin/                   # React 前端源码
@@ -297,8 +299,7 @@ Task 会记录 `source_agent -> target_agent`；旧字段 `agent_name` 仍保留
 ├── docs/PROJECT_MAP.md          # 项目结构与整理建议
 ├── tests/e2e/e2e_test.go        # E2E 测试（63 cases）
 ├── etc/
-│   ├── config.yaml              # MySQL 模式配置
-│   └── config-sqlite.yaml       # SQLite 模式配置
+│   └── config.yaml              # MySQL 配置
 ├── Dockerfile                   # 多阶段构建（Node + Go → Alpine）
 ├── docker-compose.yml           # MySQL + Platform
 ├── Makefile                     # build / dev / clean
@@ -337,18 +338,7 @@ VITE_API_BASE_URL=https://api.example.com npm run dev
 
 ## 配置
 
-### SQLite 模式（默认）
-
-```yaml
-name: a2a-platform
-host: 0.0.0.0
-port: 18090
-admin_token: "your-secret-token"
-```
-
-数据自动存储在 `./data/a2a.db`（WAL 模式）。
-
-### MySQL 模式
+### MySQL
 
 ```yaml
 name: a2a-platform
@@ -364,7 +354,7 @@ mysql:
   database: a2a_platform
 ```
 
-配置中有 `mysql:` 块且 `host` 非空时自动使用 MySQL。
+`mysql:` 配置是必需项。
 
 ### 内建 Agent 配置（可选）
 
@@ -390,7 +380,7 @@ builtin_agents:
 make dev    # 启动 Vite dev server on :3001，自动代理 /api 到 :18090
 
 # 后端开发
-go run ./cmd/server -f etc/config-sqlite.yaml
+go run ./cmd/server -f etc/config.yaml
 
 # 后端单元测试
 make test
@@ -407,8 +397,7 @@ go test -v ./tests/e2e/
 ## 技术栈
 
 - **Go 1.25** — 标准库 `net/http`，无框架
-- **SQLite** (modernc.org/sqlite) — 默认存储，纯 Go 无 CGO
-- **MySQL 8.0** — 可选生产存储
+- **MySQL 8.0** — 持久化存储
 - **React 19 + Vite 8 + Tailwind CSS 4** — Admin UI
 - **embed.FS** — 前端嵌入 Go 二进制
 - **Docker Compose** — 一键部署

@@ -42,7 +42,6 @@ type Deps struct {
 type BuiltinAgent struct {
 	Config   config.BuiltinAgent
 	Provider llm.Provider
-	Tools    []llm.ToolDef
 }
 
 type ToolExecutionContext struct {
@@ -97,55 +96,11 @@ func (e *Engine) RegisterAgent(cfg config.BuiltinAgent) error {
 		Provider: provider,
 	}
 
-	var allTools []llm.ToolDef
-	// Add platform tools. External tool servers are intentionally not attached
-	// here; external agents should integrate through the platform HTTP API.
-	for _, builtinTool := range tools.GetAllTools() {
-		// Convert ToolParameter to InputSchema
-		properties := make(map[string]interface{})
-		required := make([]string, 0)
-		for _, param := range builtinTool.Parameters {
-			paramType := param.Type
-			if paramType == "number" {
-				properties[param.Name] = map[string]interface{}{
-					"type": "number",
-				}
-			} else if paramType == "boolean" {
-				properties[param.Name] = map[string]interface{}{
-					"type": "boolean",
-				}
-			} else {
-				properties[param.Name] = map[string]interface{}{
-					"type": "string",
-				}
-			}
-			if param.Required {
-				required = append(required, param.Name)
-			}
-		}
-		inputSchema := map[string]interface{}{
-			"type":       "object",
-			"properties": properties,
-		}
-		if len(required) > 0 {
-			inputSchema["required"] = required
-		}
-
-		allTools = append(allTools, llm.ToolDef{
-			Name:        builtinTool.Name,
-			Description: builtinTool.Description,
-			InputSchema: inputSchema,
-			IsReadOnly:  builtinTool.IsReadOnly,
-		})
-	}
-
-	agent.Tools = allTools
-
 	e.mu.Lock()
 	e.agents[cfg.Name] = agent
 	e.mu.Unlock()
 
-	slog.Info("Registered builtin agent", "name", cfg.Name, "provider", cfg.Provider, "model", cfg.Model, "tools", len(allTools))
+	slog.Info("Registered builtin agent", "name", cfg.Name, "provider", cfg.Provider, "model", cfg.Model, "tools", len(tools.GetAllTools()))
 	return nil
 }
 
@@ -303,12 +258,13 @@ func (e *Engine) runLoop(
 		if turnCount > maxTurns {
 			return "", fmt.Errorf("max turns (%d) exceeded", maxTurns)
 		}
+		currentTools := tools.ToToolDefs(tools.GetAllTools())
 
 		req := &llm.ChatRequest{
 			Model:        cfg.Model,
 			SystemPrompt: withA2AToolGuidance(cfg.SystemPrompt),
 			Messages:     messages,
-			Tools:        agent.Tools,
+			Tools:        currentTools,
 			MaxTokens:    cfg.MaxTokens,
 		}
 
@@ -395,8 +351,8 @@ func (e *Engine) runLoop(
 		}
 
 		// Build read-only lookup from registered tools
-		toolRO := make(map[string]bool, len(agent.Tools))
-		for _, t := range agent.Tools {
+		toolRO := make(map[string]bool, len(currentTools))
+		for _, t := range currentTools {
 			toolRO[t.Name] = t.IsReadOnly
 		}
 
@@ -494,7 +450,7 @@ func (e *Engine) runLoop(
 						"tool_call_id":  tc.ID,
 					})
 
-					result, err = e.subagentEngine.Run(ctx, task, contextStr, contextId, tc.ID)
+					result, err = e.subagentEngine.RunExisting(ctx, subSession.ID, task, contextStr)
 					if err != nil {
 						result = fmt.Sprintf("Error: %s", err)
 						writeSSE(w, flusher, sseEventSubagentError, map[string]interface{}{

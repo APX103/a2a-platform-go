@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"a2a-platform/internal/model"
 )
 
 func TestExecuteReadFile(t *testing.T) {
@@ -141,6 +143,37 @@ func TestToolSearch(t *testing.T) {
 	}
 	if !strings.Contains(result, "No tools found") {
 		t.Error("Should report no tools found")
+	}
+}
+
+func TestRegisterDynamicToolsReplacesByName(t *testing.T) {
+	dynamicToolsMu.Lock()
+	original := append([]model.BuiltinTool{}, DynamicTools...)
+	DynamicTools = nil
+	dynamicToolsMu.Unlock()
+	t.Cleanup(func() {
+		dynamicToolsMu.Lock()
+		DynamicTools = original
+		dynamicToolsMu.Unlock()
+	})
+
+	RegisterDynamicTools([]model.BuiltinTool{{Name: "dynamic_test", Description: "old"}})
+	RegisterDynamicTools([]model.BuiltinTool{{Name: "dynamic_test", Description: "new"}})
+
+	all := GetAllTools()
+	count := 0
+	description := ""
+	for _, tool := range all {
+		if tool.Name == "dynamic_test" {
+			count++
+			description = tool.Description
+		}
+	}
+	if count != 1 {
+		t.Fatalf("dynamic_test count = %d, want 1", count)
+	}
+	if description != "new" {
+		t.Fatalf("description = %q, want new", description)
 	}
 }
 

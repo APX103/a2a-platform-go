@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -13,8 +12,7 @@ import (
 	"a2a-platform/internal/engine"
 	"a2a-platform/internal/model"
 	"a2a-platform/internal/svc"
-
-	_ "modernc.org/sqlite"
+	"a2a-platform/internal/testutil"
 )
 
 func TestAgentProxyRejectsInvalidJSON(t *testing.T) {
@@ -107,6 +105,68 @@ func TestResolveRootContextId_FallsBackToOriginalContextForStateless(t *testing.
 	root := resolveRootContextId(req, rpcReq, contextId, originalContextId)
 	if root == nil || *root != "ui-context" {
 		t.Fatalf("root = %v, want ui-context", root)
+	}
+}
+
+func TestAgentProxyRecordsPlatformTextDeltaSSE(t *testing.T) {
+	db := setupAgentProxyLineageDB(t)
+	agentServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher := w.(http.Flusher)
+		w.Write([]byte(`event: text.delta
+data: {"type":"text.delta","text":"hel"}
+
+event: text.delta
+data: {"type":"text.delta","text":"lo"}
+
+`))
+		flusher.Flush()
+	}))
+	defer agentServer.Close()
+
+	agentStore := svc.NewAgentStore(db)
+	registry := svc.NewAgentRegistry(agentStore)
+	if _, err := registry.RegisterAgent("delta-agent", "external", agentServer.URL, 0, nil, "", model.ContextModeContext, &model.AgentCard{
+		Name:        "delta-agent",
+		Description: "delta agent",
+		Version:     "1.0.0",
+	}); err != nil {
+		t.Fatalf("register agent: %v", err)
+	}
+	svcCtx := &svc.ServiceContext{
+		DB:             db,
+		Agents:         agentStore,
+		Tasks:          svc.NewTaskStore(db),
+		Messages:       svc.NewMessageStore(db),
+		Traces:         svc.NewTraceStore(db),
+		Registry:       registry,
+		Engine:         engine.New(),
+		BridgeRegistry: bridge.NewRegistry(),
+	}
+
+	body := `{"jsonrpc":"2.0","id":"1","method":"SendStreamingMessage","params":{"message":{"role":"ROLE_USER","parts":[{"text":"hello"}]}}}`
+	req := httptest.NewRequest(http.MethodPost, "/agent/delta-agent", strings.NewReader(body))
+	req.Header.Set("X-Path-Param-Name", "delta-agent")
+	rec := httptest.NewRecorder()
+
+	NewAgentProxyHandler(svcCtx).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body=%s", rec.Code, rec.Body.String())
+	}
+
+	var taskID, state string
+	if err := db.QueryRow(`SELECT local_task_id, state FROM tasks WHERE target_agent='delta-agent'`).Scan(&taskID, &state); err != nil {
+		t.Fatalf("query task: %v", err)
+	}
+	if state != "RESPONDED" {
+		t.Fatalf("state = %q, want RESPONDED", state)
+	}
+	var content string
+	if err := db.QueryRow(`SELECT content FROM messages WHERE task_id=? AND role='agent'`, taskID).Scan(&content); err != nil {
+		t.Fatalf("query agent message: %v", err)
+	}
+	if content != "hello" {
+		t.Fatalf("agent message = %q, want hello", content)
 	}
 }
 
@@ -226,71 +286,65 @@ func TestAgentProxyRecordsRootAndParentLineage(t *testing.T) {
 
 func setupAgentProxyLineageDB(t *testing.T) *sql.DB {
 	t.Helper()
-	dbPath := filepath.Join(t.TempDir(), "lineage.db")
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
-	t.Cleanup(func() { db.Close() })
-	svc.DBDriver = "sqlite"
+	db := testutil.TempMySQLDB(t)
 	schema := `
 	CREATE TABLE tasks (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		local_task_id TEXT NOT NULL UNIQUE,
-		server_task_id TEXT,
-		source_agent TEXT,
-		target_agent TEXT,
-		agent_name TEXT NOT NULL,
-		context_id TEXT,
-		root_context_id TEXT,
-		parent_task_id TEXT,
-		parent_tool_call_id TEXT,
-		state TEXT NOT NULL DEFAULT 'PENDING',
+		id BIGINT AUTO_INCREMENT PRIMARY KEY,
+		local_task_id VARCHAR(64) NOT NULL UNIQUE,
+		server_task_id VARCHAR(64),
+		source_agent VARCHAR(255),
+		target_agent VARCHAR(255),
+		agent_name VARCHAR(255) NOT NULL,
+		context_id VARCHAR(64),
+		root_context_id VARCHAR(64),
+		parent_task_id VARCHAR(64),
+		parent_tool_call_id VARCHAR(128),
+		state VARCHAR(32) NOT NULL DEFAULT 'PENDING',
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-	);
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 	CREATE TABLE messages (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		task_id TEXT NOT NULL,
-		context_id TEXT,
-		role TEXT NOT NULL,
-		sender_agent TEXT,
-		recipient_agent TEXT,
+		id BIGINT AUTO_INCREMENT PRIMARY KEY,
+		task_id VARCHAR(64) NOT NULL,
+		context_id VARCHAR(64),
+		role VARCHAR(16) NOT NULL,
+		sender_agent VARCHAR(255),
+		recipient_agent VARCHAR(255),
 		content TEXT,
 		reasoning_content TEXT,
-		tool_calls TEXT,
-		tool_call_id TEXT,
-		thinking_blocks TEXT,
+		tool_calls JSON,
+		tool_call_id VARCHAR(64),
+		thinking_blocks JSON,
 		timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-	);
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 	CREATE TABLE traces (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		task_id TEXT NOT NULL,
-		context_id TEXT,
-		root_context_id TEXT,
-		parent_task_id TEXT,
-		timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		event_type TEXT NOT NULL,
-		agent_name TEXT NOT NULL,
-		target_agent TEXT,
+		id BIGINT AUTO_INCREMENT PRIMARY KEY,
+		task_id VARCHAR(64) NOT NULL,
+		context_id VARCHAR(64),
+		root_context_id VARCHAR(64),
+		parent_task_id VARCHAR(64),
+		timestamp TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP(3),
+		event_type VARCHAR(32) NOT NULL,
+		agent_name VARCHAR(255) NOT NULL,
+		target_agent VARCHAR(255),
 		data_json TEXT,
-		duration_ms INTEGER
-	);
+		duration_ms BIGINT
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 	CREATE TABLE agents (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		name TEXT NOT NULL UNIQUE,
-		type TEXT NOT NULL DEFAULT '',
-		url TEXT NOT NULL DEFAULT '',
-		port INTEGER NOT NULL DEFAULT 0,
+		id BIGINT AUTO_INCREMENT PRIMARY KEY,
+		name VARCHAR(255) NOT NULL UNIQUE,
+		type VARCHAR(64) NOT NULL DEFAULT '',
+		url VARCHAR(512) NOT NULL DEFAULT '',
+		port INT NOT NULL DEFAULT 0,
 		skills_json TEXT,
-		status TEXT NOT NULL DEFAULT 'disconnected',
-		connected_at TEXT,
+		status VARCHAR(32) NOT NULL DEFAULT 'disconnected',
+		connected_at VARCHAR(64),
 		agent_card_json TEXT,
 		error_message TEXT,
-		secret TEXT NOT NULL DEFAULT '',
+		secret VARCHAR(255) NOT NULL DEFAULT '',
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-	);`
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;`
 	if _, err := db.Exec(schema); err != nil {
 		t.Fatalf("create schema: %v", err)
 	}

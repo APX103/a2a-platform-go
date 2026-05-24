@@ -26,24 +26,13 @@ func NewAgentStore(db *sql.DB) *AgentStore {
 func (s *AgentStore) Upsert(a *model.Agent) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var query string
-	if DBDriver == "mysql" {
-		query = `INSERT INTO agents (name, type, url, port, skills_json, status, connected_at, agent_card_json, error_message, secret)
+	query := `INSERT INTO agents (name, type, url, port, skills_json, status, connected_at, agent_card_json, error_message, secret)
 			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			 ON DUPLICATE KEY UPDATE
 			   type=VALUES(type), url=VALUES(url), port=VALUES(port),
 			   skills_json=VALUES(skills_json), status=VALUES(status),
 			   connected_at=VALUES(connected_at), agent_card_json=VALUES(agent_card_json),
 			   error_message=VALUES(error_message), secret=VALUES(secret)`
-	} else {
-		query = `INSERT INTO agents (name, type, url, port, skills_json, status, connected_at, agent_card_json, error_message, secret)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-			 ON CONFLICT(name) DO UPDATE SET
-			   type=excluded.type, url=excluded.url, port=excluded.port,
-			   skills_json=excluded.skills_json, status=excluded.status,
-			   connected_at=excluded.connected_at, agent_card_json=excluded.agent_card_json,
-			   error_message=excluded.error_message, secret=excluded.secret`
-	}
 	_, err := s.db.Exec(query,
 		a.Name, a.Type, a.Url, a.Port, a.SkillsJson, a.Status,
 		a.ConnectedAt, a.AgentCardJson, a.ErrorMessage, a.Secret,

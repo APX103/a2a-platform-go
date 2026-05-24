@@ -20,7 +20,6 @@
 - `web/admin`: React/Vite 管理后台源码。
 - `web`: Go embed 边界，负责嵌入前端资源。
 - `etc`: 示例运行配置。
-- `sql`: 外部数据库初始化 SQL。
 - `tests/e2e`: 黑盒测试，需要本机 `localhost:18090` 已有运行中的服务。
 
 ## 构建与测试路径
@@ -28,8 +27,8 @@
 - `make test` 运行后端单元测试，不要求先构建前端。
 - `make build` 会先构建 React，再用 `-tags frontend` 编译 Go 二进制，把真实 `web/dist` 嵌进去。
 - `go test ./tests/e2e` 不是单元测试；需要先启动平台。
-- 本地单二进制开发优先使用 `etc/config-sqlite.yaml`。
-- MySQL 形态优先使用 `docker compose up -d`。
+- 本地开发优先使用 `docker compose up -d --build`。
+- 单二进制开发使用 `etc/config.yaml` 连接 MySQL。
 
 ## 当前主要混乱点
 

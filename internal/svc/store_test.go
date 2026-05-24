@@ -1,50 +1,13 @@
 package svc
 
 import (
-	"database/sql"
-	"path/filepath"
 	"testing"
 
 	"a2a-platform/internal/model"
-
-	_ "modernc.org/sqlite"
 )
 
-func setupTestDB(t *testing.T) *sql.DB {
-	t.Helper()
-	dbPath := filepath.Join(t.TempDir(), "test.db")
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
-
-	schema := `
-	CREATE TABLE IF NOT EXISTS messages (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		task_id TEXT NOT NULL,
-		context_id TEXT,
-		role TEXT NOT NULL,
-		sender_agent TEXT,
-		recipient_agent TEXT,
-		content TEXT,
-		reasoning_content TEXT,
-		tool_calls TEXT,
-		tool_call_id TEXT,
-		thinking_blocks TEXT,
-		timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-	);
-	CREATE INDEX IF NOT EXISTS idx_messages_task_id ON messages(task_id);
-	CREATE INDEX IF NOT EXISTS idx_messages_context_id ON messages(context_id);
-	`
-	if _, err := db.Exec(schema); err != nil {
-		t.Fatalf("create schema: %v", err)
-	}
-	return db
-}
-
 func TestAppend_SavesContextAndDirection(t *testing.T) {
-	db := setupTestDB(t)
-	defer db.Close()
+	db := setupRegistryTestDB(t)
 
 	store := NewMessageStore(db)
 
@@ -87,8 +50,7 @@ func TestAppend_SavesContextAndDirection(t *testing.T) {
 
 // TestAppendWithContext_SavesContextId verifies that AppendWithContext correctly saves context_id.
 func TestAppendWithContext_SavesContextId(t *testing.T) {
-	db := setupTestDB(t)
-	defer db.Close()
+	db := setupRegistryTestDB(t)
 
 	store := NewMessageStore(db)
 
@@ -119,8 +81,7 @@ func TestAppendWithContext_SavesContextId(t *testing.T) {
 
 // TestGetByContext_ReturnsMessagesInOrder verifies message ordering by timestamp.
 func TestGetByContext_ReturnsMessagesInOrder(t *testing.T) {
-	db := setupTestDB(t)
-	defer db.Close()
+	db := setupRegistryTestDB(t)
 
 	store := NewMessageStore(db)
 	ctxId := "ctx-ordered"

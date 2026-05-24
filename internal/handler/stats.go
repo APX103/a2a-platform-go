@@ -37,9 +37,6 @@ func (h *StatsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	tasksToday := int64(0)
 	tasksPending := int64(0)
 	todayQuery := "SELECT state FROM tasks WHERE DATE(created_at) = CURDATE()"
-	if svc.DBDriver == "sqlite" {
-		todayQuery = "SELECT state FROM tasks WHERE DATE(created_at) = DATE('now')"
-	}
 	if rows, err := h.svcCtx.DB.Query(todayQuery); err == nil {
 		defer rows.Close()
 		for rows.Next() {

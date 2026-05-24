@@ -1,44 +1,36 @@
 package main
 
 import (
-	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"a2a-platform/internal/config"
 	"a2a-platform/internal/model"
 	"a2a-platform/internal/svc"
-
-	_ "modernc.org/sqlite"
+	"a2a-platform/internal/testutil"
 )
 
 func setupSubagentRouteTestContext(t *testing.T) (*svc.ServiceContext, string, string) {
 	t.Helper()
 
-	dbPath := filepath.Join(t.TempDir(), "test.db")
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
-	t.Cleanup(func() { db.Close() })
+	db := testutil.TempMySQLDB(t)
 
-	_, err = db.Exec(`CREATE TABLE subagent_sessions (
-		id TEXT PRIMARY KEY,
-		parent_context_id TEXT NOT NULL,
-		parent_tool_call_id TEXT,
+	_, err := db.Exec(`CREATE TABLE subagent_sessions (
+		id VARCHAR(36) PRIMARY KEY,
+		parent_context_id VARCHAR(36) NOT NULL,
+		parent_tool_call_id VARCHAR(64),
 		task TEXT,
 		context TEXT,
-		status TEXT NOT NULL DEFAULT 'running',
-		messages TEXT,
+		status VARCHAR(16) NOT NULL DEFAULT 'running',
+		messages JSON,
 		result TEXT,
 		error TEXT,
-		created_at TIMESTAMP,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		completed_at TIMESTAMP
-	)`)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 	if err != nil {
 		t.Fatalf("create schema: %v", err)
 	}
@@ -55,80 +47,74 @@ func setupSubagentRouteTestContext(t *testing.T) (*svc.ServiceContext, string, s
 func setupGroupRouteTestContext(t *testing.T) (*svc.ServiceContext, string) {
 	t.Helper()
 
-	dbPath := filepath.Join(t.TempDir(), "groups.db")
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
-	t.Cleanup(func() { db.Close() })
+	db := testutil.TempMySQLDB(t)
 
-	svc.DBDriver = "sqlite"
-	_, err = db.Exec(`
+	_, err := db.Exec(`
 	CREATE TABLE a2a_groups (
-		id TEXT PRIMARY KEY,
-		name TEXT NOT NULL,
+		id VARCHAR(36) PRIMARY KEY,
+		name VARCHAR(255) NOT NULL,
 		description TEXT,
-		orchestration_mode TEXT NOT NULL DEFAULT 'leader_led',
+		orchestration_mode VARCHAR(64) NOT NULL DEFAULT 'leader_led',
 		rules_json TEXT,
 		memory_policy_json TEXT,
-		status TEXT NOT NULL DEFAULT 'active',
+		status VARCHAR(32) NOT NULL DEFAULT 'active',
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-	);
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 	CREATE TABLE group_members (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		group_id TEXT NOT NULL,
-		actor_type TEXT NOT NULL,
-		actor_id TEXT NOT NULL,
-		role TEXT NOT NULL DEFAULT 'member',
+		id BIGINT AUTO_INCREMENT PRIMARY KEY,
+		group_id VARCHAR(36) NOT NULL,
+		actor_type VARCHAR(32) NOT NULL,
+		actor_id VARCHAR(255) NOT NULL,
+		role VARCHAR(64) NOT NULL DEFAULT 'member',
 		capabilities_json TEXT,
 		joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		UNIQUE(group_id, actor_type, actor_id)
-	);
+		UNIQUE KEY uniq_group_actor (group_id, actor_type, actor_id)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 	CREATE TABLE group_invites (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		group_id TEXT NOT NULL,
-		token_hash TEXT NOT NULL UNIQUE,
-		actor_type_allowed TEXT,
-		role TEXT NOT NULL DEFAULT 'member',
-		max_uses INTEGER NOT NULL DEFAULT 1,
-		used_count INTEGER NOT NULL DEFAULT 0,
-		expires_at TIMESTAMP,
-		status TEXT NOT NULL DEFAULT 'active',
+		id BIGINT AUTO_INCREMENT PRIMARY KEY,
+		group_id VARCHAR(36) NOT NULL,
+		token_hash VARCHAR(64) NOT NULL UNIQUE,
+		actor_type_allowed VARCHAR(32),
+		role VARCHAR(64) NOT NULL DEFAULT 'member',
+		max_uses INT NOT NULL DEFAULT 1,
+		used_count INT NOT NULL DEFAULT 0,
+		expires_at TIMESTAMP NULL,
+		status VARCHAR(32) NOT NULL DEFAULT 'active',
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-	);
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 	CREATE TABLE group_member_tokens (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		group_id TEXT NOT NULL,
-		actor_type TEXT NOT NULL,
-		actor_id TEXT NOT NULL,
-		token_hash TEXT NOT NULL UNIQUE,
-		expires_at TIMESTAMP,
-		revoked_at TIMESTAMP,
+		id BIGINT AUTO_INCREMENT PRIMARY KEY,
+		group_id VARCHAR(36) NOT NULL,
+		actor_type VARCHAR(32) NOT NULL,
+		actor_id VARCHAR(255) NOT NULL,
+		token_hash VARCHAR(64) NOT NULL UNIQUE,
+		expires_at TIMESTAMP NULL,
+		revoked_at TIMESTAMP NULL,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-	);
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 	CREATE TABLE group_events (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		group_id TEXT NOT NULL,
-		event_type TEXT NOT NULL,
-		sender_type TEXT NOT NULL,
-		sender_id TEXT NOT NULL,
+		id BIGINT AUTO_INCREMENT PRIMARY KEY,
+		group_id VARCHAR(36) NOT NULL,
+		event_type VARCHAR(64) NOT NULL,
+		sender_type VARCHAR(32) NOT NULL,
+		sender_id VARCHAR(255) NOT NULL,
 		content TEXT,
 		metadata_json TEXT,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-	);
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 	CREATE TABLE group_artifacts (
-		id TEXT PRIMARY KEY,
-		group_id TEXT NOT NULL,
-		name TEXT NOT NULL,
-		artifact_type TEXT NOT NULL DEFAULT 'document',
-		version INTEGER NOT NULL DEFAULT 1,
-		content TEXT,
-		status TEXT NOT NULL DEFAULT 'draft',
-		created_by TEXT,
+		id VARCHAR(36) PRIMARY KEY,
+		group_id VARCHAR(36) NOT NULL,
+		name VARCHAR(255) NOT NULL,
+		artifact_type VARCHAR(64) NOT NULL DEFAULT 'document',
+		version INT NOT NULL DEFAULT 1,
+		content MEDIUMTEXT,
+		status VARCHAR(32) NOT NULL DEFAULT 'draft',
+		created_by VARCHAR(255),
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-	);`)
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;`)
 	if err != nil {
 		t.Fatalf("create schema: %v", err)
 	}

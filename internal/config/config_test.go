@@ -14,7 +14,13 @@ func TestLoadMissingFileReturnsError(t *testing.T) {
 
 func TestLoadAppliesDefaults(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	if err := os.WriteFile(path, []byte("name: test\n"), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(`name: test
+mysql:
+  host: 127.0.0.1
+  user: root
+  password: root_secret_2024
+  database: a2a_platform
+`), 0644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 
@@ -30,5 +36,19 @@ func TestLoadAppliesDefaults(t *testing.T) {
 	}
 	if cfg.RateLimitRPS != 100 {
 		t.Fatalf("RateLimitRPS = %d, want 100", cfg.RateLimitRPS)
+	}
+	if cfg.MySQL.Port != 3306 {
+		t.Fatalf("MySQL.Port = %d, want 3306", cfg.MySQL.Port)
+	}
+}
+
+func TestLoadRequiresMySQL(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("name: test\n"), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected missing mysql config to fail")
 	}
 }

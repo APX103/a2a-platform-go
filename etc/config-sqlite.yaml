@@ -1,7 +1,0 @@
-name: a2a-platform
-host: 0.0.0.0
-port: 18090
-
-# No mysql block → SQLite mode (./data/a2a.db)
-
-admin_token: "a2a-admin-token"

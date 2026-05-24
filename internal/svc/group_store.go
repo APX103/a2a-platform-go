@@ -213,17 +213,9 @@ func (s *GroupMemberStore) Upsert(m *model.GroupMember) error {
 	if m.Role == "" {
 		m.Role = "member"
 	}
-	var query string
-	if DBDriver == "mysql" {
-		query = `INSERT INTO group_members (group_id, actor_type, actor_id, role, capabilities_json)
+	query := `INSERT INTO group_members (group_id, actor_type, actor_id, role, capabilities_json)
 			 VALUES (?, ?, ?, ?, ?)
 			 ON DUPLICATE KEY UPDATE role = VALUES(role), capabilities_json = VALUES(capabilities_json)`
-	} else {
-		query = `INSERT INTO group_members (group_id, actor_type, actor_id, role, capabilities_json)
-			 VALUES (?, ?, ?, ?, ?)
-			 ON CONFLICT(group_id, actor_type, actor_id) DO UPDATE SET
-			   role = excluded.role, capabilities_json = excluded.capabilities_json`
-	}
 	_, err := s.db.Exec(query, m.GroupID, m.ActorType, m.ActorID, m.Role, m.CapabilitiesJson)
 	if err != nil {
 		return err

@@ -23,20 +23,16 @@
 
 ## 快速开始
 
-### 最简启动（单二进制 + SQLite）
+### 最简启动（Docker Compose + MySQL）
 
 ```bash
-# 构建
-make build
-
-# 启动（无需 MySQL）
-./server -f etc/config-sqlite.yaml
+docker compose up -d --build
 
 # 打开浏览器
 open http://localhost:18090
 ```
 
-30 秒内即可使用：Admin UI 在根路径，API 在 `/api/*`。
+Compose 会启动 MySQL 和平台服务：Admin UI 在根路径，API 在 `/api/*`。
 
 ### Docker 一键启动（MySQL）
 
@@ -589,7 +585,7 @@ cors_origins:
 # 速率限制（默认 100 req/s 全局，20 req/s 每 IP）
 rate_limit_rps: 100
 
-# 数据库（可选，不配则用 SQLite）
+# 数据库（必需）
 mysql:
   host: 127.0.0.1
   port: 3306
@@ -830,14 +826,14 @@ GET /api/events
 
 ## 部署方式
 
-### 方式一：单二进制（推荐开发/小规模）
+### 方式一：单二进制连接 MySQL
 
 ```bash
 make build
-./server -f etc/config-sqlite.yaml
+./server -f /path/to/mysql-config.yaml
 ```
 
-特点：零依赖，数据在 `./data/a2a.db`，含 Admin UI。
+特点：适合连接已有 MySQL 实例，含 Admin UI。
 
 ### 方式二：Docker Compose（推荐生产）
 
@@ -895,11 +891,6 @@ server {
 - 确认 API Key 正确（检查环境变量是否加载）
 - 确认 `base_url` 正确（OpenAI: `https://api.openai.com`，Anthropic: `https://api.anthropic.com`）
 - 查看服务端日志（`docker logs a2a-platform`）
-
-### SQLite "database is locked"
-
-- SQLite 模式已启用 WAL 和 busy_timeout
-- 如果并发极高，建议切换到 MySQL
 
 ### 前端 404
 

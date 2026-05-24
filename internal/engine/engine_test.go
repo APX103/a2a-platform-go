@@ -10,6 +10,7 @@ import (
 	"a2a-platform/internal/config"
 	"a2a-platform/internal/llm"
 	"a2a-platform/internal/model"
+	"a2a-platform/internal/tools"
 )
 
 // mockProvider is a test double for llm.Provider.
@@ -178,9 +179,6 @@ func TestRunLoop_MaxRoundsExceeded_ToolExecuted(t *testing.T) {
 				{Type: "done"},
 			},
 		},
-		Tools: []llm.ToolDef{
-			{Name: "test_tool", Description: "A test tool", InputSchema: map[string]interface{}{"type": "object"}},
-		},
 	}
 
 	var callCount int
@@ -276,9 +274,6 @@ func TestRunLoop_ToolCallsWithinLimit(t *testing.T) {
 				{Type: "done"},
 			},
 		},
-		Tools: []llm.ToolDef{
-			{Name: "test_tool", Description: "A test tool", InputSchema: map[string]interface{}{"type": "object"}},
-		},
 	}
 
 	var toolExecuted bool
@@ -326,9 +321,6 @@ func TestRunLoop_PassesRootAndParentToTool(t *testing.T) {
 				{Type: "done"},
 			},
 		},
-		Tools: []llm.ToolDef{
-			{Name: "send_to_agent", Description: "Send", InputSchema: map[string]interface{}{"type": "object"}},
-		},
 	}
 
 	var got ToolExecutionContext
@@ -373,9 +365,6 @@ func TestRunLoop_EmitsToolProgressDuringLongToolCall(t *testing.T) {
 				{Type: "text", Text: "done"},
 				{Type: "done"},
 			},
-		},
-		Tools: []llm.ToolDef{
-			{Name: "send_to_agent", Description: "Send", InputSchema: map[string]interface{}{"type": "object"}},
 		},
 	}
 
@@ -445,6 +434,54 @@ func TestRunLoop_AppendsA2AToolGuidance(t *testing.T) {
 	if !strings.Contains(prompt, "A2A collaboration tool policy") || !strings.Contains(prompt, "call list_groups") {
 		t.Fatalf("system prompt missing guidance: %q", prompt)
 	}
+}
+
+func TestRunLoopUsesDynamicToolsRegisteredAfterAgent(t *testing.T) {
+	provider := &mockProvider{
+		events: []llm.StreamEvent{
+			{Type: "text", Text: "ok"},
+			{Type: "done"},
+		},
+	}
+	eng := New()
+	agent := &BuiltinAgent{
+		Config: config.BuiltinAgent{
+			Name:          "test-agent",
+			Provider:      "openai",
+			Model:         "gpt-4",
+			MaxToolRounds: 5,
+		},
+		Provider: provider,
+	}
+
+	tools.RegisterDynamicTools([]model.BuiltinTool{
+		{
+			Name:        "late_dynamic_schema_test",
+			Description: "late dynamic schema test",
+			IsReadOnly:  true,
+		},
+	})
+
+	deps := &Deps{
+		LoadHistory: func(cid string) ([]*model.Message, error) { return nil, nil },
+		RecordTrace: func(e *model.TraceEvent) error { return nil },
+		SaveMessage: func(m *model.Message) error { return nil },
+	}
+	rec := httptest.NewRecorder()
+	flusher := &mockFlusher{recorder: rec}
+
+	if _, err := eng.runLoop(context.Background(), agent, []llm.ChatMessage{{Role: "user", Content: "hi"}}, rec, flusher, "task-1", "ctx-1", "root-1", "", deps); err != nil {
+		t.Fatalf("runLoop failed: %v", err)
+	}
+	if len(provider.requests) != 1 {
+		t.Fatalf("requests len = %d, want 1", len(provider.requests))
+	}
+	for _, tool := range provider.requests[0].Tools {
+		if tool.Name == "late_dynamic_schema_test" {
+			return
+		}
+	}
+	t.Fatalf("late dynamic tool was not included in request tools")
 }
 
 // TestHandleRequest_RecordsAgentResponse verifies that agent responses are persisted.

@@ -9,8 +9,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
+	"a2a-platform/internal/llm"
 	"a2a-platform/internal/model"
 )
 
@@ -74,17 +76,81 @@ func GetBuiltinTools() []model.BuiltinTool {
 	}
 }
 
-// Tool registry for dynamic tools (spawn_agent, etc)
-var DynamicTools []model.BuiltinTool
+// Tool registry for dynamic tools (spawn_agent, etc).
+var (
+	dynamicToolsMu sync.RWMutex
+	DynamicTools   []model.BuiltinTool
+)
 
 func RegisterDynamicTools(tools []model.BuiltinTool) {
-	DynamicTools = append(DynamicTools, tools...)
+	dynamicToolsMu.Lock()
+	defer dynamicToolsMu.Unlock()
+
+	byName := make(map[string]int, len(DynamicTools)+len(tools))
+	for i, tool := range DynamicTools {
+		byName[tool.Name] = i
+	}
+	for _, tool := range tools {
+		if tool.Name == "" {
+			continue
+		}
+		if idx, ok := byName[tool.Name]; ok {
+			DynamicTools[idx] = tool
+			continue
+		}
+		byName[tool.Name] = len(DynamicTools)
+		DynamicTools = append(DynamicTools, tool)
+	}
+}
+
+func ToToolDefs(builtinTools []model.BuiltinTool) []llm.ToolDef {
+	toolDefs := make([]llm.ToolDef, 0, len(builtinTools))
+	for _, builtinTool := range builtinTools {
+		properties := make(map[string]interface{})
+		required := make([]string, 0)
+		for _, param := range builtinTool.Parameters {
+			paramType := param.Type
+			if paramType == "number" {
+				properties[param.Name] = map[string]interface{}{
+					"type": "number",
+				}
+			} else if paramType == "boolean" {
+				properties[param.Name] = map[string]interface{}{
+					"type": "boolean",
+				}
+			} else {
+				properties[param.Name] = map[string]interface{}{
+					"type": "string",
+				}
+			}
+			if param.Required {
+				required = append(required, param.Name)
+			}
+		}
+		inputSchema := map[string]interface{}{
+			"type":       "object",
+			"properties": properties,
+		}
+		if len(required) > 0 {
+			inputSchema["required"] = required
+		}
+
+		toolDefs = append(toolDefs, llm.ToolDef{
+			Name:        builtinTool.Name,
+			Description: builtinTool.Description,
+			InputSchema: inputSchema,
+			IsReadOnly:  builtinTool.IsReadOnly,
+		})
+	}
+	return toolDefs
 }
 
 func GetAllTools() []model.BuiltinTool {
 	all := append([]model.BuiltinTool{}, GetBuiltinTools()...)
 	all = append(all, GetA2ATools()...)
+	dynamicToolsMu.RLock()
 	all = append(all, DynamicTools...)
+	dynamicToolsMu.RUnlock()
 	return all
 }
 

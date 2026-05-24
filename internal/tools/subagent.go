@@ -29,12 +29,12 @@ type SubagentStore interface {
 
 // SubagentEngine handles spawning and managing subagents for isolated task execution
 type SubagentEngine struct {
-	store        SubagentStore
-	llmProvider  llm.Provider
-	agentName    string
-	agentConfig  llm.ChatRequest
-	mu           sync.Mutex
-	activeCount  int
+	store       SubagentStore
+	llmProvider llm.Provider
+	agentName   string
+	agentConfig llm.ChatRequest
+	mu          sync.Mutex
+	activeCount int
 }
 
 // Store returns the subagent store for session management
@@ -60,11 +60,29 @@ func (e *SubagentEngine) Run(
 	parentContextId string,
 	parentToolCallId string,
 ) (string, error) {
+	// Create subagent session
+	subId, err := e.store.Create(parentContextId, parentToolCallId, task, contextStr)
+	if err != nil {
+		return "", fmt.Errorf("failed to create subagent session: %w", err)
+	}
+
+	return e.RunExisting(ctx, subId.ID, task, contextStr)
+}
+
+// RunExisting executes a subagent task using an already-created session.
+func (e *SubagentEngine) RunExisting(
+	ctx context.Context,
+	sessionID string,
+	task string,
+	contextStr string,
+) (string, error) {
 	// Limit concurrent subagents
 	e.mu.Lock()
 	if e.activeCount >= 3 {
 		e.mu.Unlock()
-		return "", fmt.Errorf("too many concurrent subagents (max 3)")
+		err := fmt.Errorf("too many concurrent subagents (max 3)")
+		_ = e.store.Fail(sessionID, err.Error())
+		return "", err
 	}
 	e.activeCount++
 	e.mu.Unlock()
@@ -74,13 +92,7 @@ func (e *SubagentEngine) Run(
 		e.mu.Unlock()
 	}()
 
-	// Create subagent session
-	subId, err := e.store.Create(parentContextId, parentToolCallId, task, contextStr)
-	if err != nil {
-		return "", fmt.Errorf("failed to create subagent session: %w", err)
-	}
-
-	slog.Info("Subagent started", "id", subId, "task", task, "parent", parentContextId)
+	slog.Info("Subagent started", "id", sessionID, "task", task)
 
 	// Prepare system prompt for subagent
 	toolNames := ""
@@ -115,23 +127,23 @@ func (e *SubagentEngine) Run(
 	timeoutCtx, cancel := context.WithTimeout(ctx, subagentTimeout)
 	defer cancel()
 
-	result, err := e.runLLMLoop(timeoutCtx, messages, subId.ID)
+	result, err := e.runLLMLoop(timeoutCtx, messages, sessionID)
 
 	if err != nil {
 		// Store error result
-		slog.Error("Subagent failed", "id", subId.ID, "error", err)
-		e.store.Fail(subId.ID, err.Error())
+		slog.Error("Subagent failed", "id", sessionID, "error", err)
+		e.store.Fail(sessionID, err.Error())
 		return "", err
 	}
 
 	// Save final messages
 	messagesJSON, _ := json.Marshal(messages)
-	e.store.UpdateMessages(subId.ID, string(messagesJSON))
+	e.store.UpdateMessages(sessionID, string(messagesJSON))
 
 	// Complete session
-	e.store.Complete(subId.ID, result)
+	e.store.Complete(sessionID, result)
 
-	slog.Info("Subagent completed", "id", subId.ID, "duration", time.Since(startTime))
+	slog.Info("Subagent completed", "id", sessionID, "duration", time.Since(startTime))
 	return result, nil
 }
 
@@ -141,43 +153,7 @@ func (e *SubagentEngine) runLLMLoop(
 	sessionId string,
 ) (string, error) {
 	for round := 0; round < maxSubagentRounds; round++ {
-		// Build tools for LLM
-		var toolDefs []llm.ToolDef
-		for _, tool := range GetBuiltinTools() {
-			properties := make(map[string]interface{})
-			required := make([]string, 0)
-			for _, param := range tool.Parameters {
-				paramType := param.Type
-				if paramType == "number" {
-					properties[param.Name] = map[string]interface{}{
-						"type": "number",
-					}
-				} else if paramType == "boolean" {
-					properties[param.Name] = map[string]interface{}{
-						"type": "boolean",
-					}
-				} else {
-					properties[param.Name] = map[string]interface{}{
-						"type": "string",
-					}
-				}
-				if param.Required {
-					required = append(required, param.Name)
-				}
-			}
-			inputSchema := map[string]interface{}{
-				"type":       "object",
-				"properties": properties,
-			}
-			if len(required) > 0 {
-				inputSchema["required"] = required
-			}
-			toolDefs = append(toolDefs, llm.ToolDef{
-				Name:        tool.Name,
-				Description: tool.Description,
-				InputSchema: inputSchema,
-			})
-		}
+		toolDefs := ToToolDefs(GetBuiltinTools())
 
 		// Create LLM request
 		req := &llm.ChatRequest{

@@ -24,15 +24,8 @@ func (s *ContextStore) Create(agentName, title string) (*model.Context, error) {
 	id := uuid.New().String()
 	now := time.Now()
 
-	var query string
-	if DBDriver == "mysql" {
-		query = `INSERT INTO contexts (id, agent_name, title, message_count, created_at, updated_at)
-				VALUES (?, ?, ?, 0, ?, ?)`
-	} else {
-		query = `INSERT INTO contexts (id, agent_name, title, message_count, created_at, updated_at)
-				VALUES (?, ?, ?, 0, ?, ?)`
-	}
-
+	query := `INSERT INTO contexts (id, agent_name, title, message_count, created_at, updated_at)
+			  VALUES (?, ?, ?, 0, ?, ?)`
 	_, err := s.db.Exec(query, id, agentName, title, now, now)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create context: %w", err)
@@ -187,15 +180,8 @@ func (s *SubagentStore) Create(parentContextId, parentToolCallId, task, context 
 	id := uuid.New().String()
 	now := time.Now()
 
-	var query string
-	if DBDriver == "mysql" {
-		query = `INSERT INTO subagent_sessions (id, parent_context_id, parent_tool_call_id, task, context, status, created_at)
-				VALUES (?, ?, ?, ?, ?, 'running', ?)`
-	} else {
-		query = `INSERT INTO subagent_sessions (id, parent_context_id, parent_tool_call_id, task, context, status, created_at)
-				VALUES (?, ?, ?, ?, ?, 'running', ?)`
-	}
-
+	query := `INSERT INTO subagent_sessions (id, parent_context_id, parent_tool_call_id, task, context, status, created_at)
+			  VALUES (?, ?, ?, ?, ?, 'running', ?)`
 	_, err := s.db.Exec(query, id, parentContextId, parentToolCallId, task, context, now)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create subagent session: %w", err)

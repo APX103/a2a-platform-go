@@ -5,21 +5,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"time"
 
 	"a2a-platform/internal/bridge"
 	"a2a-platform/internal/config"
 	"a2a-platform/internal/engine"
 	"a2a-platform/internal/events"
+	"a2a-platform/internal/llm"
+	"a2a-platform/internal/model"
+	"a2a-platform/internal/tools"
 
 	_ "github.com/go-sql-driver/mysql"
-	_ "modernc.org/sqlite"
 )
-
-// DBDriver is set at init time: "mysql" or "sqlite".
-var DBDriver string
 
 type ServiceContext struct {
 	Config         *config.Config
@@ -44,8 +41,34 @@ type ServiceContext struct {
 	BridgeRegistry *bridge.BridgeRegistry
 }
 
+func (s *ServiceContext) ConfigureAuxiliaryAgentTools(cfg config.BuiltinAgent) {
+	if s == nil || s.Engine == nil {
+		return
+	}
+	var provider llm.Provider
+	switch cfg.Provider {
+	case "openai":
+		provider = llm.NewOpenAIProvider(cfg.BaseURL, cfg.APIKey)
+	case "anthropic":
+		provider = llm.NewAnthropicProvider(cfg.BaseURL, cfg.APIKey)
+	}
+	if provider == nil {
+		return
+	}
+	chatReq := llm.ChatRequest{
+		Model:     cfg.Model,
+		MaxTokens: cfg.MaxTokens,
+	}
+	se := tools.NewSubagentEngine(s.Subagents, provider, cfg.Name, chatReq)
+	s.Engine.SetSubagentEngine(se)
+	tools.RegisterDynamicTools([]model.BuiltinTool{tools.NewSpawnAgentTool(se)})
+	slog.Info("Registered spawn_agent tool", "agent", cfg.Name)
+	tools.RegisterDynamicTools(tools.NewTaskTools(s.TaskItems))
+	slog.Info("Registered task system tools", "agent", cfg.Name)
+}
+
 func NewServiceContext(c *config.Config) (*ServiceContext, error) {
-	db, err := openDB(c)
+	db, err := openMySQL(c)
 	if err != nil {
 		return nil, err
 	}
@@ -94,15 +117,10 @@ func NewServiceContext(c *config.Config) (*ServiceContext, error) {
 	}, nil
 }
 
-func openDB(c *config.Config) (*sql.DB, error) {
-	if c.IsMySQL() {
-		return openMySQL(c)
-	}
-	return openSQLite()
-}
-
 func openMySQL(c *config.Config) (*sql.DB, error) {
-	DBDriver = "mysql"
+	if c == nil || c.MySQL == nil {
+		return nil, fmt.Errorf("mysql configuration is required")
+	}
 	var db *sql.DB
 	var err error
 
@@ -134,31 +152,8 @@ func openMySQL(c *config.Config) (*sql.DB, error) {
 	return db, nil
 }
 
-func openSQLite() (*sql.DB, error) {
-	DBDriver = "sqlite"
-	dbPath := filepath.Join(".", "data", "a2a.db")
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
-		return nil, fmt.Errorf("failed to create data directory: %w", err)
-	}
-
-	db, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
-	if err != nil {
-		return nil, fmt.Errorf("failed to open SQLite: %w", err)
-	}
-	db.SetMaxOpenConns(1)
-
-	slog.Info("Connected to SQLite", "path", dbPath)
-	return db, nil
-}
-
 func migrate(db *sql.DB) {
-	var schema string
-	if DBDriver == "mysql" {
-		schema = mysqlSchema
-	} else {
-		schema = sqliteSchema
-	}
-	statements := splitStatements(schema)
+	statements := splitStatements(mysqlSchema)
 	for _, stmt := range statements {
 		if stmt == "" {
 			continue
@@ -176,23 +171,12 @@ func migrate(db *sql.DB) {
 }
 
 func ensureTaskDirectionColumns(db *sql.DB) {
-	statements := []string{}
-	if DBDriver == "mysql" {
-		statements = []string{
-			"ALTER TABLE tasks ADD COLUMN source_agent VARCHAR(255)",
-			"ALTER TABLE tasks ADD COLUMN target_agent VARCHAR(255)",
-			"UPDATE tasks SET target_agent = agent_name WHERE target_agent IS NULL OR target_agent = ''",
-			"CREATE INDEX idx_tasks_source_agent ON tasks(source_agent)",
-			"CREATE INDEX idx_tasks_target_agent ON tasks(target_agent)",
-		}
-	} else {
-		statements = []string{
-			"ALTER TABLE tasks ADD COLUMN source_agent TEXT",
-			"ALTER TABLE tasks ADD COLUMN target_agent TEXT",
-			"UPDATE tasks SET target_agent = agent_name WHERE target_agent IS NULL OR target_agent = ''",
-			"CREATE INDEX IF NOT EXISTS idx_tasks_source_agent ON tasks(source_agent)",
-			"CREATE INDEX IF NOT EXISTS idx_tasks_target_agent ON tasks(target_agent)",
-		}
+	statements := []string{
+		"ALTER TABLE tasks ADD COLUMN source_agent VARCHAR(255)",
+		"ALTER TABLE tasks ADD COLUMN target_agent VARCHAR(255)",
+		"UPDATE tasks SET target_agent = agent_name WHERE target_agent IS NULL OR target_agent = ''",
+		"CREATE INDEX idx_tasks_source_agent ON tasks(source_agent)",
+		"CREATE INDEX idx_tasks_target_agent ON tasks(target_agent)",
 	}
 	for _, stmt := range statements {
 		if _, err := db.Exec(stmt); err != nil {
@@ -202,21 +186,11 @@ func ensureTaskDirectionColumns(db *sql.DB) {
 }
 
 func ensureMessageDirectionColumns(db *sql.DB) {
-	statements := []string{}
-	if DBDriver == "mysql" {
-		statements = []string{
-			"ALTER TABLE messages ADD COLUMN sender_agent VARCHAR(255)",
-			"ALTER TABLE messages ADD COLUMN recipient_agent VARCHAR(255)",
-			"CREATE INDEX idx_messages_sender_agent ON messages(sender_agent)",
-			"CREATE INDEX idx_messages_recipient_agent ON messages(recipient_agent)",
-		}
-	} else {
-		statements = []string{
-			"ALTER TABLE messages ADD COLUMN sender_agent TEXT",
-			"ALTER TABLE messages ADD COLUMN recipient_agent TEXT",
-			"CREATE INDEX IF NOT EXISTS idx_messages_sender_agent ON messages(sender_agent)",
-			"CREATE INDEX IF NOT EXISTS idx_messages_recipient_agent ON messages(recipient_agent)",
-		}
+	statements := []string{
+		"ALTER TABLE messages ADD COLUMN sender_agent VARCHAR(255)",
+		"ALTER TABLE messages ADD COLUMN recipient_agent VARCHAR(255)",
+		"CREATE INDEX idx_messages_sender_agent ON messages(sender_agent)",
+		"CREATE INDEX idx_messages_recipient_agent ON messages(recipient_agent)",
 	}
 	for _, stmt := range statements {
 		if _, err := db.Exec(stmt); err != nil {
@@ -226,33 +200,17 @@ func ensureMessageDirectionColumns(db *sql.DB) {
 }
 
 func ensureContextLineageColumns(db *sql.DB) {
-	statements := []string{}
-	if DBDriver == "mysql" {
-		statements = []string{
-			"ALTER TABLE tasks ADD COLUMN root_context_id VARCHAR(64)",
-			"ALTER TABLE tasks ADD COLUMN parent_task_id VARCHAR(64)",
-			"ALTER TABLE tasks ADD COLUMN parent_tool_call_id VARCHAR(128)",
-			"UPDATE tasks SET root_context_id = context_id WHERE root_context_id IS NULL AND context_id IS NOT NULL",
-			"CREATE INDEX idx_tasks_root_context_id ON tasks(root_context_id)",
-			"CREATE INDEX idx_tasks_parent_task_id ON tasks(parent_task_id)",
-			"ALTER TABLE traces ADD COLUMN root_context_id VARCHAR(64)",
-			"ALTER TABLE traces ADD COLUMN parent_task_id VARCHAR(64)",
-			"UPDATE traces SET root_context_id = context_id WHERE root_context_id IS NULL AND context_id IS NOT NULL",
-			"CREATE INDEX idx_traces_root_context_id ON traces(root_context_id)",
-		}
-	} else {
-		statements = []string{
-			"ALTER TABLE tasks ADD COLUMN root_context_id TEXT",
-			"ALTER TABLE tasks ADD COLUMN parent_task_id TEXT",
-			"ALTER TABLE tasks ADD COLUMN parent_tool_call_id TEXT",
-			"UPDATE tasks SET root_context_id = context_id WHERE root_context_id IS NULL AND context_id IS NOT NULL",
-			"CREATE INDEX IF NOT EXISTS idx_tasks_root_context_id ON tasks(root_context_id)",
-			"CREATE INDEX IF NOT EXISTS idx_tasks_parent_task_id ON tasks(parent_task_id)",
-			"ALTER TABLE traces ADD COLUMN root_context_id TEXT",
-			"ALTER TABLE traces ADD COLUMN parent_task_id TEXT",
-			"UPDATE traces SET root_context_id = context_id WHERE root_context_id IS NULL AND context_id IS NOT NULL",
-			"CREATE INDEX IF NOT EXISTS idx_traces_root_context_id ON traces(root_context_id)",
-		}
+	statements := []string{
+		"ALTER TABLE tasks ADD COLUMN root_context_id VARCHAR(64)",
+		"ALTER TABLE tasks ADD COLUMN parent_task_id VARCHAR(64)",
+		"ALTER TABLE tasks ADD COLUMN parent_tool_call_id VARCHAR(128)",
+		"UPDATE tasks SET root_context_id = context_id WHERE root_context_id IS NULL AND context_id IS NOT NULL",
+		"CREATE INDEX idx_tasks_root_context_id ON tasks(root_context_id)",
+		"CREATE INDEX idx_tasks_parent_task_id ON tasks(parent_task_id)",
+		"ALTER TABLE traces ADD COLUMN root_context_id VARCHAR(64)",
+		"ALTER TABLE traces ADD COLUMN parent_task_id VARCHAR(64)",
+		"UPDATE traces SET root_context_id = context_id WHERE root_context_id IS NULL AND context_id IS NOT NULL",
+		"CREATE INDEX idx_traces_root_context_id ON traces(root_context_id)",
 	}
 	for _, stmt := range statements {
 		if _, err := db.Exec(stmt); err != nil {
@@ -784,236 +742,6 @@ CREATE TABLE IF NOT EXISTS group_artifacts (
 	INDEX idx_group_artifacts_group (group_id),
 	INDEX idx_group_artifacts_status (status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-`
-
-const sqliteSchema = `
-CREATE TABLE IF NOT EXISTS agents (
-	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	name TEXT NOT NULL UNIQUE,
-	type TEXT NOT NULL DEFAULT '',
-	url TEXT NOT NULL DEFAULT '',
-	port INTEGER NOT NULL DEFAULT 0,
-	skills_json TEXT,
-	status TEXT NOT NULL DEFAULT 'disconnected',
-	connected_at TEXT,
-	agent_card_json TEXT,
-	error_message TEXT,
-	secret TEXT NOT NULL DEFAULT '',
-	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-	updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS tasks (
-	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	local_task_id TEXT NOT NULL UNIQUE,
-	server_task_id TEXT,
-	source_agent TEXT,
-	target_agent TEXT,
-	agent_name TEXT NOT NULL,
-	context_id TEXT,
-	root_context_id TEXT,
-	parent_task_id TEXT,
-	parent_tool_call_id TEXT,
-	state TEXT NOT NULL DEFAULT 'PENDING',
-	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-	updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX IF NOT EXISTS idx_tasks_agent_name ON tasks(agent_name);
-CREATE INDEX IF NOT EXISTS idx_tasks_source_agent ON tasks(source_agent);
-CREATE INDEX IF NOT EXISTS idx_tasks_target_agent ON tasks(target_agent);
-CREATE INDEX IF NOT EXISTS idx_tasks_context_id ON tasks(context_id);
-CREATE INDEX IF NOT EXISTS idx_tasks_root_context_id ON tasks(root_context_id);
-CREATE INDEX IF NOT EXISTS idx_tasks_parent_task_id ON tasks(parent_task_id);
-CREATE INDEX IF NOT EXISTS idx_tasks_state ON tasks(state);
-
-CREATE TABLE IF NOT EXISTS messages (
-	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	task_id TEXT NOT NULL,
-	context_id TEXT,
-	role TEXT NOT NULL,
-	sender_agent TEXT,
-	recipient_agent TEXT,
-	content TEXT,
-	reasoning_content TEXT,
-	tool_calls TEXT,
-	tool_call_id TEXT,
-	thinking_blocks TEXT,
-	timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX IF NOT EXISTS idx_messages_task_id ON messages(task_id);
-CREATE INDEX IF NOT EXISTS idx_messages_context_id ON messages(context_id);
-CREATE INDEX IF NOT EXISTS idx_messages_sender_agent ON messages(sender_agent);
-CREATE INDEX IF NOT EXISTS idx_messages_recipient_agent ON messages(recipient_agent);
-
-CREATE TABLE IF NOT EXISTS traces (
-	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	task_id TEXT NOT NULL,
-	context_id TEXT,
-	root_context_id TEXT,
-	parent_task_id TEXT,
-	timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-	event_type TEXT NOT NULL,
-	agent_name TEXT NOT NULL,
-	target_agent TEXT,
-	data_json TEXT,
-	duration_ms INTEGER
-);
-
-CREATE INDEX IF NOT EXISTS idx_traces_task_id ON traces(task_id);
-CREATE INDEX IF NOT EXISTS idx_traces_root_context_id ON traces(root_context_id);
-CREATE INDEX IF NOT EXISTS idx_traces_agent_name ON traces(agent_name);
-
-CREATE TABLE IF NOT EXISTS contexts (
-	id TEXT PRIMARY KEY,
-	agent_name TEXT NOT NULL,
-	title TEXT,
-	message_count INTEGER DEFAULT 0,
-	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-	updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX IF NOT EXISTS idx_contexts_agent_name ON contexts(agent_name);
-CREATE INDEX IF NOT EXISTS idx_contexts_updated_at ON contexts(updated_at);
-
-CREATE TABLE IF NOT EXISTS subagent_sessions (
-	id TEXT PRIMARY KEY,
-	parent_context_id TEXT NOT NULL,
-	parent_tool_call_id TEXT,
-	task TEXT,
-	context TEXT,
-	status TEXT NOT NULL DEFAULT 'running',
-	messages TEXT,
-	result TEXT,
-	error TEXT,
-	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-	completed_at TIMESTAMP
-);
-
-CREATE INDEX IF NOT EXISTS idx_subagent_parent ON subagent_sessions(parent_context_id);
-CREATE INDEX IF NOT EXISTS idx_subagent_status ON subagent_sessions(status);
-
-CREATE TABLE IF NOT EXISTS task_items (
-	id TEXT PRIMARY KEY,
-	context_id TEXT NOT NULL,
-	subject TEXT NOT NULL,
-	description TEXT,
-	status TEXT NOT NULL DEFAULT 'pending',
-	owner TEXT,
-	blocked_by TEXT,
-	result TEXT,
-	error TEXT,
-	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-	completed_at TIMESTAMP
-);
-
-CREATE INDEX IF NOT EXISTS idx_task_items_context ON task_items(context_id);
-CREATE INDEX IF NOT EXISTS idx_task_items_status ON task_items(status);
-
-CREATE TABLE IF NOT EXISTS builtin_agents (
-	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	name TEXT NOT NULL UNIQUE,
-	provider TEXT NOT NULL,
-	base_url TEXT,
-	api_key TEXT,
-	model TEXT NOT NULL,
-	description TEXT,
-	system_prompt TEXT,
-	max_tokens INTEGER DEFAULT 4096,
-	max_tool_rounds INTEGER DEFAULT 10,
-	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-	updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS a2a_groups (
-	id TEXT PRIMARY KEY,
-	name TEXT NOT NULL,
-	description TEXT,
-	orchestration_mode TEXT NOT NULL DEFAULT 'leader_led',
-	rules_json TEXT,
-	memory_policy_json TEXT,
-	status TEXT NOT NULL DEFAULT 'active',
-	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-	updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX IF NOT EXISTS idx_groups_status ON a2a_groups(status);
-CREATE INDEX IF NOT EXISTS idx_groups_mode ON a2a_groups(orchestration_mode);
-
-CREATE TABLE IF NOT EXISTS group_members (
-	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	group_id TEXT NOT NULL,
-	actor_type TEXT NOT NULL,
-	actor_id TEXT NOT NULL,
-	role TEXT NOT NULL DEFAULT 'member',
-	capabilities_json TEXT,
-	joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-	UNIQUE(group_id, actor_type, actor_id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_group_members_group ON group_members(group_id);
-CREATE INDEX IF NOT EXISTS idx_group_members_actor ON group_members(actor_type, actor_id);
-
-CREATE TABLE IF NOT EXISTS group_invites (
-	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	group_id TEXT NOT NULL,
-	token_hash TEXT NOT NULL UNIQUE,
-	actor_type_allowed TEXT,
-	role TEXT NOT NULL DEFAULT 'member',
-	max_uses INTEGER NOT NULL DEFAULT 1,
-	used_count INTEGER NOT NULL DEFAULT 0,
-	expires_at TIMESTAMP,
-	status TEXT NOT NULL DEFAULT 'active',
-	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX IF NOT EXISTS idx_group_invites_group ON group_invites(group_id);
-CREATE INDEX IF NOT EXISTS idx_group_invites_status ON group_invites(status);
-
-CREATE TABLE IF NOT EXISTS group_member_tokens (
-	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	group_id TEXT NOT NULL,
-	actor_type TEXT NOT NULL,
-	actor_id TEXT NOT NULL,
-	token_hash TEXT NOT NULL UNIQUE,
-	expires_at TIMESTAMP,
-	revoked_at TIMESTAMP,
-	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX IF NOT EXISTS idx_group_member_tokens_group ON group_member_tokens(group_id);
-CREATE INDEX IF NOT EXISTS idx_group_member_tokens_actor ON group_member_tokens(actor_type, actor_id);
-
-CREATE TABLE IF NOT EXISTS group_events (
-	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	group_id TEXT NOT NULL,
-	event_type TEXT NOT NULL,
-	sender_type TEXT NOT NULL,
-	sender_id TEXT NOT NULL,
-	content TEXT,
-	metadata_json TEXT,
-	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX IF NOT EXISTS idx_group_events_group ON group_events(group_id, created_at);
-CREATE INDEX IF NOT EXISTS idx_group_events_type ON group_events(event_type);
-
-CREATE TABLE IF NOT EXISTS group_artifacts (
-	id TEXT PRIMARY KEY,
-	group_id TEXT NOT NULL,
-	name TEXT NOT NULL,
-	artifact_type TEXT NOT NULL DEFAULT 'document',
-	version INTEGER NOT NULL DEFAULT 1,
-	content TEXT,
-	status TEXT NOT NULL DEFAULT 'draft',
-	created_by TEXT,
-	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-	updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX IF NOT EXISTS idx_group_artifacts_group ON group_artifacts(group_id);
-CREATE INDEX IF NOT EXISTS idx_group_artifacts_status ON group_artifacts(status);
 `
 
 func splitStatements(schema string) []string {

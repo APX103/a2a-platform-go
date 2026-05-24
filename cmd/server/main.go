@@ -20,7 +20,6 @@ import (
 	"a2a-platform/internal/bridge"
 	"a2a-platform/internal/config"
 	"a2a-platform/internal/handler"
-	"a2a-platform/internal/llm"
 	"a2a-platform/internal/model"
 	"a2a-platform/internal/svc"
 	"a2a-platform/internal/tools"
@@ -65,6 +64,7 @@ func main() {
 			slog.Error("Failed to register builtin agent", "name", agentCfg.Name, "error", err)
 			continue
 		}
+		svcCtx.ConfigureAuxiliaryAgentTools(agentCfg)
 		if err := svcCtx.Registry.RegisterBuiltinAgent(agentCfg.Name, agentCfg.Description, nil); err != nil {
 			slog.Error("Failed to persist builtin agent", "name", agentCfg.Name, "error", err)
 		}
@@ -880,6 +880,8 @@ func loadBuiltinAgents(svcCtx *svc.ServiceContext) {
 		return
 	}
 
+	svcCtx.ConfigureAuxiliaryAgentTools(agents[0].ToConfig())
+
 	registered := 0
 	for _, agent := range agents {
 		cfg := agent.ToConfig()
@@ -891,30 +893,4 @@ func loadBuiltinAgents(svcCtx *svc.ServiceContext) {
 		registered++
 	}
 	slog.Info("Loaded builtin agents from database", "count", registered, "total", len(agents))
-
-	// Set up subagent engine using the first agent's provider config
-	if len(agents) > 0 && svcCtx.Engine != nil {
-		cfg := agents[0].ToConfig()
-		var provider llm.Provider
-		switch cfg.Provider {
-		case "openai":
-			provider = llm.NewOpenAIProvider(cfg.BaseURL, cfg.APIKey)
-		case "anthropic":
-			provider = llm.NewAnthropicProvider(cfg.BaseURL, cfg.APIKey)
-		}
-		if provider != nil {
-			chatReq := llm.ChatRequest{
-				Model:     cfg.Model,
-				MaxTokens: cfg.MaxTokens,
-			}
-			se := tools.NewSubagentEngine(svcCtx.Subagents, provider, cfg.Name, chatReq)
-			svcCtx.Engine.SetSubagentEngine(se)
-			// Register spawn_agent as a dynamic tool
-			tools.RegisterDynamicTools([]model.BuiltinTool{tools.NewSpawnAgentTool(se)})
-			slog.Info("Registered spawn_agent tool", "agent", cfg.Name)
-			// Register Task System tools
-			tools.RegisterDynamicTools(tools.NewTaskTools(svcCtx.TaskItems))
-			slog.Info("Registered task system tools", "agent", cfg.Name)
-		}
-	}
 }

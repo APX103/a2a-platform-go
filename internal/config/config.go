@@ -71,10 +71,6 @@ type ResponseExtract struct {
 	Raw  bool   `yaml:"raw" json:"raw,omitempty"`
 }
 
-func (c *Config) IsMySQL() bool {
-	return c.MySQL != nil && c.MySQL.Host != ""
-}
-
 type MySQL struct {
 	Host     string `yaml:"host"`
 	Port     int    `yaml:"port"`
@@ -126,13 +122,17 @@ func Load(path string) (*Config, error) {
 	if c.Port == 0 {
 		c.Port = 18090
 	}
-	if c.MySQL != nil {
-		if c.MySQL.MaxIdle == 0 {
-			c.MySQL.MaxIdle = 10
-		}
-		if c.MySQL.MaxOpen == 0 {
-			c.MySQL.MaxOpen = 100
-		}
+	if c.MySQL == nil || c.MySQL.Host == "" {
+		return nil, fmt.Errorf("mysql configuration is required")
+	}
+	if c.MySQL.Port == 0 {
+		c.MySQL.Port = 3306
+	}
+	if c.MySQL.MaxIdle == 0 {
+		c.MySQL.MaxIdle = 10
+	}
+	if c.MySQL.MaxOpen == 0 {
+		c.MySQL.MaxOpen = 100
 	}
 	if len(c.CorsOrigins) == 0 {
 		c.CorsOrigins = []string{"*"}

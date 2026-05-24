@@ -50,14 +50,8 @@ func (b *BuiltinAgent) ToConfig() config.BuiltinAgent {
 
 // Create saves a new builtin agent.
 func (s *BuiltinAgentStore) Create(cfg config.BuiltinAgent) (*BuiltinAgent, error) {
-	var query string
-	if DBDriver == "mysql" {
-		query = `INSERT INTO builtin_agents (name, provider, base_url, api_key, model, description, system_prompt, max_tokens, max_tool_rounds)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-	} else {
-		query = `INSERT INTO builtin_agents (name, provider, base_url, api_key, model, description, system_prompt, max_tokens, max_tool_rounds)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-	}
+	query := `INSERT INTO builtin_agents (name, provider, base_url, api_key, model, description, system_prompt, max_tokens, max_tool_rounds)
+			  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	now := time.Now()
 	res, err := s.db.Exec(query,
@@ -67,13 +61,7 @@ func (s *BuiltinAgentStore) Create(cfg config.BuiltinAgent) (*BuiltinAgent, erro
 		return nil, fmt.Errorf("failed to create builtin agent: %w", err)
 	}
 
-	var id int64
-	if DBDriver == "mysql" {
-		id, _ = res.LastInsertId()
-	} else {
-		// SQLite
-		id, _ = res.LastInsertId()
-	}
+	id, _ := res.LastInsertId()
 
 	return &BuiltinAgent{
 		ID:            id,

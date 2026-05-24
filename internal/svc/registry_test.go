@@ -3,24 +3,16 @@ package svc
 import (
 	"database/sql"
 	"encoding/json"
-	"path/filepath"
 	"testing"
 
 	"a2a-platform/internal/model"
-
-	_ "modernc.org/sqlite"
+	"a2a-platform/internal/testutil"
 )
 
 func setupRegistryTestDB(t *testing.T) *sql.DB {
 	t.Helper()
-	dbPath := filepath.Join(t.TempDir(), "registry.db")
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
-	DBDriver = "sqlite"
+	db := testutil.TempMySQLDB(t)
 	migrate(db)
-	t.Cleanup(func() { db.Close() })
 	return db
 }
 
