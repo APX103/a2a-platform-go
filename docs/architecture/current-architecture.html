@@ -382,7 +382,7 @@ flowchart LR
           <tr><td>HTTP Handler</td><td>Agent CRUD、A2A 代理、Task/Trace/Context/Subagent、Group API、Stats、Events。</td><td><code>internal/handler/*.go</code></td></tr>
           <tr><td>Engine</td><td>内置 Agent LLM 调用循环、带超时/取消传播的工具调用、SSE 输出、消息与 trace 持久化。</td><td><code>internal/engine/engine.go</code></td></tr>
           <tr><td>Tools</td><td>文件/HTTP/目录工具、A2A 平台工具、spawn_agent、task item 动态工具；工具定义保留 <code>Execute</code>，可选实现 <code>ExecuteContext</code> 接收 Engine 传入的取消 context。</td><td><code>internal/tools/*.go</code></td></tr>
-          <tr><td>Bridge</td><td>把配置化 skill 映射到 HTTP 或 CLI 调用，再包装成 A2A SSE 响应。</td><td><code>internal/bridge/*.go</code></td></tr>
+          <tr><td>Bridge</td><td>把配置化 skill 映射到 HTTP 或 CLI 调用，再包装成 A2A SSE 响应；HTTP Bridge 只允许带 Host 的 <code>http</code>/<code>https</code> URL 并使用单次调用超时，CLI Bridge 保留面向可信 operator 配置的 shell 执行模式但把返回 stdout 限制在 1MiB。</td><td><code>internal/bridge/*.go</code></td></tr>
           <tr><td>Admin UI</td><td>先通过纯前端 Admin token 登录门禁；通过后管理 Agent、Human 身份资料与在线状态；Agents/Humans 列表可进入详情页查看 token 管理、资料修改和删除动作；同时管理 Builtin Agent、Task、Trace、Context Chat、Group 和 Artifact。</td><td><code>web/admin/src</code></td></tr>
           <tr><td>Human Client</td><td>通过 invite token 加入 group，以 member token 读取房间、发消息、看产物。</td><td><code>apps/human-client/src</code></td></tr>
         </tbody>
@@ -993,7 +993,7 @@ flowchart TD
         <article class="tile accent-blue"><b>安全边界</b><p>Admin token 管理全局资源；member token 只能访问所属 group，并且调用 Agent 或读取其代理 AgentCard 时要求目标 Agent 是同 group 成员；成员删除边界由 authMiddleware 注入的 trusted principal 判定，member 只能删除自己。</p></article>
         <article class="tile accent-coral"><b>观测边界</b><p>Task/message/trace 是所有调用的主审计链路；代理、内置工具调用和子代理会话持久化前会脱敏已知 token/API key/secret 字段、URL 凭据和敏感 query 参数。内置工具/子代理执行仍使用原始值，UI 事件、消息历史和 subagent session 写入脱敏副本；外部代理响应和 SSE 字节按协议透传。</p></article>
         <article class="tile accent-green"><b>工具边界</b><p>工具注册是全局的。内置 Agent 获取基础工具、A2A 平台工具和动态工具；只读工具会并行预执行，写工具串行执行。</p></article>
-        <article class="tile accent-gold"><b>Bridge 边界</b><p>Bridge Agent 是进程内适配器，不是外部常驻连接。它按 skill 选择 HTTP/CLI target，并包装成 A2A SSE。</p></article>
+        <article class="tile accent-gold"><b>Bridge 边界</b><p>Bridge Agent 是进程内适配器，不是外部常驻连接。它按 skill 选择 HTTP/CLI target，并包装成 A2A SSE；HTTP target 限定 <code>http</code>/<code>https</code>，CLI target 属于可信 operator 配置且返回 stdout 有 1MiB 上限。</p></article>
       </div>
 
       <h3>A2A 完整兼容性缺口</h3>
