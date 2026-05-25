@@ -230,29 +230,7 @@ func (s *GroupMemberStore) Upsert(m *model.GroupMember) error {
 }
 
 func (s *GroupMemberStore) List(groupID string) ([]*model.GroupMember, error) {
-	rows, err := s.db.Query(
-		`SELECT id, group_id, actor_type, actor_id, role, capabilities_json, joined_at
-		 FROM group_members WHERE group_id = ? ORDER BY role, actor_type, actor_id`,
-		groupID,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var result []*model.GroupMember
-	for rows.Next() {
-		var m model.GroupMember
-		var capabilities sql.NullString
-		if err := rows.Scan(&m.ID, &m.GroupID, &m.ActorType, &m.ActorID, &m.Role, &capabilities, &m.JoinedAt); err != nil {
-			return nil, err
-		}
-		if capabilities.Valid {
-			m.CapabilitiesJson = capabilities.String
-		}
-		result = append(result, &m)
-	}
-	return result, rows.Err()
+	return listGroupMembers(s.db, groupID)
 }
 
 func (s *GroupMemberStore) Get(groupID, actorType, actorID string) (*model.GroupMember, error) {
@@ -357,10 +335,10 @@ func (s *GroupInviteStore) Consume(id int64) error {
 	return consumeInvite(s.db, id)
 }
 
-func (s *GroupInviteStore) ConsumeAndCreateMemberToken(id int64, member *model.GroupMember, token *model.GroupMemberToken) (string, error) {
+func (s *GroupInviteStore) ConsumeAndCreateMemberToken(id int64, member *model.GroupMember, token *model.GroupMemberToken) (string, []*model.GroupMember, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	committed := false
 	defer func() {
@@ -370,7 +348,7 @@ func (s *GroupInviteStore) ConsumeAndCreateMemberToken(id int64, member *model.G
 	}()
 
 	if err := consumeInvite(tx, id); err != nil {
-		return "", err
+		return "", nil, err
 	}
 
 	member.ActorType = NormalizeActorType(member.ActorType)
@@ -384,7 +362,7 @@ func (s *GroupInviteStore) ConsumeAndCreateMemberToken(id int64, member *model.G
 		 ON DUPLICATE KEY UPDATE role = VALUES(role), capabilities_json = VALUES(capabilities_json)`,
 		member.GroupID, member.ActorType, member.ActorID, member.Role, member.CapabilitiesJson,
 	); err != nil {
-		return "", err
+		return "", nil, err
 	}
 	var capabilities sql.NullString
 	if err := tx.QueryRow(
@@ -392,10 +370,15 @@ func (s *GroupInviteStore) ConsumeAndCreateMemberToken(id int64, member *model.G
 		 FROM group_members WHERE group_id = ? AND actor_type = ? AND actor_id = ?`,
 		member.GroupID, member.ActorType, member.ActorID,
 	).Scan(&member.ID, &member.GroupID, &member.ActorType, &member.ActorID, &member.Role, &capabilities, &member.JoinedAt); err != nil {
-		return "", err
+		return "", nil, err
 	}
 	if capabilities.Valid {
 		member.CapabilitiesJson = capabilities.String
+	}
+
+	members, err := listGroupMembers(tx, member.GroupID)
+	if err != nil {
+		return "", nil, err
 	}
 
 	token.GroupID = strings.TrimSpace(token.GroupID)
@@ -403,7 +386,7 @@ func (s *GroupInviteStore) ConsumeAndCreateMemberToken(id int64, member *model.G
 	token.ActorID = strings.TrimSpace(token.ActorID)
 	plain, err := NewAccessToken()
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	token.TokenHash = HashAccessToken(plain)
 	res, err := tx.Exec(
@@ -412,20 +395,50 @@ func (s *GroupInviteStore) ConsumeAndCreateMemberToken(id int64, member *model.G
 		token.GroupID, token.ActorType, token.ActorID, token.TokenHash, token.ExpiresAt, token.RevokedAt,
 	)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	if token.ID, err = res.LastInsertId(); err != nil {
-		return "", err
+		return "", nil, err
 	}
 	if err := tx.Commit(); err != nil {
-		return "", err
+		return "", nil, err
 	}
 	committed = true
-	return plain, nil
+	return plain, members, nil
 }
 
 type inviteExecer interface {
 	Exec(query string, args ...interface{}) (sql.Result, error)
+}
+
+type memberQuerier interface {
+	Query(query string, args ...interface{}) (*sql.Rows, error)
+}
+
+func listGroupMembers(queryer memberQuerier, groupID string) ([]*model.GroupMember, error) {
+	rows, err := queryer.Query(
+		`SELECT id, group_id, actor_type, actor_id, role, capabilities_json, joined_at
+		 FROM group_members WHERE group_id = ? ORDER BY role, actor_type, actor_id`,
+		groupID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []*model.GroupMember
+	for rows.Next() {
+		var m model.GroupMember
+		var capabilities sql.NullString
+		if err := rows.Scan(&m.ID, &m.GroupID, &m.ActorType, &m.ActorID, &m.Role, &capabilities, &m.JoinedAt); err != nil {
+			return nil, err
+		}
+		if capabilities.Valid {
+			m.CapabilitiesJson = capabilities.String
+		}
+		result = append(result, &m)
+	}
+	return result, rows.Err()
 }
 
 func consumeInvite(exec inviteExecer, id int64) error {

@@ -147,3 +147,60 @@ func TestGroupInviteConsumeRespectsMaxUses(t *testing.T) {
 		t.Fatalf("second consume error = %v, want ErrInviteNotUsable", err)
 	}
 }
+
+func TestGroupInviteConsumeAndCreateMemberTokenReturnsMembersForResponse(t *testing.T) {
+	db := setupRegistryTestDB(t)
+	groups := NewGroupStore(db)
+	invites := NewGroupInviteStore(db)
+	tokens := NewGroupMemberTokenStore(db)
+
+	group := &model.Group{Name: "response group", OrchestrationMode: model.GroupModeLeaderLed}
+	if err := groups.Create(group); err != nil {
+		t.Fatalf("create group: %v", err)
+	}
+	invite := &model.GroupInvite{
+		GroupID: group.ID,
+		Role:    "member",
+		MaxUses: 1,
+		Status:  model.GroupStatusActive,
+	}
+	inviteToken, err := invites.Create(invite)
+	if err != nil {
+		t.Fatalf("create invite: %v", err)
+	}
+	loaded, err := invites.GetByToken(inviteToken)
+	if err != nil {
+		t.Fatalf("load invite: %v", err)
+	}
+	member := &model.GroupMember{
+		GroupID:   group.ID,
+		ActorType: model.GroupActorHuman,
+		ActorID:   "response-human",
+		Role:      "member",
+	}
+
+	accessToken, members, err := invites.ConsumeAndCreateMemberToken(loaded.ID, member, &model.GroupMemberToken{
+		GroupID:   group.ID,
+		ActorType: model.GroupActorHuman,
+		ActorID:   "response-human",
+	})
+	if err != nil {
+		t.Fatalf("consume and create token: %v", err)
+	}
+	if accessToken == "" {
+		t.Fatal("access token was empty")
+	}
+	if member.ID == 0 {
+		t.Fatalf("member was not refreshed: %#v", member)
+	}
+	if len(members) != 1 || members[0].ActorID != "response-human" {
+		t.Fatalf("members = %#v, want joined member", members)
+	}
+	storedToken, err := tokens.GetByToken(accessToken)
+	if err != nil {
+		t.Fatalf("load member token: %v", err)
+	}
+	if storedToken == nil || storedToken.ActorID != "response-human" {
+		t.Fatalf("stored token = %#v, want response-human token", storedToken)
+	}
+}

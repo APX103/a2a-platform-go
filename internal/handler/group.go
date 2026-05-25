@@ -389,17 +389,12 @@ func (h *GroupJoinByInviteHandler) ServeHTTP(w http.ResponseWriter, r *http.Requ
 		member.CapabilitiesJson = mergeHumanCapabilities(req.Capabilities, human)
 	}
 	memberToken := &model.GroupMemberToken{GroupID: group.ID, ActorType: actorType, ActorID: actorID}
-	accessToken, err := h.svcCtx.GroupInvites.ConsumeAndCreateMemberToken(invite.ID, member, memberToken)
+	accessToken, members, err := h.svcCtx.GroupInvites.ConsumeAndCreateMemberToken(invite.ID, member, memberToken)
 	if err != nil {
 		if errors.Is(err, svc.ErrInviteNotUsable) {
 			jsonError(w, "invalid invite token", http.StatusForbidden)
 			return
 		}
-		errHTTP(w, err)
-		return
-	}
-	members, err := h.svcCtx.GroupMembers.List(group.ID)
-	if err != nil {
 		errHTTP(w, err)
 		return
 	}
