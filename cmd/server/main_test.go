@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"a2a-platform/internal/config"
 	"a2a-platform/internal/handler"
@@ -13,6 +15,65 @@ import (
 	"a2a-platform/internal/svc"
 	"a2a-platform/internal/testutil"
 )
+
+type testShutdownServer struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (s *testShutdownServer) Shutdown(ctx context.Context) error {
+	close(s.started)
+	select {
+	case <-s.release:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+type testServiceCloser struct {
+	closed chan struct{}
+}
+
+func (c *testServiceCloser) Close() error {
+	close(c.closed)
+	return nil
+}
+
+func TestRunGracefulShutdownClosesServiceAfterHTTPShutdownCompletes(t *testing.T) {
+	server := &testShutdownServer{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	closer := &testServiceCloser{closed: make(chan struct{})}
+	done := make(chan struct{})
+
+	go func() {
+		runGracefulShutdown(server, closer, time.Second)
+		close(done)
+	}()
+
+	<-server.started
+	select {
+	case <-closer.closed:
+		t.Fatal("service context closed before HTTP shutdown completed")
+	default:
+	}
+
+	close(server.release)
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("graceful shutdown did not finish")
+	}
+
+	select {
+	case <-closer.closed:
+	default:
+		t.Fatal("service context was not closed after HTTP shutdown completed")
+	}
+}
 
 func setupSubagentRouteTestContext(t *testing.T) (*svc.ServiceContext, string, string) {
 	t.Helper()

@@ -411,7 +411,7 @@ flowchart TB
       <h2>3. 关键流程</h2>
 
       <h3>3.1 服务启动流程</h3>
-      <p>启动时服务先建立 MySQL 连接并迁移 schema，然后恢复 Agent 连接状态，注册配置里的 builtin/bridge Agent，启动 Registry 后台健康检查，最后挂载 API 和 Admin SPA。收到 SIGINT/SIGTERM 后，服务会先用 10 秒超时关闭 HTTP server，再通过 <code>ServiceContext.Close()</code> 停止健康检查并关闭 MySQL。</p>
+      <p>启动时服务先建立 MySQL 连接并迁移 schema，然后恢复 Agent 连接状态，注册配置里的 builtin/bridge Agent，启动 Registry 后台健康检查，最后挂载 API 和 Admin SPA。收到 SIGINT/SIGTERM 后，服务会先用 10 秒超时关闭 HTTP server，再通过 <code>ServiceContext.Close()</code> 停止健康检查并关闭 MySQL；主流程会等待这些清理完成后再记录服务已停止并退出。</p>
       <div class="diagram">
         <p class="diagram-title">启动流程</p>
         <pre class="mermaid">

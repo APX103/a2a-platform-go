@@ -182,19 +182,14 @@ func main() {
 	}
 
 	// Graceful shutdown
+	shutdownDone := make(chan struct{})
 	go func() {
+		defer close(shutdownDone)
 		sigCh := make(chan os.Signal, 1)
 		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+		defer signal.Stop(sigCh)
 		<-sigCh
-		slog.Info("Shutting down...")
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := server.Shutdown(ctx); err != nil {
-			slog.Error("HTTP server shutdown failed", "error", err)
-		}
-		if err := svcCtx.Close(); err != nil {
-			slog.Error("Service context close failed", "error", err)
-		}
+		runGracefulShutdown(server, svcCtx, 10*time.Second)
 	}()
 
 	// Load and register builtin agents from database
@@ -207,7 +202,30 @@ func main() {
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("Server error: %v", err)
 	}
+	<-shutdownDone
 	slog.Info("Server stopped.")
+}
+
+type gracefulShutdownServer interface {
+	Shutdown(context.Context) error
+}
+
+type serviceCloser interface {
+	Close() error
+}
+
+func runGracefulShutdown(server gracefulShutdownServer, services serviceCloser, timeout time.Duration) {
+	slog.Info("Shutting down...")
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	if err := server.Shutdown(ctx); err != nil {
+		slog.Error("HTTP server shutdown failed", "error", err)
+	}
+	if services != nil {
+		if err := services.Close(); err != nil {
+			slog.Error("Service context close failed", "error", err)
+		}
+	}
 }
 
 // ===== Route helper functions =====
