@@ -923,7 +923,7 @@ erDiagram
             <li><code>/api/groups/{id}/members/events/artifacts/orchestration</code>：限定在 token 所属 group。</li>
             <li><code>DELETE /api/groups/{id}/members/{actorType}/{actorId}</code>：Admin 可删除任意成员；member token 只能删除同 group 中与 token 绑定的自身 actor，删除时同步撤销该 actor 的 group member token。</li>
             <li><code>/.well-known/agent-card/{name}</code>、<code>/agent/{name}/.well-known/agent-card.json</code> 与 <code>/agent/{name}</code>：目标 Agent 必须是同 group 成员。</li>
-            <li><code>/api/group-joins</code>：公开入口，用 invite token 换 member access token；invite 消耗在数据库中按 status、过期时间和 max uses 做条件更新，避免超过可用次数。</li>
+            <li><code>/api/group-joins</code>：公开入口，用 invite token 换 member access token；invite 消耗、member upsert 和 group member token 创建在同一个数据库事务中完成，consume 按 status、过期时间和 max uses 做条件更新，避免超过可用次数或留下失败 join 的成员副作用。</li>
           </ul>
         </div>
       </div>

@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -283,6 +284,8 @@ type GroupInviteStore struct {
 	db *sql.DB
 }
 
+var ErrInviteNotUsable = errors.New("invite is no longer usable")
+
 func NewGroupInviteStore(db *sql.DB) *GroupInviteStore {
 	return &GroupInviteStore{db: db}
 }
@@ -351,7 +354,82 @@ func (s *GroupInviteStore) GetByToken(token string) (*model.GroupInvite, error) 
 }
 
 func (s *GroupInviteStore) Consume(id int64) error {
-	res, err := s.db.Exec(`
+	return consumeInvite(s.db, id)
+}
+
+func (s *GroupInviteStore) ConsumeAndCreateMemberToken(id int64, member *model.GroupMember, token *model.GroupMemberToken) (string, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return "", err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if err := consumeInvite(tx, id); err != nil {
+		return "", err
+	}
+
+	member.ActorType = NormalizeActorType(member.ActorType)
+	member.ActorID = strings.TrimSpace(member.ActorID)
+	if member.Role == "" {
+		member.Role = "member"
+	}
+	if _, err := tx.Exec(
+		`INSERT INTO group_members (group_id, actor_type, actor_id, role, capabilities_json)
+		 VALUES (?, ?, ?, ?, ?)
+		 ON DUPLICATE KEY UPDATE role = VALUES(role), capabilities_json = VALUES(capabilities_json)`,
+		member.GroupID, member.ActorType, member.ActorID, member.Role, member.CapabilitiesJson,
+	); err != nil {
+		return "", err
+	}
+	var capabilities sql.NullString
+	if err := tx.QueryRow(
+		`SELECT id, group_id, actor_type, actor_id, role, capabilities_json, joined_at
+		 FROM group_members WHERE group_id = ? AND actor_type = ? AND actor_id = ?`,
+		member.GroupID, member.ActorType, member.ActorID,
+	).Scan(&member.ID, &member.GroupID, &member.ActorType, &member.ActorID, &member.Role, &capabilities, &member.JoinedAt); err != nil {
+		return "", err
+	}
+	if capabilities.Valid {
+		member.CapabilitiesJson = capabilities.String
+	}
+
+	token.GroupID = strings.TrimSpace(token.GroupID)
+	token.ActorType = NormalizeActorType(token.ActorType)
+	token.ActorID = strings.TrimSpace(token.ActorID)
+	plain, err := NewAccessToken()
+	if err != nil {
+		return "", err
+	}
+	token.TokenHash = HashAccessToken(plain)
+	res, err := tx.Exec(
+		`INSERT INTO group_member_tokens (group_id, actor_type, actor_id, token_hash, expires_at, revoked_at)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		token.GroupID, token.ActorType, token.ActorID, token.TokenHash, token.ExpiresAt, token.RevokedAt,
+	)
+	if err != nil {
+		return "", err
+	}
+	if token.ID, err = res.LastInsertId(); err != nil {
+		return "", err
+	}
+	if err := tx.Commit(); err != nil {
+		return "", err
+	}
+	committed = true
+	return plain, nil
+}
+
+type inviteExecer interface {
+	Exec(query string, args ...interface{}) (sql.Result, error)
+}
+
+func consumeInvite(exec inviteExecer, id int64) error {
+	res, err := exec.Exec(`
 		UPDATE group_invites
 		SET used_count = used_count + 1
 		WHERE id = ?
@@ -368,7 +446,7 @@ func (s *GroupInviteStore) Consume(id int64) error {
 		return err
 	}
 	if affected == 0 {
-		return fmt.Errorf("invite is no longer usable")
+		return ErrInviteNotUsable
 	}
 	return nil
 }

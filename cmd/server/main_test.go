@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -276,6 +278,7 @@ func setupGroupRouteTestContext(t *testing.T) (*svc.ServiceContext, string) {
 
 	ctx := &svc.ServiceContext{
 		Config:         &config.Config{},
+		DB:             db,
 		Groups:         svc.NewGroupStore(db),
 		GroupMembers:   svc.NewGroupMemberStore(db),
 		GroupInvites:   svc.NewGroupInviteStore(db),
@@ -359,6 +362,79 @@ func TestGroupJoinByInviteUsesHumanSessionIdentity(t *testing.T) {
 	}
 	if !strings.Contains(member.CapabilitiesJson, `"handle":"alice"`) {
 		t.Fatalf("capabilities = %s, want handle", member.CapabilitiesJson)
+	}
+}
+
+func TestGroupJoinByInviteConcurrentExhaustionDoesNotLeaveSideEffects(t *testing.T) {
+	svcCtx, groupID := setupGroupRouteTestContext(t)
+	invite := &model.GroupInvite{GroupID: groupID, ActorTypeAllowed: model.GroupActorHuman, Role: "member", MaxUses: 1}
+	inviteToken, err := svcCtx.GroupInvites.Create(invite)
+	if err != nil {
+		t.Fatalf("create invite: %v", err)
+	}
+	if _, err := svcCtx.DB.Exec(`CREATE TRIGGER slow_invite_consume BEFORE UPDATE ON group_invites FOR EACH ROW SET @invite_consume_sleep = SLEEP(0.05)`); err != nil {
+		t.Fatalf("create slow consume trigger: %v", err)
+	}
+
+	const attempts = 8
+	type joinResult struct {
+		actorID string
+		status  int
+		body    string
+	}
+	results := make(chan joinResult, attempts)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < attempts; i++ {
+		actorID := fmt.Sprintf("race-human-%02d", i)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			req := httptest.NewRequest(http.MethodPost, "/api/group-joins", strings.NewReader(`{"invite_token":"`+inviteToken+`","actor_type":"human","actor_id":"`+actorID+`"}`))
+			rec := httptest.NewRecorder()
+			handler.NewGroupJoinByInviteHandler(svcCtx).ServeHTTP(rec, req)
+			results <- joinResult{actorID: actorID, status: rec.Code, body: rec.Body.String()}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+
+	okCount := 0
+	for result := range results {
+		switch result.status {
+		case http.StatusOK:
+			okCount++
+		case http.StatusForbidden:
+		default:
+			t.Fatalf("join %s status = %d, want 200 or 403 body=%s", result.actorID, result.status, result.body)
+		}
+	}
+	if okCount != 1 {
+		t.Fatalf("successful joins = %d, want 1", okCount)
+	}
+
+	var memberCount int
+	if err := svcCtx.DB.QueryRow(
+		`SELECT COUNT(*) FROM group_members WHERE group_id = ? AND actor_type = ? AND actor_id LIKE 'race-human-%'`,
+		groupID, model.GroupActorHuman,
+	).Scan(&memberCount); err != nil {
+		t.Fatalf("count race members: %v", err)
+	}
+	if memberCount != 1 {
+		t.Fatalf("race member rows = %d, want 1", memberCount)
+	}
+
+	var tokenCount int
+	if err := svcCtx.DB.QueryRow(
+		`SELECT COUNT(*) FROM group_member_tokens WHERE group_id = ? AND actor_type = ? AND actor_id LIKE 'race-human-%' AND revoked_at IS NULL`,
+		groupID, model.GroupActorHuman,
+	).Scan(&tokenCount); err != nil {
+		t.Fatalf("count race tokens: %v", err)
+	}
+	if tokenCount != 1 {
+		t.Fatalf("race active token rows = %d, want 1", tokenCount)
 	}
 }
 
@@ -1003,6 +1079,14 @@ func TestMemberTokenCanDeleteSelfButNotOtherMember(t *testing.T) {
 	protected.ServeHTTP(selfRec, selfReq)
 	if selfRec.Code != http.StatusOK {
 		t.Fatalf("delete self status = %d, want %d body=%s", selfRec.Code, http.StatusOK, selfRec.Body.String())
+	}
+
+	readReq := httptest.NewRequest(http.MethodGet, "/api/groups/"+groupID+"/members", nil)
+	readReq.Header.Set("X-Group-Member-Token", aliceToken)
+	readRec := httptest.NewRecorder()
+	protected.ServeHTTP(readRec, readReq)
+	if readRec.Code != http.StatusUnauthorized {
+		t.Fatalf("deleted member token status = %d, want %d", readRec.Code, http.StatusUnauthorized)
 	}
 }
 

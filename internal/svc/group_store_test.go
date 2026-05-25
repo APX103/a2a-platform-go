@@ -1,6 +1,7 @@
 package svc
 
 import (
+	"errors"
 	"testing"
 
 	"a2a-platform/internal/model"
@@ -140,8 +141,9 @@ func TestGroupInviteConsumeRespectsMaxUses(t *testing.T) {
 
 	if err := store.Consume(loaded.ID); err != nil {
 		t.Fatalf("first consume: %v", err)
-	}
-	if err := store.Consume(loaded.ID); err == nil {
+	} else if err := store.Consume(loaded.ID); err == nil {
 		t.Fatal("second consume succeeded, want max uses error")
+	} else if !errors.Is(err, ErrInviteNotUsable) {
+		t.Fatalf("second consume error = %v, want ErrInviteNotUsable", err)
 	}
 }
