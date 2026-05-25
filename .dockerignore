@@ -1,9 +1,0 @@
-.git/
-.gocache/
-.gomodcache/
-data/
-server
-web/dist/
-web/admin/node_modules/
-*.log
-.DS_Store
