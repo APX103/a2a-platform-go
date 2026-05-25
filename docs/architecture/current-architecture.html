@@ -801,6 +801,7 @@ sequenceDiagram
     <section id="data">
       <h2>6. 数据模型</h2>
       <p>当前 schema 由 <code>internal/svc/servicecontext.go</code> 内置迁移。核心设计是：Agent 连接状态、Human 身份与登录态、每次 A2A 调用的 task/message/trace、聊天 context、subagent/task item，以及 group 协作对象都在 MySQL 中持久化。</p>
+      <p>启动迁移分为两类：核心 <code>CREATE TABLE IF NOT EXISTS</code> schema 失败会使 <code>NewServiceContext</code> 关闭数据库连接并返回错误，阻止服务以不完整 schema 启动；兼容旧版本的 <code>ALTER TABLE</code>、索引补建、方向字段回填和 lineage 修复仍按 best-effort 执行，失败时记录调试日志但不阻断启动。</p>
 
       <div class="diagram">
         <p class="diagram-title">核心 ER 图</p>

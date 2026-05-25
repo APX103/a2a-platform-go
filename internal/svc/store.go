@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -156,15 +157,20 @@ func (s *TaskStore) Update(localTaskId string, fields map[string]interface{}) er
 	}
 	setClauses := ""
 	args := []interface{}{}
-	for k, v := range fields {
+	keys := make([]string, 0, len(fields))
+	for k := range fields {
 		if _, ok := allowedTaskUpdateColumns[k]; !ok {
 			return fmt.Errorf("unsupported task update column %q", k)
 		}
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
 		if setClauses != "" {
 			setClauses += ", "
 		}
 		setClauses += fmt.Sprintf("%s=?", k)
-		args = append(args, v)
+		args = append(args, fields[k])
 	}
 	args = append(args, localTaskId)
 	_, err := s.db.Exec(fmt.Sprintf("UPDATE tasks SET %s WHERE local_task_id=?", setClauses), args...)
@@ -293,7 +299,7 @@ func (s *TaskStore) ListByFilter(agentName, state, search, contextId string, con
 		}
 		result = append(result, &t)
 	}
-	return result, total, nil
+	return result, total, rows.Err()
 }
 
 func (s *TaskStore) GetByContext(contextId string) (*model.Task, error) {
