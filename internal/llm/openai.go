@@ -147,6 +147,9 @@ func (p *OpenAIProvider) readStream(body io.ReadCloser, ch chan<- StreamEvent) {
 			continue
 		}
 		data := strings.TrimPrefix(line, "data: ")
+		if strings.TrimSpace(data) == "" {
+			continue
+		}
 		if data == "[DONE]" {
 			seenDone = true
 			break
@@ -221,5 +224,8 @@ func (p *OpenAIProvider) readStream(body io.ReadCloser, ch chan<- StreamEvent) {
 
 	if seenDone {
 		ch <- StreamEvent{Type: "done"}
+		return
 	}
+
+	ch <- StreamEvent{Type: "error", Error: fmt.Errorf("openai stream ended before [DONE]")}
 }

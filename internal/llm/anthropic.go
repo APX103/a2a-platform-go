@@ -138,6 +138,9 @@ func (p *AnthropicProvider) readStream(body io.ReadCloser, ch chan<- StreamEvent
 			continue
 		}
 		data := strings.TrimPrefix(line, "data: ")
+		if strings.TrimSpace(data) == "" {
+			continue
+		}
 
 		var evt map[string]interface{}
 		if err := json.Unmarshal([]byte(data), &evt); err != nil {
@@ -189,7 +192,10 @@ func (p *AnthropicProvider) readStream(body io.ReadCloser, ch chan<- StreamEvent
 
 	if err := scanner.Err(); err != nil {
 		ch <- StreamEvent{Type: "error", Error: fmt.Errorf("anthropic stream read error: %w", err)}
+		return
 	}
+
+	ch <- StreamEvent{Type: "error", Error: fmt.Errorf("anthropic stream ended before message_stop")}
 }
 
 func stringVal(m map[string]interface{}, key string) string {
