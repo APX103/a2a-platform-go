@@ -921,8 +921,9 @@ erDiagram
           <ul class="list">
             <li><code>GET /api/groups</code>：仅返回当前成员可见的 group。</li>
             <li><code>/api/groups/{id}/members/events/artifacts/orchestration</code>：限定在 token 所属 group。</li>
+            <li><code>DELETE /api/groups/{id}/members/{actorType}/{actorId}</code>：Admin 可删除任意成员；member token 只能删除同 group 中与 token 绑定的自身 actor，删除时同步撤销该 actor 的 group member token。</li>
             <li><code>/.well-known/agent-card/{name}</code>、<code>/agent/{name}/.well-known/agent-card.json</code> 与 <code>/agent/{name}</code>：目标 Agent 必须是同 group 成员。</li>
-            <li><code>/api/group-joins</code>：公开入口，用 invite token 换 member access token。</li>
+            <li><code>/api/group-joins</code>：公开入口，用 invite token 换 member access token；invite 消耗在数据库中按 status、过期时间和 max uses 做条件更新，避免超过可用次数。</li>
           </ul>
         </div>
       </div>
@@ -988,7 +989,7 @@ flowchart TD
       <div class="grid">
         <article class="tile accent-gold"><b>编排模式边界</b><p>Group mode 的状态描述比执行逻辑更完整。当前可认为 <code>leader_led</code> 和 <code>free_chat</code> 是主要可执行模式，其他模式是面向后续扩展的语义接口。</p></article>
         <article class="tile accent-teal"><b>上下文边界</b><p>Agent 可声明 <code>context</code> 或 <code>stateless</code>。代理入口会根据 Registry 中的 context mode 决定是否保留 contextId。</p></article>
-        <article class="tile accent-blue"><b>安全边界</b><p>Admin token 管理全局资源；member token 只能访问所属 group，并且调用 Agent 或读取其代理 AgentCard 时要求目标 Agent 是同 group 成员。</p></article>
+        <article class="tile accent-blue"><b>安全边界</b><p>Admin token 管理全局资源；member token 只能访问所属 group，并且调用 Agent 或读取其代理 AgentCard 时要求目标 Agent 是同 group 成员；成员删除边界由 authMiddleware 注入的 trusted principal 判定，member 只能删除自己。</p></article>
         <article class="tile accent-coral"><b>观测边界</b><p>Task/message/trace 是所有调用的主审计链路；代理、内置工具调用和子代理会话持久化前会脱敏已知 token/API key/secret 字段、URL 凭据和敏感 query 参数。内置工具/子代理执行仍使用原始值，UI 事件、消息历史和 subagent session 写入脱敏副本；外部代理响应和 SSE 字节按协议透传。</p></article>
         <article class="tile accent-green"><b>工具边界</b><p>工具注册是全局的。内置 Agent 获取基础工具、A2A 平台工具和动态工具；只读工具会并行预执行，写工具串行执行。</p></article>
         <article class="tile accent-gold"><b>Bridge 边界</b><p>Bridge Agent 是进程内适配器，不是外部常驻连接。它按 skill 选择 HTTP/CLI target，并包装成 A2A SSE。</p></article>

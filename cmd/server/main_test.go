@@ -275,6 +275,7 @@ func setupGroupRouteTestContext(t *testing.T) (*svc.ServiceContext, string) {
 	}
 
 	ctx := &svc.ServiceContext{
+		Config:         &config.Config{},
 		Groups:         svc.NewGroupStore(db),
 		GroupMembers:   svc.NewGroupMemberStore(db),
 		GroupInvites:   svc.NewGroupInviteStore(db),
@@ -292,6 +293,32 @@ func setupGroupRouteTestContext(t *testing.T) (*svc.ServiceContext, string) {
 		t.Fatalf("create member: %v", err)
 	}
 	return ctx, group.ID
+}
+
+func mustUpsertMember(t *testing.T, svcCtx *svc.ServiceContext, groupID, actorType, actorID string) {
+	t.Helper()
+	err := svcCtx.GroupMembers.Upsert(&model.GroupMember{
+		GroupID:   groupID,
+		ActorType: actorType,
+		ActorID:   actorID,
+		Role:      "member",
+	})
+	if err != nil {
+		t.Fatalf("upsert member: %v", err)
+	}
+}
+
+func mustIssueGroupToken(t *testing.T, svcCtx *svc.ServiceContext, groupID, actorType, actorID string) string {
+	t.Helper()
+	token, err := svcCtx.GroupTokens.Create(&model.GroupMemberToken{
+		GroupID:   groupID,
+		ActorType: actorType,
+		ActorID:   actorID,
+	})
+	if err != nil {
+		t.Fatalf("issue member token: %v", err)
+	}
+	return token
 }
 
 func TestGroupJoinByInviteUsesHumanSessionIdentity(t *testing.T) {
@@ -926,9 +953,11 @@ func TestGroupMemberDeleteRevokesMemberToken(t *testing.T) {
 		t.Fatalf("create member token: %v", err)
 	}
 
+	protected := authMiddleware(makeGroupRouteHandler(svcCtx), svcCtx)
 	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/groups/"+groupID+"/members/human/human-route", nil)
+	deleteReq.Header.Set("X-Admin-Token", "secret")
 	deleteRec := httptest.NewRecorder()
-	makeGroupRouteHandler(svcCtx).ServeHTTP(deleteRec, deleteReq)
+	protected.ServeHTTP(deleteRec, deleteReq)
 	if deleteRec.Code != http.StatusOK {
 		t.Fatalf("delete member status = %d, want 200, body=%s", deleteRec.Code, deleteRec.Body.String())
 	}
@@ -940,7 +969,7 @@ func TestGroupMemberDeleteRevokesMemberToken(t *testing.T) {
 		t.Fatalf("member token was not revoked: %#v", storedToken)
 	}
 
-	protected := authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	protected = authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}), svcCtx)
 	readReq := httptest.NewRequest(http.MethodGet, "/api/groups/"+groupID+"/members", nil)
@@ -949,6 +978,47 @@ func TestGroupMemberDeleteRevokesMemberToken(t *testing.T) {
 	protected.ServeHTTP(readRec, readReq)
 	if readRec.Code != http.StatusUnauthorized {
 		t.Fatalf("removed member status = %d, want 401", readRec.Code)
+	}
+}
+
+func TestMemberTokenCanDeleteSelfButNotOtherMember(t *testing.T) {
+	svcCtx, groupID := setupGroupRouteTestContext(t)
+	svcCtx.Config = &config.Config{AdminToken: "admin-token"}
+	mustUpsertMember(t, svcCtx, groupID, model.GroupActorHuman, "alice")
+	mustUpsertMember(t, svcCtx, groupID, model.GroupActorHuman, "bob")
+	aliceToken := mustIssueGroupToken(t, svcCtx, groupID, model.GroupActorHuman, "alice")
+	protected := authMiddleware(makeGroupRouteHandler(svcCtx), svcCtx)
+
+	otherReq := httptest.NewRequest(http.MethodDelete, "/api/groups/"+groupID+"/members/human/bob", nil)
+	otherReq.Header.Set("X-Group-Member-Token", aliceToken)
+	otherRec := httptest.NewRecorder()
+	protected.ServeHTTP(otherRec, otherReq)
+	if otherRec.Code != http.StatusForbidden {
+		t.Fatalf("delete other status = %d, want %d", otherRec.Code, http.StatusForbidden)
+	}
+
+	selfReq := httptest.NewRequest(http.MethodDelete, "/api/groups/"+groupID+"/members/human/alice", nil)
+	selfReq.Header.Set("X-Group-Member-Token", aliceToken)
+	selfRec := httptest.NewRecorder()
+	protected.ServeHTTP(selfRec, selfReq)
+	if selfRec.Code != http.StatusOK {
+		t.Fatalf("delete self status = %d, want %d body=%s", selfRec.Code, http.StatusOK, selfRec.Body.String())
+	}
+}
+
+func TestAdminCanDeleteAnyGroupMember(t *testing.T) {
+	svcCtx, groupID := setupGroupRouteTestContext(t)
+	svcCtx.Config.AdminToken = "admin-token"
+	mustUpsertMember(t, svcCtx, groupID, model.GroupActorHuman, "bob")
+	protected := authMiddleware(makeGroupRouteHandler(svcCtx), svcCtx)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/groups/"+groupID+"/members/human/bob", nil)
+	req.Header.Set("X-Admin-Token", "admin-token")
+	rec := httptest.NewRecorder()
+	protected.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusOK, rec.Body.String())
 	}
 }
 

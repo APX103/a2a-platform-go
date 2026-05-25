@@ -838,6 +838,9 @@ func requiresAdmin(path, method string) bool {
 		return true
 	}
 	if strings.HasPrefix(path, "/api/groups/") {
+		if isGroupMemberDelete(path, method) {
+			return false
+		}
 		if method == http.MethodPut || method == http.MethodDelete {
 			return true
 		}
@@ -852,6 +855,15 @@ func requiresAdmin(path, method string) bool {
 		}
 	}
 	return false
+}
+
+func isGroupMemberDelete(path, method string) bool {
+	if method != http.MethodDelete || !strings.HasPrefix(path, "/api/groups/") {
+		return false
+	}
+	tail := pathTail(path, "/api/groups/")
+	parts := strings.Split(tail, "/")
+	return len(parts) == 4 && parts[1] == "members" && parts[2] != "" && parts[3] != ""
 }
 
 func scopedGroupID(path, method string) (string, bool) {

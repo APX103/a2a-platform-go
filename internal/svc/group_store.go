@@ -351,8 +351,26 @@ func (s *GroupInviteStore) GetByToken(token string) (*model.GroupInvite, error) 
 }
 
 func (s *GroupInviteStore) Consume(id int64) error {
-	_, err := s.db.Exec(`UPDATE group_invites SET used_count = used_count + 1 WHERE id = ?`, id)
-	return err
+	res, err := s.db.Exec(`
+		UPDATE group_invites
+		SET used_count = used_count + 1
+		WHERE id = ?
+		  AND status = ?
+		  AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
+		  AND (max_uses <= 0 OR used_count < max_uses)`,
+		id, model.GroupStatusActive,
+	)
+	if err != nil {
+		return err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return fmt.Errorf("invite is no longer usable")
+	}
+	return nil
 }
 
 type inviteScanner interface {

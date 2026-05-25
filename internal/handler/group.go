@@ -507,6 +507,18 @@ func NewGroupMemberHandler(svcCtx *svc.ServiceContext) *GroupMemberHandler {
 	return &GroupMemberHandler{svcCtx: svcCtx}
 }
 
+func authorizedToDeleteMember(r *http.Request, groupID, targetActorType, targetActorID string) bool {
+	if r.Header.Get("X-A2A-Principal") == "admin" {
+		return true
+	}
+	if r.Header.Get("X-A2A-Principal") != "member" {
+		return false
+	}
+	return r.Header.Get("X-A2A-Group-ID") == groupID &&
+		r.Header.Get("X-A2A-Actor-Type") == targetActorType &&
+		r.Header.Get("X-A2A-Actor-ID") == targetActorID
+}
+
 func (h *GroupMemberHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	group := h.requireGroup(w, r)
 	if group == nil {
@@ -542,6 +554,11 @@ func (h *GroupMemberHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if actorID == "" {
 			jsonError(w, "actor_id is required", 400)
+			return
+		}
+		actorType = svc.NormalizeActorType(actorType)
+		if !authorizedToDeleteMember(r, group.ID, actorType, actorID) {
+			jsonError(w, "forbidden", http.StatusForbidden)
 			return
 		}
 		if err := h.svcCtx.GroupMembers.Delete(group.ID, actorType, actorID); err != nil {

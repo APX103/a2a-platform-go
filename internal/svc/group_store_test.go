@@ -119,3 +119,29 @@ func TestGroupStores_Lifecycle(t *testing.T) {
 		t.Fatalf("free chat next action = %q", state.NextAction)
 	}
 }
+
+func TestGroupInviteConsumeRespectsMaxUses(t *testing.T) {
+	db := setupRegistryTestDB(t)
+	store := NewGroupInviteStore(db)
+	invite := &model.GroupInvite{
+		GroupID: "group-invite",
+		Role:    "member",
+		MaxUses: 1,
+		Status:  model.GroupStatusActive,
+	}
+	token, err := store.Create(invite)
+	if err != nil {
+		t.Fatalf("create invite: %v", err)
+	}
+	loaded, err := store.GetByToken(token)
+	if err != nil {
+		t.Fatalf("load invite: %v", err)
+	}
+
+	if err := store.Consume(loaded.ID); err != nil {
+		t.Fatalf("first consume: %v", err)
+	}
+	if err := store.Consume(loaded.ID); err == nil {
+		t.Fatal("second consume succeeded, want max uses error")
+	}
+}
