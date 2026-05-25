@@ -38,3 +38,4 @@ apps/human-client/dist/
 
 # SQLite data
 data/
+.run/

@@ -154,8 +154,29 @@ export default function GroupDetail() {
   const [flowSteps, setFlowSteps] = useState<FlowStep[]>([])
   const [selectedStep, setSelectedStep] = useState(0)
   const [flowSaving, setFlowSaving] = useState(false)
+  const [copiedToken, setCopiedToken] = useState<string | null>(null)
   const chatEndRef = useRef<HTMLDivElement | null>(null)
   const streamingEventIdsRef = useRef<Record<string, number>>({})
+
+  const copyToClipboard = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopiedToken(text)
+      setTimeout(() => setCopiedToken(null), 2000)
+    } catch {
+      // fallback
+      const textarea = document.createElement('textarea')
+      textarea.value = text
+      textarea.style.position = 'fixed'
+      textarea.style.opacity = '0'
+      document.body.appendChild(textarea)
+      textarea.select()
+      document.execCommand('copy')
+      document.body.removeChild(textarea)
+      setCopiedToken(text)
+      setTimeout(() => setCopiedToken(null), 2000)
+    }
+  }
 
   const load = async () => {
     if (!id) return
@@ -772,8 +793,18 @@ export default function GroupDetail() {
             </div>
             {newInviteToken && (
               <div className="mb-3 p-2 rounded-md bg-[var(--success)]/10 border border-[var(--success)]/25">
-                <div className="text-xs text-[var(--text-tertiary)] mb-1">New token</div>
-                <code className="block text-xs break-all text-[var(--text-primary)]">{newInviteToken}</code>
+                <div className="flex items-center justify-between mb-1">
+                  <div className="text-xs text-[var(--text-tertiary)]">New invite token</div>
+                  <button
+                    type="button"
+                    onClick={() => copyToClipboard(newInviteToken)}
+                    className="p-1 rounded text-[var(--success)] hover:bg-[var(--success)]/20"
+                    title="Copy token"
+                  >
+                    {copiedToken === newInviteToken ? <Check size={13} /> : <Copy size={13} />}
+                  </button>
+                </div>
+                <code className="block text-xs break-all text-[var(--text-primary)] font-mono bg-[var(--bg-primary)]/50 rounded px-1.5 py-0.5">{newInviteToken}</code>
               </div>
             )}
             <form onSubmit={handleCreateInvite} className="space-y-2">
@@ -826,8 +857,19 @@ export default function GroupDetail() {
               <h2 className="text-sm font-medium text-[var(--text-primary)]">Human Session</h2>
             </div>
             {memberToken && (
-              <div className="mb-3 rounded-md border border-[var(--success)]/25 bg-[var(--success)]/10 p-2 text-xs text-[var(--success)]">
-                Member token active for this browser
+              <div className="mb-3 rounded-md border border-[var(--success)]/25 bg-[var(--success)]/10 p-2">
+                <div className="text-xs text-[var(--success)] mb-1">Member token active for this browser</div>
+                <div className="flex items-center gap-1.5">
+                  <code className="flex-1 text-xs break-all text-[var(--text-primary)] font-mono bg-[var(--bg-primary)]/50 rounded px-1.5 py-0.5">{memberToken}</code>
+                  <button
+                    type="button"
+                    onClick={() => copyToClipboard(memberToken)}
+                    className="shrink-0 p-1 rounded text-[var(--success)] hover:bg-[var(--success)]/20"
+                    title="Copy token"
+                  >
+                    {copiedToken === memberToken ? <Check size={13} /> : <Copy size={13} />}
+                  </button>
+                </div>
               </div>
             )}
             <form onSubmit={handleJoinByInvite} className="space-y-2">

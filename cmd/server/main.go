@@ -138,6 +138,10 @@ func main() {
 	// Stats endpoint
 	mux.HandleFunc("/api/stats", handler.NewStatsHandler(svcCtx).ServeHTTP)
 
+	// Guide/docs endpoint (so external agents can fetch usage/bridge guides via HTTP)
+	mux.HandleFunc("/api/guide", handler.NewGuideHandler())
+	mux.HandleFunc("/api/guide/", handler.NewGuideHandler())
+
 	hostURL := ""
 	if cfg.Host == "0.0.0.0" || cfg.Host == "" {
 		hostURL = fmt.Sprintf("http://localhost:%d", cfg.Port)

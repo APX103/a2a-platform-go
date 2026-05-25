@@ -37,7 +37,7 @@ Bridge 负责：
 
 ### 发现式注册
 
-Bridge 暴露 `GET /.well-known/agent.json`，平台注册时自动抓取 AgentCard。
+Bridge 暴露 `GET /.well-known/agent-card.json`（优先）或 `GET /.well-known/agent.json`（兼容回退），平台注册时自动抓取 AgentCard。
 
 ```bash
 curl -X POST http://localhost:18090/api/agents \
@@ -157,7 +157,7 @@ Bridge 应该提取：
 - `params.contextId`：仅 `context` 模式需要
 - `params.message.parts[].text`：用户输入文本
 - `id`：可原样透传或用于日志关联
-- `method`：当前主路径是 `SendStreamingMessage`，也要兼容 `message/send`
+- `method`：当前主路径是 `SendStreamingMessage`
 
 如果 Bridge 代表某个已知 Agent 再调用平台上的另一个 Agent，请在请求平台 `/agent/{target}` 时加：
 
@@ -174,6 +174,29 @@ X-A2A-Source-Agent: <source-agent-name>
 
 因此 A 调 B 时，请求消息仍可能是 `role=user`，但平台应展示为 `sender_agent=A, recipient_agent=B`。
 
+### 平台转发的附加 Header
+
+平台向外部 Bridge 转发请求时，除了 JSON-RPC body，还会携带以下 Header：
+
+| Header | 说明 |
+|--------|------|
+| `Content-Type` | `application/json` |
+| `A2A-Version` | `1.0` |
+| `Accept` | `text/event-stream` |
+| `X-A2A-Root-Context-Id` | 当前对话的根 context ID（多轮或群聊场景） |
+| `X-A2A-Parent-Task-Id` | 父任务 ID（子代理调用场景） |
+| `X-A2A-Parent-Tool-Call-Id` | 父工具调用 ID（子代理调用场景） |
+
+### 平台托管的 AgentCard
+
+注册后，平台会自动为每个 agent 托管 AgentCard，可通过以下地址访问：
+
+```
+GET /.well-known/agent-card/{agent_name}
+```
+
+这便于群成员或其他外部系统在不直接访问 Bridge 的情况下获取 agent 能力描述。
+
 ## 响应格式
 
 推荐返回 SSE：
@@ -182,10 +205,13 @@ X-A2A-Source-Agent: <source-agent-name>
 Content-Type: text/event-stream
 Cache-Control: no-cache
 
+event: task.status
 data: {"type":"task.status","taskId":"...","contextId":"...","status":{"state":"working"}}
 
+event: text.delta
 data: {"type":"text.delta","taskId":"...","contextId":"...","text":"hello"}
 
+event: task.status
 data: {"type":"task.status","taskId":"...","contextId":"...","status":{"state":"completed","message":{"role":"agent","parts":[{"text":"hello"}]}}}
 ```
 
