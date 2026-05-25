@@ -378,7 +378,7 @@ flowchart LR
           <tr><td>服务入口</td><td>加载配置、初始化 ServiceContext、注册路由、中间件、内置/桥接 Agent、嵌入 Admin SPA，并在 SIGINT/SIGTERM 时优雅关闭 HTTP server 和服务资源。</td><td><code>cmd/server/main.go</code></td></tr>
           <tr><td>配置</td><td>解析 YAML、环境变量展开、MySQL/Admin/CORS/RateLimit/Builtin/Bridge 配置默认值。</td><td><code>internal/config/config.go</code></td></tr>
           <tr><td>ServiceContext</td><td>组合 DB、Store、Registry、EventBus、Engine、BridgeRegistry，执行 MySQL schema migration，并集中关闭 Registry 健康检查与 DB。</td><td><code>internal/svc/servicecontext.go</code></td></tr>
-          <tr><td>Agent Registry</td><td>外部 Agent 注册、AgentCard 发现/托管、可停止的后台健康检查、内存连接与 DB 状态同步。</td><td><code>internal/svc/registry.go</code></td></tr>
+          <tr><td>Agent Registry</td><td>外部 Agent 注册、AgentCard 发现/托管、可取消且可停止的后台健康检查、内存连接与 DB 状态同步。</td><td><code>internal/svc/registry.go</code></td></tr>
           <tr><td>HTTP Handler</td><td>Agent CRUD、A2A 代理、Task/Trace/Context/Subagent、Group API、Stats、Events。</td><td><code>internal/handler/*.go</code></td></tr>
           <tr><td>Engine</td><td>内置 Agent LLM 调用循环、工具调用、SSE 输出、消息与 trace 持久化。</td><td><code>internal/engine/engine.go</code></td></tr>
           <tr><td>Tools</td><td>文件/HTTP/目录工具、A2A 平台工具、spawn_agent、task item 动态工具。</td><td><code>internal/tools/*.go</code></td></tr>

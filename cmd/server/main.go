@@ -942,20 +942,28 @@ func (w *loggingResponseWriter) Write(b []byte) (int, error) {
 	return n, err
 }
 
-func (w *loggingResponseWriter) Flush() {
-	if !w.wroteHeader {
-		w.WriteHeader(http.StatusOK)
+type loggingFlusherResponseWriter struct {
+	*loggingResponseWriter
+}
+
+func (w *loggingFlusherResponseWriter) Flush() {
+	w.loggingResponseWriter.WriteHeader(http.StatusOK)
+	w.ResponseWriter.(http.Flusher).Flush()
+}
+
+func newLoggingResponseWriter(w http.ResponseWriter) (*loggingResponseWriter, http.ResponseWriter) {
+	lrw := &loggingResponseWriter{ResponseWriter: w, status: http.StatusOK}
+	if _, ok := w.(http.Flusher); ok {
+		return lrw, &loggingFlusherResponseWriter{loggingResponseWriter: lrw}
 	}
-	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
-		flusher.Flush()
-	}
+	return lrw, lrw
 }
 
 func loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		lrw := &loggingResponseWriter{ResponseWriter: w, status: http.StatusOK}
-		next.ServeHTTP(lrw, r)
+		lrw, wrapped := newLoggingResponseWriter(w)
+		next.ServeHTTP(wrapped, r)
 		requestID, _ := r.Context().Value(requestIDContextKey{}).(string)
 		slog.Info("request",
 			"request_id", requestID,
@@ -969,8 +977,46 @@ func loggingMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+type committedResponseWriter struct {
+	http.ResponseWriter
+	committed bool
+}
+
+func (w *committedResponseWriter) WriteHeader(status int) {
+	if w.committed {
+		return
+	}
+	w.committed = true
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *committedResponseWriter) Write(b []byte) (int, error) {
+	if !w.committed {
+		w.WriteHeader(http.StatusOK)
+	}
+	return w.ResponseWriter.Write(b)
+}
+
+type committedFlusherResponseWriter struct {
+	*committedResponseWriter
+}
+
+func (w *committedFlusherResponseWriter) Flush() {
+	w.committedResponseWriter.WriteHeader(http.StatusOK)
+	w.ResponseWriter.(http.Flusher).Flush()
+}
+
+func newCommittedResponseWriter(w http.ResponseWriter) (*committedResponseWriter, http.ResponseWriter) {
+	crw := &committedResponseWriter{ResponseWriter: w}
+	if _, ok := w.(http.Flusher); ok {
+		return crw, &committedFlusherResponseWriter{committedResponseWriter: crw}
+	}
+	return crw, crw
+}
+
 func recoverMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		crw, wrapped := newCommittedResponseWriter(w)
 		defer func() {
 			if v := recover(); v != nil {
 				requestID, _ := r.Context().Value(requestIDContextKey{}).(string)
@@ -980,10 +1026,12 @@ func recoverMiddleware(next http.Handler) http.Handler {
 					"path", r.URL.Path,
 					"panic", v,
 				)
-				jsonError(w, "internal server error", http.StatusInternalServerError)
+				if !crw.committed {
+					jsonError(wrapped, "internal server error", http.StatusInternalServerError)
+				}
 			}
 		}()
-		next.ServeHTTP(w, r)
+		next.ServeHTTP(wrapped, r)
 	})
 }
 

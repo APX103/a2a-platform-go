@@ -645,6 +645,25 @@ func TestRecoverMiddlewareReturnsJSON500(t *testing.T) {
 	}
 }
 
+func TestRecoverMiddlewareDoesNotAppendJSONAfterResponseCommitted(t *testing.T) {
+	h := requestIDMiddleware(recoverMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte("created"))
+		panic("boom")
+	})))
+	req := httptest.NewRequest(http.MethodGet, "/panic-after-commit", nil)
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusCreated)
+	}
+	if rec.Body.String() != "created" {
+		t.Fatalf("body = %q, want committed response only", rec.Body.String())
+	}
+}
+
 func TestHealthHandlerReturns503WhenDBPingFails(t *testing.T) {
 	db := testutil.TempMySQLDB(t)
 	_ = db.Close()
@@ -700,8 +719,8 @@ func (r *testFlushRecorder) Flush() {
 
 func TestLoggingResponseWriterPreservesFlusher(t *testing.T) {
 	rec := &testFlushRecorder{ResponseRecorder: httptest.NewRecorder()}
-	lrw := &loggingResponseWriter{ResponseWriter: rec, status: http.StatusOK}
-	flusher, ok := interface{}(lrw).(http.Flusher)
+	lrw, wrapped := newLoggingResponseWriter(rec)
+	flusher, ok := wrapped.(http.Flusher)
 	if !ok {
 		t.Fatal("loggingResponseWriter must preserve http.Flusher for SSE handlers")
 	}
@@ -713,6 +732,34 @@ func TestLoggingResponseWriterPreservesFlusher(t *testing.T) {
 	}
 	if lrw.status != http.StatusOK {
 		t.Fatalf("status = %d, want %d", lrw.status, http.StatusOK)
+	}
+}
+
+type testNonFlushingResponseWriter struct {
+	header http.Header
+	body   strings.Builder
+	status int
+}
+
+func (w *testNonFlushingResponseWriter) Header() http.Header {
+	if w.header == nil {
+		w.header = make(http.Header)
+	}
+	return w.header
+}
+
+func (w *testNonFlushingResponseWriter) WriteHeader(status int) {
+	w.status = status
+}
+
+func (w *testNonFlushingResponseWriter) Write(b []byte) (int, error) {
+	return w.body.Write(b)
+}
+
+func TestLoggingResponseWriterDoesNotAdvertiseUnsupportedFlusher(t *testing.T) {
+	_, wrapped := newLoggingResponseWriter(&testNonFlushingResponseWriter{})
+	if _, ok := wrapped.(http.Flusher); ok {
+		t.Fatal("logging response writer must not advertise http.Flusher when the wrapped writer does not support it")
 	}
 }
 
