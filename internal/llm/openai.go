@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 type OpenAIProvider struct {
@@ -21,7 +22,7 @@ func NewOpenAIProvider(baseURL, apiKey string) *OpenAIProvider {
 	return &OpenAIProvider{
 		BaseURL: strings.TrimRight(baseURL, "/"),
 		APIKey:  apiKey,
-		Client:  &http.Client{},
+		Client:  &http.Client{Timeout: 120 * time.Second},
 	}
 }
 
@@ -127,11 +128,18 @@ func (p *OpenAIProvider) buildRequest(req *ChatRequest) map[string]interface{} {
 
 func (p *OpenAIProvider) readStream(body io.ReadCloser, ch chan<- StreamEvent) {
 	defer close(ch)
+	defer func() {
+		if v := recover(); v != nil {
+			ch <- StreamEvent{Type: "error", Error: fmt.Errorf("openai stream panic: %v", v)}
+		}
+	}()
 	defer body.Close()
 
 	scanner := bufio.NewScanner(body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	// Accumulate tool calls across chunks
 	toolCalls := map[int]*ToolCall{}
+	seenDone := false
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -140,6 +148,7 @@ func (p *OpenAIProvider) readStream(body io.ReadCloser, ch chan<- StreamEvent) {
 		}
 		data := strings.TrimPrefix(line, "data: ")
 		if data == "[DONE]" {
+			seenDone = true
 			break
 		}
 
@@ -161,7 +170,8 @@ func (p *OpenAIProvider) readStream(body io.ReadCloser, ch chan<- StreamEvent) {
 			} `json:"choices"`
 		}
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
-			continue
+			ch <- StreamEvent{Type: "error", Error: fmt.Errorf("openai stream malformed JSON: %w", err)}
+			return
 		}
 		if len(chunk.Choices) == 0 {
 			continue
@@ -204,5 +214,12 @@ func (p *OpenAIProvider) readStream(body io.ReadCloser, ch chan<- StreamEvent) {
 		}
 	}
 
-	ch <- StreamEvent{Type: "done"}
+	if err := scanner.Err(); err != nil {
+		ch <- StreamEvent{Type: "error", Error: fmt.Errorf("openai stream read error: %w", err)}
+		return
+	}
+
+	if seenDone {
+		ch <- StreamEvent{Type: "done"}
+	}
 }

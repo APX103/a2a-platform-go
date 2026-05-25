@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 type AnthropicProvider struct {
@@ -21,7 +22,7 @@ func NewAnthropicProvider(baseURL, apiKey string) *AnthropicProvider {
 	return &AnthropicProvider{
 		BaseURL: strings.TrimRight(baseURL, "/"),
 		APIKey:  apiKey,
-		Client:  &http.Client{},
+		Client:  &http.Client{Timeout: 120 * time.Second},
 	}
 }
 
@@ -119,6 +120,11 @@ func (p *AnthropicProvider) buildRequest(req *ChatRequest) map[string]interface{
 
 func (p *AnthropicProvider) readStream(body io.ReadCloser, ch chan<- StreamEvent) {
 	defer close(ch)
+	defer func() {
+		if v := recover(); v != nil {
+			ch <- StreamEvent{Type: "error", Error: fmt.Errorf("anthropic stream panic: %v", v)}
+		}
+	}()
 	defer body.Close()
 
 	scanner := bufio.NewScanner(body)
@@ -135,7 +141,8 @@ func (p *AnthropicProvider) readStream(body io.ReadCloser, ch chan<- StreamEvent
 
 		var evt map[string]interface{}
 		if err := json.Unmarshal([]byte(data), &evt); err != nil {
-			continue
+			ch <- StreamEvent{Type: "error", Error: fmt.Errorf("anthropic stream malformed JSON: %w", err)}
+			return
 		}
 
 		evtType, _ := evt["type"].(string)
@@ -180,7 +187,9 @@ func (p *AnthropicProvider) readStream(body io.ReadCloser, ch chan<- StreamEvent
 		}
 	}
 
-	ch <- StreamEvent{Type: "done"}
+	if err := scanner.Err(); err != nil {
+		ch <- StreamEvent{Type: "error", Error: fmt.Errorf("anthropic stream read error: %w", err)}
+	}
 }
 
 func stringVal(m map[string]interface{}, key string) string {
