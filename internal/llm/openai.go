@@ -143,10 +143,10 @@ func (p *OpenAIProvider) readStream(body io.ReadCloser, ch chan<- StreamEvent) {
 
 	for scanner.Scan() {
 		line := scanner.Text()
-		if !strings.HasPrefix(line, "data: ") {
+		data, ok := sseData(line)
+		if !ok {
 			continue
 		}
-		data := strings.TrimPrefix(line, "data: ")
 		if strings.TrimSpace(data) == "" {
 			continue
 		}
@@ -228,4 +228,15 @@ func (p *OpenAIProvider) readStream(body io.ReadCloser, ch chan<- StreamEvent) {
 	}
 
 	ch <- StreamEvent{Type: "error", Error: fmt.Errorf("openai stream ended before [DONE]")}
+}
+
+func sseData(line string) (string, bool) {
+	if !strings.HasPrefix(line, "data:") {
+		return "", false
+	}
+	data := strings.TrimPrefix(line, "data:")
+	if strings.HasPrefix(data, " ") {
+		data = data[1:]
+	}
+	return data, true
 }

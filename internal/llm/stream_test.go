@@ -37,6 +37,26 @@ func TestOpenAIReadStreamReportsMalformedJSON(t *testing.T) {
 	}
 }
 
+func TestOpenAIReadStreamReportsCompactMalformedJSON(t *testing.T) {
+	provider := &OpenAIProvider{}
+	ch := make(chan StreamEvent, 4)
+
+	provider.readStream(io.NopCloser(strings.NewReader("data:{bad-json}\n\ndata: [DONE]\n\n")), ch)
+
+	var sawError bool
+	for evt := range ch {
+		if evt.Type == "error" {
+			sawError = true
+		}
+		if evt.Type == "done" {
+			t.Fatal("malformed stream emitted done")
+		}
+	}
+	if !sawError {
+		t.Fatal("missing error event")
+	}
+}
+
 func TestOpenAIReadStreamReportsScannerError(t *testing.T) {
 	provider := &OpenAIProvider{}
 	ch := make(chan StreamEvent, 4)
@@ -99,6 +119,26 @@ func TestAnthropicReadStreamReportsMalformedJSON(t *testing.T) {
 	ch := make(chan StreamEvent, 4)
 
 	provider.readStream(io.NopCloser(strings.NewReader("data: {bad-json}\n\n")), ch)
+
+	var sawError bool
+	for evt := range ch {
+		if evt.Type == "error" {
+			sawError = true
+		}
+		if evt.Type == "done" {
+			t.Fatal("malformed stream emitted done")
+		}
+	}
+	if !sawError {
+		t.Fatal("missing error event")
+	}
+}
+
+func TestAnthropicReadStreamReportsCompactMalformedJSON(t *testing.T) {
+	provider := &AnthropicProvider{}
+	ch := make(chan StreamEvent, 4)
+
+	provider.readStream(io.NopCloser(strings.NewReader(`data:{bad-json}`+"\n\n"+`data: {"type":"message_stop"}`+"\n\n")), ch)
 
 	var sawError bool
 	for evt := range ch {

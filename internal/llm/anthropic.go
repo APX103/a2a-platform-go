@@ -134,10 +134,10 @@ func (p *AnthropicProvider) readStream(body io.ReadCloser, ch chan<- StreamEvent
 
 	for scanner.Scan() {
 		line := scanner.Text()
-		if !strings.HasPrefix(line, "data: ") {
+		data, ok := sseData(line)
+		if !ok {
 			continue
 		}
-		data := strings.TrimPrefix(line, "data: ")
 		if strings.TrimSpace(data) == "" {
 			continue
 		}
