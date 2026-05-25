@@ -41,6 +41,7 @@ services:
         condition: service_healthy
     environment:
       - TZ=Asia/Shanghai
+      - ADMIN_TOKEN=a2a-admin-token
     command: >
       /app/a2a-platform
       -f /app/etc/config.yaml

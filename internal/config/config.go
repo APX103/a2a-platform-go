@@ -154,6 +154,9 @@ func Load(path string) (*Config, error) {
 			c.BuiltinAgents[i].MaxToolResultSize = 10000
 		}
 	}
+	if v := os.Getenv("ADMIN_TOKEN"); v != "" {
+		c.AdminToken = v
+	}
 	return &c, nil
 }
 
