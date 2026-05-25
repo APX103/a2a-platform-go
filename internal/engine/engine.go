@@ -56,7 +56,7 @@ type ToolExecutionContext struct {
 type Engine struct {
 	agents         map[string]*BuiltinAgent
 	mu             sync.RWMutex
-	callTool       func(agent *BuiltinAgent, name string, arguments string, execCtx ToolExecutionContext) (string, error)
+	callTool       func(ctx context.Context, agent *BuiltinAgent, name string, arguments string, execCtx ToolExecutionContext) (string, error)
 	subagentEngine *tools.SubagentEngine
 }
 
@@ -371,6 +371,16 @@ func (e *Engine) runLoop(
 			roWg.Add(1)
 			go func(tcall llm.ToolCall) {
 				defer roWg.Done()
+				defer func() {
+					if v := recover(); v != nil {
+						roMu.Lock()
+						roResults[tcall.ID] = struct {
+							result string
+							err    error
+						}{result: fmt.Sprintf("Error: tool panic: %v", v), err: fmt.Errorf("tool panic: %v", v)}
+						roMu.Unlock()
+					}
+				}()
 				execCtx := ToolExecutionContext{
 					SourceAgent:      agent.Config.Name,
 					RootContextId:    rootContextId,
@@ -409,14 +419,16 @@ func (e *Engine) runLoop(
 			})
 
 			traceData, _ := json.Marshal(map[string]string{"tool": tc.Name, "arguments": tc.Arguments})
-			deps.RecordTrace(&model.TraceEvent{
-				TaskId:        taskId,
-				ContextId:     &contextId,
-				RootContextId: stringPtr(rootContextId),
-				EventType:     "tool_call",
-				AgentName:     agent.Config.Name,
-				DataJson:      redact.SafeTraceData(string(traceData), 4000),
-			})
+			if deps.RecordTrace != nil {
+				deps.RecordTrace(&model.TraceEvent{
+					TaskId:        taskId,
+					ContextId:     &contextId,
+					RootContextId: stringPtr(rootContextId),
+					EventType:     "tool_call",
+					AgentName:     agent.Config.Name,
+					DataJson:      redact.SafeTraceData(string(traceData), 4000),
+				})
+			}
 
 			var result string
 			var err error
@@ -480,6 +492,9 @@ func (e *Engine) runLoop(
 					result, err = e.callToolWithTimeout(ctx, agent, tc.Name, tc.Arguments, execCtx, emitProgress)
 					if err != nil {
 						result = fmt.Sprintf("Error: %s", err)
+						if isToolNotFoundError(tc.Name, err) {
+							return "", err
+						}
 					}
 				}
 			} else if res, ok := roResults[tc.ID]; ok {
@@ -498,6 +513,9 @@ func (e *Engine) runLoop(
 				result, err = e.callToolWithTimeout(ctx, agent, tc.Name, tc.Arguments, execCtx, emitProgress)
 				if err != nil {
 					result = fmt.Sprintf("Error: %s", err)
+					if isToolNotFoundError(tc.Name, err) {
+						return "", err
+					}
 				}
 			}
 
@@ -563,14 +581,20 @@ func redactToolCallsForPersistence(toolCalls []llm.ToolCall) []llm.ToolCall {
 	return out
 }
 
+func isToolNotFoundError(name string, err error) bool {
+	return err != nil && strings.Contains(err.Error(), fmt.Sprintf("tool %q not found", name))
+}
+
 func (e *Engine) callToolWithTimeout(ctx context.Context, agent *BuiltinAgent, name string, arguments string, execCtx ToolExecutionContext, onProgress func(time.Duration)) (string, error) {
 	type result struct {
 		text string
 		err  error
 	}
+	execCtxWithTimeout, cancel := context.WithTimeout(ctx, toolCallTimeout)
+	defer cancel()
 	done := make(chan result, 1)
 	go func() {
-		text, err := e.callTool(agent, name, arguments, execCtx)
+		text, err := e.callTool(execCtxWithTimeout, agent, name, arguments, execCtx)
 		done <- result{text: text, err: err}
 	}()
 
@@ -600,7 +624,7 @@ func (e *Engine) callToolWithTimeout(ctx context.Context, agent *BuiltinAgent, n
 	}
 }
 
-func (e *Engine) defaultCallTool(agent *BuiltinAgent, name string, arguments string, execCtx ToolExecutionContext) (string, error) {
+func (e *Engine) defaultCallTool(ctx context.Context, agent *BuiltinAgent, name string, arguments string, execCtx ToolExecutionContext) (string, error) {
 	// Check platform tools
 	for _, tool := range tools.GetAllTools() {
 		if tool.Name == name {
@@ -629,7 +653,13 @@ func (e *Engine) defaultCallTool(agent *BuiltinAgent, name string, arguments str
 			if execCtx.GroupId != "" {
 				args["_group_id"] = execCtx.GroupId
 			}
-			result, err := tool.Execute(args)
+			var result string
+			var err error
+			if tool.ExecuteContext != nil {
+				result, err = tool.ExecuteContext(ctx, args)
+			} else {
+				result, err = tool.Execute(args)
+			}
 			if err != nil {
 				return fmt.Sprintf("Error: %v", err), err
 			}

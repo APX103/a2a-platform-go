@@ -380,8 +380,8 @@ flowchart LR
           <tr><td>ServiceContext</td><td>组合 DB、Store、Registry、EventBus、Engine、BridgeRegistry，执行 MySQL schema migration，并集中关闭 Registry 健康检查与 DB。</td><td><code>internal/svc/servicecontext.go</code></td></tr>
           <tr><td>Agent Registry</td><td>外部 Agent 注册、AgentCard 发现/托管、可取消且可停止的后台健康检查、内存连接与 DB 状态同步。</td><td><code>internal/svc/registry.go</code></td></tr>
           <tr><td>HTTP Handler</td><td>Agent CRUD、A2A 代理、Task/Trace/Context/Subagent、Group API、Stats、Events。</td><td><code>internal/handler/*.go</code></td></tr>
-          <tr><td>Engine</td><td>内置 Agent LLM 调用循环、工具调用、SSE 输出、消息与 trace 持久化。</td><td><code>internal/engine/engine.go</code></td></tr>
-          <tr><td>Tools</td><td>文件/HTTP/目录工具、A2A 平台工具、spawn_agent、task item 动态工具。</td><td><code>internal/tools/*.go</code></td></tr>
+          <tr><td>Engine</td><td>内置 Agent LLM 调用循环、带超时/取消传播的工具调用、SSE 输出、消息与 trace 持久化。</td><td><code>internal/engine/engine.go</code></td></tr>
+          <tr><td>Tools</td><td>文件/HTTP/目录工具、A2A 平台工具、spawn_agent、task item 动态工具；工具定义保留 <code>Execute</code>，可选实现 <code>ExecuteContext</code> 接收 Engine 传入的取消 context。</td><td><code>internal/tools/*.go</code></td></tr>
           <tr><td>Bridge</td><td>把配置化 skill 映射到 HTTP 或 CLI 调用，再包装成 A2A SSE 响应。</td><td><code>internal/bridge/*.go</code></td></tr>
           <tr><td>Admin UI</td><td>先通过纯前端 Admin token 登录门禁；通过后管理 Agent、Human 身份资料与在线状态；Agents/Humans 列表可进入详情页查看 token 管理、资料修改和删除动作；同时管理 Builtin Agent、Task、Trace、Context Chat、Group 和 Artifact。</td><td><code>web/admin/src</code></td></tr>
           <tr><td>Human Client</td><td>通过 invite token 加入 group，以 member token 读取房间、发消息、看产物。</td><td><code>apps/human-client/src</code></td></tr>
@@ -529,7 +529,7 @@ sequenceDiagram
     Engine->>Client: SSE text.delta / thinking.delta
     alt tool calls exist
       Engine->>Client: SSE tool.call_start
-      Engine->>Tools: Execute tool with source/root/parent/group context
+      Engine->>Tools: Execute tool with source/root/parent/group context + cancellation
       Tools-->>Engine: result or error text
       Engine->>DB: persist assistant/tool messages + trace
       Engine->>Client: SSE tool.result
@@ -542,7 +542,7 @@ sequenceDiagram
       </div>
 
       <h3>3.5 Subagent 与任务工具</h3>
-      <p><code>ConfigureAuxiliaryAgentTools</code> 会注册 <code>spawn_agent</code> 和 task system tools。<code>spawn_agent</code> 创建 <code>subagent_sessions</code>，以隔离上下文运行最多 3 个并发子代理，最长 5 分钟。</p>
+      <p><code>ConfigureAuxiliaryAgentTools</code> 会注册 <code>spawn_agent</code> 和 task system tools。<code>spawn_agent</code> 创建 <code>subagent_sessions</code>，以隔离上下文运行最多 3 个并发子代理，最长 5 分钟；父级工具调用 context 取消时会传递到子代理运行。</p>
       <div class="diagram">
         <p class="diagram-title">spawn_agent 子代理流程</p>
         <pre class="mermaid">

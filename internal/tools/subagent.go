@@ -246,6 +246,12 @@ func (e *SubagentEngine) runLLMLoop(
 // This is a factory function - you need to pass the engine when calling it
 func SpawnAgent(engine *SubagentEngine) func(args map[string]any) (string, error) {
 	return func(args map[string]any) (string, error) {
+		return SpawnAgentContext(engine)(context.Background(), args)
+	}
+}
+
+func SpawnAgentContext(engine *SubagentEngine) func(context.Context, map[string]any) (string, error) {
+	return func(ctx context.Context, args map[string]any) (string, error) {
 		task, _ := args["task"].(string)
 		if task == "" {
 			return "", fmt.Errorf("task is required for spawn_agent")
@@ -257,8 +263,7 @@ func SpawnAgent(engine *SubagentEngine) func(args map[string]any) (string, error
 		parentContextId, _ := args["_parent_context_id"].(string)
 		parentToolCallId, _ := args["_parent_tool_call_id"].(string)
 
-		// Execute subagent
-		ctx, cancel := context.WithTimeout(context.Background(), subagentTimeout)
+		ctx, cancel := context.WithTimeout(ctx, subagentTimeout)
 		defer cancel()
 
 		result, err := engine.Run(ctx, task, contextStr, parentContextId, parentToolCallId)
@@ -289,6 +294,9 @@ func NewSpawnAgentTool(engine *SubagentEngine) model.BuiltinTool {
 				Required:    false,
 			},
 		},
-		Execute: SpawnAgent(engine),
+		Execute: func(args map[string]any) (string, error) {
+			return SpawnAgentContext(engine)(context.Background(), args)
+		},
+		ExecuteContext: SpawnAgentContext(engine),
 	}
 }

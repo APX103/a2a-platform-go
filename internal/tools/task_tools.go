@@ -33,7 +33,7 @@ func NewTaskTools(store TaskItemStore) []model.BuiltinTool {
 				{Name: "context_id", Type: "string", Description: "Context/session ID this task belongs to", Required: true},
 				{Name: "blocked_by", Type: "string", Description: "Comma-separated list of task IDs that must be completed before this task can start", Required: false},
 			},
-			Execute: executeCreateTask(store),
+			Execute:    executeCreateTask(store),
 			IsReadOnly: false,
 		},
 		{
@@ -42,7 +42,7 @@ func NewTaskTools(store TaskItemStore) []model.BuiltinTool {
 			Parameters: []model.ToolParameter{
 				{Name: "context_id", Type: "string", Description: "Context/session ID to list tasks for", Required: true},
 			},
-			Execute: executeListTasks(store),
+			Execute:    executeListTasks(store),
 			IsReadOnly: true,
 		},
 		{
@@ -51,7 +51,7 @@ func NewTaskTools(store TaskItemStore) []model.BuiltinTool {
 			Parameters: []model.ToolParameter{
 				{Name: "task_id", Type: "string", Description: "The task ID", Required: true},
 			},
-			Execute: executeGetTask(store),
+			Execute:    executeGetTask(store),
 			IsReadOnly: true,
 		},
 		{
@@ -61,7 +61,7 @@ func NewTaskTools(store TaskItemStore) []model.BuiltinTool {
 				{Name: "task_id", Type: "string", Description: "The task ID to claim", Required: true},
 				{Name: "owner", Type: "string", Description: "Name of the agent claiming the task", Required: false},
 			},
-			Execute: executeClaimTask(store),
+			Execute:    executeClaimTask(store),
 			IsReadOnly: false,
 		},
 		{
@@ -71,7 +71,7 @@ func NewTaskTools(store TaskItemStore) []model.BuiltinTool {
 				{Name: "task_id", Type: "string", Description: "The task ID to complete", Required: true},
 				{Name: "result", Type: "string", Description: "Summary of what was accomplished", Required: false},
 			},
-			Execute: executeCompleteTask(store),
+			Execute:    executeCompleteTask(store),
 			IsReadOnly: false,
 		},
 	}
