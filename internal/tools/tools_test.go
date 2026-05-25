@@ -177,6 +177,26 @@ func TestRegisterDynamicToolsReplacesByName(t *testing.T) {
 	}
 }
 
+func TestExecuteToolRejectsToolWithoutExecutor(t *testing.T) {
+	dynamicToolsMu.Lock()
+	original := append([]model.BuiltinTool{}, DynamicTools...)
+	DynamicTools = nil
+	dynamicToolsMu.Unlock()
+	t.Cleanup(func() {
+		dynamicToolsMu.Lock()
+		DynamicTools = original
+		dynamicToolsMu.Unlock()
+	})
+
+	RegisterDynamicTools([]model.BuiltinTool{{Name: "nil_execute_tool_test", Description: "nil executor"}})
+
+	if _, err := ExecuteTool("nil_execute_tool_test", map[string]any{}); err == nil {
+		t.Fatal("ExecuteTool succeeded, want nil executor error")
+	} else if !strings.Contains(err.Error(), `tool "nil_execute_tool_test" has no execute function`) {
+		t.Fatalf("error = %q, want nil executor error", err.Error())
+	}
+}
+
 func TestExecuteListAgentsUsesAdminToken(t *testing.T) {
 	var gotToken string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

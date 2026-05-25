@@ -30,6 +30,66 @@ func TestRunLoopAllowsNilRecordTrace(t *testing.T) {
 	}
 }
 
+func TestCallToolWithTimeoutRecoversToolPanic(t *testing.T) {
+	eng := New()
+	eng.callTool = func(ctx context.Context, agent *BuiltinAgent, name string, arguments string, execCtx ToolExecutionContext) (string, error) {
+		panic("boom")
+	}
+
+	agent := &BuiltinAgent{Config: config.BuiltinAgent{Name: "agent"}}
+	result, err := eng.callToolWithTimeout(context.Background(), agent, "panic_tool", "{}", ToolExecutionContext{}, nil)
+	if err == nil {
+		t.Fatal("callToolWithTimeout succeeded, want panic error")
+	}
+	if result != "" {
+		t.Fatalf("result = %q, want empty", result)
+	}
+	if !strings.Contains(err.Error(), "tool panic: boom") {
+		t.Fatalf("error = %q, want tool panic", err.Error())
+	}
+}
+
+func TestDefaultCallToolRejectsToolWithoutExecutor(t *testing.T) {
+	tools.RegisterDynamicTools([]model.BuiltinTool{
+		{Name: "nil_execute_engine_test", Description: "nil executor"},
+	})
+
+	eng := New()
+	agent := &BuiltinAgent{Config: config.BuiltinAgent{Name: "agent"}}
+	if _, err := eng.defaultCallTool(context.Background(), agent, "nil_execute_engine_test", "{}", ToolExecutionContext{}); err == nil {
+		t.Fatal("defaultCallTool succeeded, want nil executor error")
+	} else if !strings.Contains(err.Error(), `tool "nil_execute_engine_test" has no execute function`) {
+		t.Fatalf("error = %q, want nil executor error", err.Error())
+	}
+}
+
+func TestDefaultCallToolPassesCanceledContextToExecuteContext(t *testing.T) {
+	observed := make(chan error, 1)
+	tools.RegisterDynamicTools([]model.BuiltinTool{
+		{
+			Name:        "canceled_context_engine_test",
+			Description: "canceled context",
+			ExecuteContext: func(ctx context.Context, args map[string]any) (string, error) {
+				observed <- ctx.Err()
+				return "", ctx.Err()
+			},
+		},
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	eng := New()
+	agent := &BuiltinAgent{Config: config.BuiltinAgent{Name: "agent"}}
+	_, err := eng.defaultCallTool(ctx, agent, "canceled_context_engine_test", "{}", ToolExecutionContext{})
+	if err == nil {
+		t.Fatal("defaultCallTool succeeded, want canceled context error")
+	}
+	if got := <-observed; got != context.Canceled {
+		t.Fatalf("ExecuteContext observed %v, want context.Canceled", got)
+	}
+}
+
 // mockProvider is a test double for llm.Provider.
 type mockProvider struct {
 	events    []llm.StreamEvent

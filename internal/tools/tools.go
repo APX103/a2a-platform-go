@@ -162,7 +162,10 @@ func ExecuteTool(name string, args map[string]any) (string, error) {
 			if tool.ExecuteContext != nil {
 				return tool.ExecuteContext(context.Background(), args)
 			}
-			return tool.Execute(args)
+			if tool.Execute != nil {
+				return tool.Execute(args)
+			}
+			return "", fmt.Errorf("tool %q has no execute function", name)
 		}
 	}
 	return "", fmt.Errorf("tool %q not found", name)

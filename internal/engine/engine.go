@@ -594,6 +594,11 @@ func (e *Engine) callToolWithTimeout(ctx context.Context, agent *BuiltinAgent, n
 	defer cancel()
 	done := make(chan result, 1)
 	go func() {
+		defer func() {
+			if v := recover(); v != nil {
+				done <- result{err: fmt.Errorf("tool panic: %v", v)}
+			}
+		}()
 		text, err := e.callTool(execCtxWithTimeout, agent, name, arguments, execCtx)
 		done <- result{text: text, err: err}
 	}()
@@ -657,8 +662,10 @@ func (e *Engine) defaultCallTool(ctx context.Context, agent *BuiltinAgent, name 
 			var err error
 			if tool.ExecuteContext != nil {
 				result, err = tool.ExecuteContext(ctx, args)
-			} else {
+			} else if tool.Execute != nil {
 				result, err = tool.Execute(args)
+			} else {
+				return "", fmt.Errorf("tool %q has no execute function", name)
 			}
 			if err != nil {
 				return fmt.Sprintf("Error: %v", err), err
