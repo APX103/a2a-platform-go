@@ -268,9 +268,6 @@ func spawnAgent(ctx context.Context, engine *SubagentEngine, args map[string]any
 	parentContextId, _ := args["_parent_context_id"].(string)
 	parentToolCallId, _ := args["_parent_tool_call_id"].(string)
 
-	ctx, cancel := context.WithTimeout(ctx, subagentTimeout)
-	defer cancel()
-
 	result, err := engine.Run(ctx, task, contextStr, parentContextId, parentToolCallId)
 	if err != nil {
 		return "", fmt.Errorf("subagent execution failed: %w", err)
