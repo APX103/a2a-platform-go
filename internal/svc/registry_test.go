@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"a2a-platform/internal/model"
 	"a2a-platform/internal/testutil"
@@ -146,4 +147,13 @@ func TestRegisterAgent_WithStaticAgentCard_DoesNotRequireDiscoveryEndpoint(t *te
 	if restored.GetClient("static-agent") == nil {
 		t.Fatal("static agent was not restored from stored AgentCard")
 	}
+}
+
+func TestRegistryStopHealthCheckIsIdempotent(t *testing.T) {
+	db := setupRegistryTestDB(t)
+	registry := NewAgentRegistry(NewAgentStore(db))
+
+	registry.StartHealthCheck(time.Hour)
+	registry.StopHealthCheck()
+	registry.StopHealthCheck()
 }

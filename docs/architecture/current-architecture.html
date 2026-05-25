@@ -375,10 +375,10 @@ flowchart LR
       <table>
         <thead><tr><th>模块</th><th>职责</th><th>关键文件</th></tr></thead>
         <tbody>
-          <tr><td>服务入口</td><td>加载配置、初始化 ServiceContext、注册路由、中间件、内置/桥接 Agent、嵌入 Admin SPA。</td><td><code>cmd/server/main.go</code></td></tr>
+          <tr><td>服务入口</td><td>加载配置、初始化 ServiceContext、注册路由、中间件、内置/桥接 Agent、嵌入 Admin SPA，并在 SIGINT/SIGTERM 时优雅关闭 HTTP server 和服务资源。</td><td><code>cmd/server/main.go</code></td></tr>
           <tr><td>配置</td><td>解析 YAML、环境变量展开、MySQL/Admin/CORS/RateLimit/Builtin/Bridge 配置默认值。</td><td><code>internal/config/config.go</code></td></tr>
-          <tr><td>ServiceContext</td><td>组合 DB、Store、Registry、EventBus、Engine、BridgeRegistry，并执行 MySQL schema migration。</td><td><code>internal/svc/servicecontext.go</code></td></tr>
-          <tr><td>Agent Registry</td><td>外部 Agent 注册、AgentCard 发现/托管、健康检查、内存连接与 DB 状态同步。</td><td><code>internal/svc/registry.go</code></td></tr>
+          <tr><td>ServiceContext</td><td>组合 DB、Store、Registry、EventBus、Engine、BridgeRegistry，执行 MySQL schema migration，并集中关闭 Registry 健康检查与 DB。</td><td><code>internal/svc/servicecontext.go</code></td></tr>
+          <tr><td>Agent Registry</td><td>外部 Agent 注册、AgentCard 发现/托管、可停止的后台健康检查、内存连接与 DB 状态同步。</td><td><code>internal/svc/registry.go</code></td></tr>
           <tr><td>HTTP Handler</td><td>Agent CRUD、A2A 代理、Task/Trace/Context/Subagent、Group API、Stats、Events。</td><td><code>internal/handler/*.go</code></td></tr>
           <tr><td>Engine</td><td>内置 Agent LLM 调用循环、工具调用、SSE 输出、消息与 trace 持久化。</td><td><code>internal/engine/engine.go</code></td></tr>
           <tr><td>Tools</td><td>文件/HTTP/目录工具、A2A 平台工具、spawn_agent、task item 动态工具。</td><td><code>internal/tools/*.go</code></td></tr>
@@ -411,7 +411,7 @@ flowchart TB
       <h2>3. 关键流程</h2>
 
       <h3>3.1 服务启动流程</h3>
-      <p>启动时服务先建立 MySQL 连接并迁移 schema，然后恢复 Agent 连接状态，注册配置里的 builtin/bridge Agent，最后挂载 API 和 Admin SPA。</p>
+      <p>启动时服务先建立 MySQL 连接并迁移 schema，然后恢复 Agent 连接状态，注册配置里的 builtin/bridge Agent，启动 Registry 后台健康检查，最后挂载 API 和 Admin SPA。收到 SIGINT/SIGTERM 后，服务会先用 10 秒超时关闭 HTTP server，再通过 <code>ServiceContext.Close()</code> 停止健康检查并关闭 MySQL。</p>
       <div class="diagram">
         <p class="diagram-title">启动流程</p>
         <pre class="mermaid">
@@ -438,6 +438,7 @@ sequenceDiagram
     Main->>Reg: 持久化 bridge agent
     Main->>SC: BridgeRegistry.Register()
   end
+  Main->>Reg: StartHealthCheck(30s)
   Main->>HTTP: 注册路由 + middleware + SPA
   HTTP-->>Main: ListenAndServe
         </pre>
@@ -902,7 +903,7 @@ erDiagram
             <li><code>/api/humans/{id}</code>：Admin 查询、修改或删除 human；修改仅覆盖 handle/display name，删除会清理 sessions、group membership 和 group-scoped tokens。</li>
             <li><code>POST /api/humans/{id}/tokens</code>：Admin 为 human 签发新 session token；旧 token 只保存 hash，不能被反查。</li>
             <li><code>/api/builtin-agents</code>：内置 Agent CRUD，并同步 Engine 和 Registry。</li>
-            <li><code>/api/tasks</code>、<code>/api/traces</code>、<code>/api/contexts</code>、<code>/api/subagents</code>：观测和会话管理。</li>
+            <li><code>/api/tasks</code>、<code>/api/traces</code>、<code>/api/contexts</code>、<code>/api/subagents</code>、<code>/api/stats</code>：观测、统计和会话管理。</li>
             <li><code>POST /api/groups</code>、成员管理、invite 管理、group join 管理。</li>
           </ul>
         </div>
@@ -931,14 +932,16 @@ erDiagram
         <pre class="mermaid">
 flowchart LR
   Request --> RID["requestIDMiddleware&lt;br/&gt;X-Request-ID"]
-  RID --> CORS["corsMiddleware&lt;br/&gt;configured origins + admin token origin"]
+  RID --> Recover["recoverMiddleware&lt;br/&gt;JSON 500 + panic log"]
+  Recover --> CORS["corsMiddleware&lt;br/&gt;configured origins + admin token origin"]
   CORS --> Rate["rateLimitMiddleware&lt;br/&gt;global + per IP"]
   Rate --> Auth["authMiddleware&lt;br/&gt;admin/member/scoped group"]
-  Auth --> Log["loggingMiddleware"]
+  Auth --> Log["loggingMiddleware&lt;br/&gt;status + bytes + duration"]
   Log --> Mux["http.ServeMux routes"]
   Mux --> Response
         </pre>
       </div>
+      <p><code>/health</code> 始终返回 JSON；MySQL <code>Ping</code> 成功时返回 HTTP 200 与 <code>status=ok</code>，失败时返回 HTTP 503 与 <code>status=degraded</code>、<code>db=error</code>，同时继续报告 Registry 中已连接和总 Agent 数。</p>
       <p>CORS 仍支持 <code>cors_origins</code> 白名单，但管理面请求有额外放行规则：实际请求如果携带合法 <code>X-Admin-Token</code> 或 <code>Authorization: Bearer admin-token</code>，服务端会回显该请求的 <code>Origin</code>；预检请求如果声明会携带 Admin header，也允许通过，真正权限仍由后续 <code>authMiddleware</code> 校验 Admin token。</p>
     </section>
 

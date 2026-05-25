@@ -43,6 +43,19 @@ type ServiceContext struct {
 	BridgeRegistry *bridge.BridgeRegistry
 }
 
+func (s *ServiceContext) Close() error {
+	if s == nil {
+		return nil
+	}
+	if s.Registry != nil {
+		s.Registry.StopHealthCheck()
+	}
+	if s.DB != nil {
+		return s.DB.Close()
+	}
+	return nil
+}
+
 func (s *ServiceContext) ConfigureAuxiliaryAgentTools(cfg config.BuiltinAgent) {
 	if s == nil || s.Engine == nil {
 		return

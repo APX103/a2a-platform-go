@@ -48,12 +48,16 @@ func (c *AgentConnection) Info() model.AgentInfo {
 
 // AgentRegistry manages in-memory agent connections with DB persistence.
 type AgentRegistry struct {
-	store       *AgentStore
-	connections map[string]*AgentConnection
-	mu          sync.RWMutex
-	failCounts  map[string]int
-	failMu      sync.Mutex
-	EventBus    *events.Broadcaster
+	store        *AgentStore
+	connections  map[string]*AgentConnection
+	mu           sync.RWMutex
+	failCounts   map[string]int
+	failMu       sync.Mutex
+	healthMu     sync.Mutex
+	healthStop   chan struct{}
+	healthDone   chan struct{}
+	healthActive bool
+	EventBus     *events.Broadcaster
 }
 
 func NewAgentRegistry(store *AgentStore) *AgentRegistry {
@@ -393,14 +397,55 @@ func (r *AgentRegistry) RestoreConnections() {
 // StartHealthCheck launches a background goroutine that periodically checks
 // the health of all connected agents.
 func (r *AgentRegistry) StartHealthCheck(interval time.Duration) {
+	r.healthMu.Lock()
+	if r.healthActive {
+		r.healthMu.Unlock()
+		return
+	}
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	r.healthStop = stop
+	r.healthDone = done
+	r.healthActive = true
+	r.healthMu.Unlock()
+
 	go func() {
+		defer close(done)
+		defer func() {
+			if v := recover(); v != nil {
+				slog.Error("agent health check panic recovered", "panic", v)
+			}
+		}()
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
-		for range ticker.C {
-			r.runHealthCheck()
+		for {
+			select {
+			case <-ticker.C:
+				r.runHealthCheck()
+			case <-stop:
+				return
+			}
 		}
 	}()
 	slog.Info("Agent health check started", "interval", interval)
+}
+
+func (r *AgentRegistry) StopHealthCheck() {
+	r.healthMu.Lock()
+	if !r.healthActive {
+		r.healthMu.Unlock()
+		return
+	}
+	stop := r.healthStop
+	done := r.healthDone
+	r.healthActive = false
+	r.healthStop = nil
+	r.healthDone = nil
+	close(stop)
+	r.healthMu.Unlock()
+
+	<-done
+	slog.Info("Agent health check stopped")
 }
 
 func (r *AgentRegistry) runHealthCheck() {

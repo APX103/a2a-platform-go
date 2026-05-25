@@ -437,6 +437,12 @@ func TestRequiresAdminProductionEndpointMatrix(t *testing.T) {
 	}
 }
 
+func TestRequiresAdminProtectsStats(t *testing.T) {
+	if !requiresAdmin("/api/stats", http.MethodGet) {
+		t.Fatal("/api/stats must require admin auth")
+	}
+}
+
 func TestGroupRoute_JoinAndEventReturnOrchestration(t *testing.T) {
 	svcCtx, groupID := setupGroupRouteTestContext(t)
 
@@ -555,6 +561,97 @@ func TestRequestIDMiddlewareSetsResponseHeader(t *testing.T) {
 
 	if got := rec.Header().Get("X-Request-ID"); got != "req-test-123" {
 		t.Fatalf("response X-Request-ID = %q, want req-test-123", got)
+	}
+}
+
+func TestRecoverMiddlewareReturnsJSON500(t *testing.T) {
+	h := requestIDMiddleware(recoverMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		panic("boom")
+	})))
+	req := httptest.NewRequest(http.MethodGet, "/panic", nil)
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusInternalServerError)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "application/json") {
+		t.Fatalf("content-type = %q, want JSON", ct)
+	}
+	if !strings.Contains(rec.Body.String(), "internal server error") {
+		t.Fatalf("body = %q, want generic error", rec.Body.String())
+	}
+}
+
+func TestHealthHandlerReturns503WhenDBPingFails(t *testing.T) {
+	db := testutil.TempMySQLDB(t)
+	_ = db.Close()
+	svcCtx := &svc.ServiceContext{
+		DB:       db,
+		Registry: svc.NewAgentRegistry(svc.NewAgentStore(db)),
+	}
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	rec := httptest.NewRecorder()
+
+	makeHealthHandler(svcCtx).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusServiceUnavailable)
+	}
+	if !strings.Contains(rec.Body.String(), `"status":"degraded"`) {
+		t.Fatalf("body = %q, want degraded status", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"db":"error"`) {
+		t.Fatalf("body = %q, want db error", rec.Body.String())
+	}
+}
+
+func TestLoggingResponseWriterCapturesStatusAndSize(t *testing.T) {
+	rec := httptest.NewRecorder()
+	lrw := &loggingResponseWriter{ResponseWriter: rec, status: http.StatusOK}
+
+	lrw.WriteHeader(http.StatusCreated)
+	n, err := lrw.Write([]byte("hello"))
+
+	if err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+	if n != 5 {
+		t.Fatalf("bytes written = %d, want 5", n)
+	}
+	if lrw.status != http.StatusCreated {
+		t.Fatalf("status = %d, want %d", lrw.status, http.StatusCreated)
+	}
+	if lrw.bytes != 5 {
+		t.Fatalf("bytes = %d, want 5", lrw.bytes)
+	}
+}
+
+type testFlushRecorder struct {
+	*httptest.ResponseRecorder
+	flushed bool
+}
+
+func (r *testFlushRecorder) Flush() {
+	r.flushed = true
+}
+
+func TestLoggingResponseWriterPreservesFlusher(t *testing.T) {
+	rec := &testFlushRecorder{ResponseRecorder: httptest.NewRecorder()}
+	lrw := &loggingResponseWriter{ResponseWriter: rec, status: http.StatusOK}
+	flusher, ok := interface{}(lrw).(http.Flusher)
+	if !ok {
+		t.Fatal("loggingResponseWriter must preserve http.Flusher for SSE handlers")
+	}
+
+	flusher.Flush()
+
+	if !rec.flushed {
+		t.Fatal("Flush was not forwarded to wrapped response writer")
+	}
+	if lrw.status != http.StatusOK {
+		t.Fatalf("status = %d, want %d", lrw.status, http.StatusOK)
 	}
 }
 

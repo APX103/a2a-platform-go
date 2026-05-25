@@ -164,12 +164,13 @@ func main() {
 	// ===== Start server =====
 	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
 
-	// Build middleware chain: cors -> rateLimit -> auth -> logging -> mux
+	// Build middleware chain: requestID -> recover -> cors -> rateLimit -> auth -> logging -> mux
 	var h http.Handler = mux
 	h = loggingMiddleware(h)
 	h = authMiddleware(h, svcCtx)
 	h = rateLimitMiddleware(h, cfg)
 	h = corsMiddleware(h, cfg)
+	h = recoverMiddleware(h)
 	h = requestIDMiddleware(h)
 
 	server := &http.Server{
@@ -188,7 +189,12 @@ func main() {
 		slog.Info("Shutting down...")
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		server.Shutdown(ctx)
+		if err := server.Shutdown(ctx); err != nil {
+			slog.Error("HTTP server shutdown failed", "error", err)
+		}
+		if err := svcCtx.Close(); err != nil {
+			slog.Error("Service context close failed", "error", err)
+		}
 	}()
 
 	// Load and register builtin agents from database
@@ -222,16 +228,21 @@ func makeHealthHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
+		status := "ok"
 		dbStatus := "ok"
+		httpStatus := http.StatusOK
 		if err := svcCtx.DB.Ping(); err != nil {
+			status = "degraded"
 			dbStatus = "error"
+			httpStatus = http.StatusServiceUnavailable
 		}
 
 		agentsConnected := svcCtx.Registry.CountConnected()
 		agentsTotal, _ := svcCtx.Registry.CountTotal()
 
+		w.WriteHeader(httpStatus)
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"status":           "ok",
+			"status":           status,
 			"db":               dbStatus,
 			"agents_connected": agentsConnected,
 			"agents_total":     agentsTotal,
@@ -793,6 +804,9 @@ func requiresAdmin(path, method string) bool {
 	if strings.HasPrefix(path, "/api/agents") || strings.HasPrefix(path, "/api/builtin-agents") {
 		return true
 	}
+	if path == "/api/stats" {
+		return true
+	}
 	if path == "/api/humans" {
 		return true
 	}
@@ -885,18 +899,73 @@ func rateLimitMiddleware(next http.Handler, cfg *config.Config) http.Handler {
 	})
 }
 
+type loggingResponseWriter struct {
+	http.ResponseWriter
+	status      int
+	bytes       int
+	wroteHeader bool
+}
+
+func (w *loggingResponseWriter) WriteHeader(status int) {
+	if w.wroteHeader {
+		return
+	}
+	w.wroteHeader = true
+	w.status = status
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *loggingResponseWriter) Write(b []byte) (int, error) {
+	if !w.wroteHeader {
+		w.WriteHeader(http.StatusOK)
+	}
+	n, err := w.ResponseWriter.Write(b)
+	w.bytes += n
+	return n, err
+}
+
+func (w *loggingResponseWriter) Flush() {
+	if !w.wroteHeader {
+		w.WriteHeader(http.StatusOK)
+	}
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
 func loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		next.ServeHTTP(w, r)
+		lrw := &loggingResponseWriter{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(lrw, r)
 		requestID, _ := r.Context().Value(requestIDContextKey{}).(string)
 		slog.Info("request",
 			"request_id", requestID,
 			"method", r.Method,
 			"path", r.URL.Path,
 			"remote", r.RemoteAddr,
+			"status", lrw.status,
+			"bytes", lrw.bytes,
 			"duration", time.Since(start),
 		)
+	})
+}
+
+func recoverMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if v := recover(); v != nil {
+				requestID, _ := r.Context().Value(requestIDContextKey{}).(string)
+				slog.Error("panic recovered",
+					"request_id", requestID,
+					"method", r.Method,
+					"path", r.URL.Path,
+					"panic", v,
+				)
+				jsonError(w, "internal server error", http.StatusInternalServerError)
+			}
+		}()
+		next.ServeHTTP(w, r)
 	})
 }
 
