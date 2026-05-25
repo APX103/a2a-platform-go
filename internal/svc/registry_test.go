@@ -16,7 +16,9 @@ import (
 func setupRegistryTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	db := testutil.TempMySQLDB(t)
-	migrate(db)
+	if err := migrate(db); err != nil {
+		t.Fatalf("migrate test db: %v", err)
+	}
 	return db
 }
 

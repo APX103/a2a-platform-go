@@ -41,6 +41,31 @@ func TestTaskStoreRecordsSourceAndTargetAgents(t *testing.T) {
 	}
 }
 
+func TestTaskStoreUpdateRejectsUnknownColumns(t *testing.T) {
+	db := setupRegistryTestDB(t)
+	store := NewTaskStore(db)
+	task := &model.Task{LocalTaskId: "task-whitelist", AgentName: "agent", State: "PENDING"}
+	if err := store.Create(task); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	err := store.Update("task-whitelist", map[string]interface{}{
+		"state = 'DONE', agent_name": "evil",
+	})
+	if err == nil {
+		t.Fatal("Update accepted unsafe column")
+	}
+}
+
+func TestTaskItemClaimMissingTaskReturnsError(t *testing.T) {
+	db := setupRegistryTestDB(t)
+	store := NewTaskItemStore(db)
+
+	if err := store.Claim("missing-task-item", "agent"); err == nil {
+		t.Fatal("Claim missing task item succeeded")
+	}
+}
+
 func TestTaskStoreRecordsRootAndParentLineage(t *testing.T) {
 	db := setupRegistryTestDB(t)
 	store := NewTaskStore(db)

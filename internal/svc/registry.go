@@ -173,13 +173,7 @@ func (r *AgentRegistry) RegisterAgent(name, agentType, url string, port int, ski
 		}
 	}
 
-	// 3. Update in-memory connection
-	conn := &AgentConnection{Card: *card, Url: url}
-	r.mu.Lock()
-	r.connections[name] = conn
-	r.mu.Unlock()
-
-	// 4. Persist to DB
+	// 3. Persist to DB
 	now := time.Now().UTC().Format(time.RFC3339)
 	if len(skills) == 0 {
 		skills = skillsFromCard(card.Skills)
@@ -200,6 +194,10 @@ func (r *AgentRegistry) RegisterAgent(name, agentType, url string, port int, ski
 	if err := r.store.Upsert(dbRecord); err != nil {
 		return nil, fmt.Errorf("DB persist error: %w", err)
 	}
+	conn := &AgentConnection{Card: *card, Url: url}
+	r.mu.Lock()
+	r.connections[name] = conn
+	r.mu.Unlock()
 
 	action := "Registered"
 	if existing != nil {
@@ -344,6 +342,9 @@ func (r *AgentRegistry) GetContextMode(name string) string {
 
 // DisconnectAgent removes agent from connections and marks DB.
 func (r *AgentRegistry) DisconnectAgent(name string) error {
+	if err := r.store.UpdateStatus(name, "disconnected", nil); err != nil {
+		return err
+	}
 	r.mu.Lock()
 	delete(r.connections, name)
 	r.mu.Unlock()
@@ -353,7 +354,7 @@ func (r *AgentRegistry) DisconnectAgent(name string) error {
 	if r.EventBus != nil {
 		r.EventBus.AgentStatus(name, "disconnected", "")
 	}
-	return r.store.UpdateStatus(name, "disconnected", nil)
+	return nil
 }
 
 // RestoreConnections reconnects agents from DB on startup.

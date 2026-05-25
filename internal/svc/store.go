@@ -93,7 +93,7 @@ func (s *AgentStore) List(status string) ([]*model.Agent, error) {
 		}
 		result = append(result, &a)
 	}
-	return result, nil
+	return result, rows.Err()
 }
 
 func (s *AgentStore) UpdateStatus(name string, status string, errorMsg *string) error {
@@ -116,6 +116,18 @@ type TaskStore struct {
 
 func NewTaskStore(db *sql.DB) *TaskStore {
 	return &TaskStore{db: db}
+}
+
+var allowedTaskUpdateColumns = map[string]struct{}{
+	"server_task_id":      {},
+	"source_agent":        {},
+	"target_agent":        {},
+	"agent_name":          {},
+	"context_id":          {},
+	"root_context_id":     {},
+	"parent_task_id":      {},
+	"parent_tool_call_id": {},
+	"state":               {},
 }
 
 func (s *TaskStore) Create(t *model.Task) error {
@@ -145,6 +157,9 @@ func (s *TaskStore) Update(localTaskId string, fields map[string]interface{}) er
 	setClauses := ""
 	args := []interface{}{}
 	for k, v := range fields {
+		if _, ok := allowedTaskUpdateColumns[k]; !ok {
+			return fmt.Errorf("unsupported task update column %q", k)
+		}
 		if setClauses != "" {
 			setClauses += ", "
 		}
@@ -415,7 +430,7 @@ func (s *MessageStore) GetByTask(taskId string) ([]*model.Message, error) {
 		}
 		result = append(result, m)
 	}
-	return result, nil
+	return result, rows.Err()
 }
 
 func (s *MessageStore) GetByContext(contextId string) ([]*model.Message, error) {
@@ -439,7 +454,7 @@ func (s *MessageStore) GetByContext(contextId string) ([]*model.Message, error) 
 		result = append(result, m)
 	}
 
-	return result, nil
+	return result, rows.Err()
 }
 
 // AppendWithContext appends a message with context tracking.
@@ -558,7 +573,7 @@ func (s *TraceStore) GetByTask(taskId string) ([]*model.TraceEvent, error) {
 		}
 		result = append(result, &e)
 	}
-	return result, nil
+	return result, rows.Err()
 }
 
 func (s *TraceStore) GetByAgent(agentName string, limit int) ([]*model.TraceEvent, error) {
@@ -642,7 +657,7 @@ func (s *TraceStore) ListContexts(limit int) ([]*model.TraceContextSummary, erro
 		}
 		result = append(result, &cs)
 	}
-	return result, nil
+	return result, rows.Err()
 }
 
 func parseDBTime(v interface{}) (time.Time, error) {
@@ -700,7 +715,7 @@ func scanTraces(rows *sql.Rows) ([]*model.TraceEvent, error) {
 		}
 		result = append(result, &e)
 	}
-	return result, nil
+	return result, rows.Err()
 }
 
 // ===== Helpers =====
