@@ -3,6 +3,7 @@ package handler
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -387,22 +388,13 @@ func (h *GroupJoinByInviteHandler) ServeHTTP(w http.ResponseWriter, r *http.Requ
 	if hasHumanSession {
 		member.CapabilitiesJson = mergeHumanCapabilities(req.Capabilities, human)
 	}
-	if err := h.svcCtx.GroupMembers.Upsert(member); err != nil {
-		errHTTP(w, err)
-		return
-	}
-	if err := h.svcCtx.GroupInvites.Consume(invite.ID); err != nil {
-		errHTTP(w, err)
-		return
-	}
 	memberToken := &model.GroupMemberToken{GroupID: group.ID, ActorType: actorType, ActorID: actorID}
-	accessToken, err := h.svcCtx.GroupTokens.Create(memberToken)
+	accessToken, members, err := h.svcCtx.GroupInvites.ConsumeAndCreateMemberToken(invite.ID, member, memberToken)
 	if err != nil {
-		errHTTP(w, err)
-		return
-	}
-	members, err := h.svcCtx.GroupMembers.List(group.ID)
-	if err != nil {
+		if errors.Is(err, svc.ErrInviteNotUsable) {
+			jsonError(w, "invalid invite token", http.StatusForbidden)
+			return
+		}
 		errHTTP(w, err)
 		return
 	}
@@ -507,6 +499,18 @@ func NewGroupMemberHandler(svcCtx *svc.ServiceContext) *GroupMemberHandler {
 	return &GroupMemberHandler{svcCtx: svcCtx}
 }
 
+func authorizedToDeleteMember(r *http.Request, groupID, targetActorType, targetActorID string) bool {
+	if r.Header.Get("X-A2A-Principal") == "admin" {
+		return true
+	}
+	if r.Header.Get("X-A2A-Principal") != "member" {
+		return false
+	}
+	return r.Header.Get("X-A2A-Group-ID") == groupID &&
+		r.Header.Get("X-A2A-Actor-Type") == targetActorType &&
+		r.Header.Get("X-A2A-Actor-ID") == targetActorID
+}
+
 func (h *GroupMemberHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	group := h.requireGroup(w, r)
 	if group == nil {
@@ -542,6 +546,11 @@ func (h *GroupMemberHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if actorID == "" {
 			jsonError(w, "actor_id is required", 400)
+			return
+		}
+		actorType = svc.NormalizeActorType(actorType)
+		if !authorizedToDeleteMember(r, group.ID, actorType, actorID) {
+			jsonError(w, "forbidden", http.StatusForbidden)
 			return
 		}
 		if err := h.svcCtx.GroupMembers.Delete(group.ID, actorType, actorID); err != nil {

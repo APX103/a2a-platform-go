@@ -246,28 +246,34 @@ func (e *SubagentEngine) runLLMLoop(
 // This is a factory function - you need to pass the engine when calling it
 func SpawnAgent(engine *SubagentEngine) func(args map[string]any) (string, error) {
 	return func(args map[string]any) (string, error) {
-		task, _ := args["task"].(string)
-		if task == "" {
-			return "", fmt.Errorf("task is required for spawn_agent")
-		}
-
-		contextStr, _ := args["context"].(string)
-
-		// Get parent context from the calling context if available
-		parentContextId, _ := args["_parent_context_id"].(string)
-		parentToolCallId, _ := args["_parent_tool_call_id"].(string)
-
-		// Execute subagent
-		ctx, cancel := context.WithTimeout(context.Background(), subagentTimeout)
-		defer cancel()
-
-		result, err := engine.Run(ctx, task, contextStr, parentContextId, parentToolCallId)
-		if err != nil {
-			return "", fmt.Errorf("subagent execution failed: %w", err)
-		}
-
-		return result, nil
+		return spawnAgent(context.Background(), engine, args)
 	}
+}
+
+func SpawnAgentContext(engine *SubagentEngine) func(context.Context, map[string]any) (string, error) {
+	return func(ctx context.Context, args map[string]any) (string, error) {
+		return spawnAgent(ctx, engine, args)
+	}
+}
+
+func spawnAgent(ctx context.Context, engine *SubagentEngine, args map[string]any) (string, error) {
+	task, _ := args["task"].(string)
+	if task == "" {
+		return "", fmt.Errorf("task is required for spawn_agent")
+	}
+
+	contextStr, _ := args["context"].(string)
+
+	// Get parent context from the calling context if available
+	parentContextId, _ := args["_parent_context_id"].(string)
+	parentToolCallId, _ := args["_parent_tool_call_id"].(string)
+
+	result, err := engine.Run(ctx, task, contextStr, parentContextId, parentToolCallId)
+	if err != nil {
+		return "", fmt.Errorf("subagent execution failed: %w", err)
+	}
+
+	return result, nil
 }
 
 // NewSpawnAgentTool creates a BuiltinTool definition for spawn_agent
@@ -289,6 +295,9 @@ func NewSpawnAgentTool(engine *SubagentEngine) model.BuiltinTool {
 				Required:    false,
 			},
 		},
-		Execute: SpawnAgent(engine),
+		Execute: func(args map[string]any) (string, error) {
+			return spawnAgent(context.Background(), engine, args)
+		},
+		ExecuteContext: SpawnAgentContext(engine),
 	}
 }

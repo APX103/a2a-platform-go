@@ -2,6 +2,7 @@ package tools
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -41,8 +42,9 @@ func GetA2ATools() []model.BuiltinTool {
 			Parameters: []model.ToolParameter{
 				{Name: "status", Type: "string", Description: "Optional group status filter. Defaults to active.", Required: false},
 			},
-			Execute:    executeListGroups,
-			IsReadOnly: true,
+			Execute:        executeListGroups,
+			ExecuteContext: executeListGroupsContext,
+			IsReadOnly:     true,
 		},
 		{
 			Name:        "list_agents",
@@ -51,8 +53,9 @@ func GetA2ATools() []model.BuiltinTool {
 				{Name: "group_id", Type: "string", Description: "Group ID returned by list_groups. Required outside an active group chat.", Required: false},
 				{Name: "filter_type", Type: "string", Description: "Optional filter by agent type (e.g., 'builtin', 'external', 'bridge')", Required: false},
 			},
-			Execute:    executeListAgents,
-			IsReadOnly: true,
+			Execute:        executeListAgents,
+			ExecuteContext: executeListAgentsContext,
+			IsReadOnly:     true,
 		},
 		{
 			Name:        "send_to_agent",
@@ -62,7 +65,8 @@ func GetA2ATools() []model.BuiltinTool {
 				{Name: "message", Type: "string", Description: "Message to send to the agent", Required: true},
 				{Name: "group_id", Type: "string", Description: "Group ID that authorizes this agent-to-agent interaction.", Required: false},
 			},
-			Execute: executeSendToAgent,
+			Execute:        executeSendToAgent,
+			ExecuteContext: executeSendToAgentContext,
 		},
 		{
 			Name:        "get_agent_info",
@@ -71,16 +75,21 @@ func GetA2ATools() []model.BuiltinTool {
 				{Name: "name", Type: "string", Description: "Name of the agent", Required: true},
 				{Name: "group_id", Type: "string", Description: "Group ID returned by list_groups.", Required: false},
 			},
-			Execute:    executeGetAgentInfo,
-			IsReadOnly: true,
+			Execute:        executeGetAgentInfo,
+			ExecuteContext: executeGetAgentInfoContext,
+			IsReadOnly:     true,
 		},
 	}
 }
 
 func executeListGroups(args map[string]any) (string, error) {
+	return executeListGroupsContext(context.Background(), args)
+}
+
+func executeListGroupsContext(ctx context.Context, args map[string]any) (string, error) {
 	groupID := groupIDFromArgs(args)
 	if groupID != "" {
-		group, err := fetchGroup(groupID)
+		group, err := fetchGroupContext(ctx, groupID)
 		if err != nil {
 			return "", err
 		}
@@ -93,7 +102,7 @@ func executeListGroups(args map[string]any) (string, error) {
 		status = model.GroupStatusActive
 	}
 	sourceAgent := normalizeString(args["_source_agent"])
-	groups, err := fetchVisibleGroups(sourceAgent, status)
+	groups, err := fetchVisibleGroupsContext(ctx, sourceAgent, status)
 	if err != nil {
 		return "", err
 	}
@@ -102,28 +111,32 @@ func executeListGroups(args map[string]any) (string, error) {
 }
 
 func executeListAgents(args map[string]any) (string, error) {
+	return executeListAgentsContext(context.Background(), args)
+}
+
+func executeListAgentsContext(ctx context.Context, args map[string]any) (string, error) {
 	sourceAgent := normalizeString(args["_source_agent"])
 	groupID := groupIDFromArgs(args)
 	if groupID != "" {
-		if err := ensureSourceCanUseGroup(sourceAgent, groupID); err != nil {
+		if err := ensureSourceCanUseGroupContext(ctx, sourceAgent, groupID); err != nil {
 			return "", err
 		}
-		return executeListGroupAgents(groupID, args)
+		return executeListGroupAgentsContext(ctx, groupID, args)
 	}
 	if sourceAgent != "" {
-		groups, err := fetchVisibleGroups(sourceAgent, model.GroupStatusActive)
+		groups, err := fetchVisibleGroupsContext(ctx, sourceAgent, model.GroupStatusActive)
 		if err != nil {
 			return "", err
 		}
 		if hasGroup(groups, model.DefaultP2PGroupID) {
-			return executeListGroupAgents(model.DefaultP2PGroupID, args)
+			return executeListGroupAgentsContext(ctx, model.DefaultP2PGroupID, args)
 		}
 		body, _ := json.Marshal(groups)
 		list, _ := formatGroupList(body)
 		return "group_id is required before listing agents. Call list_groups first, choose one group_id, then call list_agents with that group_id. Simple-mode agents can omit group_id only when they are members of default-p2p.\n" + list, nil
 	}
 
-	req, err := platformRequest(http.MethodGet, platformBaseURL+"/api/agents", nil)
+	req, err := platformRequestContext(ctx, http.MethodGet, platformBaseURL+"/api/agents", nil)
 	if err != nil {
 		return "", err
 	}
@@ -135,7 +148,11 @@ func executeListAgents(args map[string]any) (string, error) {
 }
 
 func executeListGroupAgents(groupID string, args map[string]any) (string, error) {
-	members, err := fetchGroupMembers(groupID)
+	return executeListGroupAgentsContext(context.Background(), groupID, args)
+}
+
+func executeListGroupAgentsContext(ctx context.Context, groupID string, args map[string]any) (string, error) {
+	members, err := fetchGroupMembersContext(ctx, groupID)
 	if err != nil {
 		return "", err
 	}
@@ -149,7 +166,7 @@ func executeListGroupAgents(groupID string, args map[string]any) (string, error)
 		if name == "" {
 			continue
 		}
-		agent, err := fetchAgentInfo(name)
+		agent, err := fetchAgentInfoContext(ctx, name)
 		if err != nil {
 			agent = map[string]interface{}{
 				"name":   name,
@@ -199,6 +216,10 @@ func formatAgentList(body []byte, args map[string]any) (string, error) {
 }
 
 func executeSendToAgent(args map[string]any) (string, error) {
+	return executeSendToAgentContext(context.Background(), args)
+}
+
+func executeSendToAgentContext(ctx context.Context, args map[string]any) (string, error) {
 	agent, ok := args["agent"].(string)
 	if !ok || agent == "" {
 		return "", fmt.Errorf("agent name is required")
@@ -214,7 +235,7 @@ func executeSendToAgent(args map[string]any) (string, error) {
 	groupID := groupIDFromArgs(args)
 
 	if groupID == "" && sourceAgent != "" {
-		inferred, ok, err := inferDefaultP2PGroup(sourceAgent)
+		inferred, ok, err := inferDefaultP2PGroupContext(ctx, sourceAgent)
 		if err != nil {
 			return "", err
 		}
@@ -224,10 +245,10 @@ func executeSendToAgent(args map[string]any) (string, error) {
 		groupID = inferred
 	}
 	if groupID != "" {
-		if err := ensureSourceCanUseGroup(sourceAgent, groupID); err != nil {
+		if err := ensureSourceCanUseGroupContext(ctx, sourceAgent, groupID); err != nil {
 			return "", err
 		}
-		allowed, err := groupHasAgent(groupID, agent)
+		allowed, err := groupHasAgentContext(ctx, groupID, agent)
 		if err != nil {
 			return "", err
 		}
@@ -254,7 +275,7 @@ func executeSendToAgent(args map[string]any) (string, error) {
 	}
 
 	client := &http.Client{Timeout: 60 * time.Second}
-	req, err := http.NewRequest("POST", platformBaseURL+"/agent/"+agent, bytes.NewReader(jsonBody))
+	req, err := http.NewRequestWithContext(ctx, "POST", platformBaseURL+"/agent/"+agent, bytes.NewReader(jsonBody))
 	if err != nil {
 		return "", fmt.Errorf("failed to build request: %w", err)
 	}
@@ -337,6 +358,10 @@ func executeSendToAgent(args map[string]any) (string, error) {
 }
 
 func executeGetAgentInfo(args map[string]any) (string, error) {
+	return executeGetAgentInfoContext(context.Background(), args)
+}
+
+func executeGetAgentInfoContext(ctx context.Context, args map[string]any) (string, error) {
 	name, ok := args["name"].(string)
 	if !ok || name == "" {
 		name, ok = args["agent_name"].(string)
@@ -347,7 +372,7 @@ func executeGetAgentInfo(args map[string]any) (string, error) {
 	sourceAgent := normalizeString(args["_source_agent"])
 	groupID := groupIDFromArgs(args)
 	if groupID == "" && sourceAgent != "" {
-		inferred, ok, err := inferDefaultP2PGroup(sourceAgent)
+		inferred, ok, err := inferDefaultP2PGroupContext(ctx, sourceAgent)
 		if err != nil {
 			return "", err
 		}
@@ -357,10 +382,10 @@ func executeGetAgentInfo(args map[string]any) (string, error) {
 		groupID = inferred
 	}
 	if groupID != "" {
-		if err := ensureSourceCanUseGroup(sourceAgent, groupID); err != nil {
+		if err := ensureSourceCanUseGroupContext(ctx, sourceAgent, groupID); err != nil {
 			return "", err
 		}
-		allowed, err := groupHasAgent(groupID, name)
+		allowed, err := groupHasAgentContext(ctx, groupID, name)
 		if err != nil {
 			return "", err
 		}
@@ -369,7 +394,7 @@ func executeGetAgentInfo(args map[string]any) (string, error) {
 		}
 	}
 
-	agent, err := fetchAgentInfo(name)
+	agent, err := fetchAgentInfoContext(ctx, name)
 	if err != nil {
 		return "", err
 	}
@@ -378,7 +403,11 @@ func executeGetAgentInfo(args map[string]any) (string, error) {
 }
 
 func platformRequest(method, url string, body io.Reader) (*http.Request, error) {
-	req, err := http.NewRequest(method, url, body)
+	return platformRequestContext(context.Background(), method, url, body)
+}
+
+func platformRequestContext(ctx context.Context, method, url string, body io.Reader) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, method, url, body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build request: %w", err)
 	}
@@ -417,11 +446,15 @@ func doPlatformRequest(req *http.Request, timeout time.Duration) ([]byte, error)
 }
 
 func fetchVisibleGroups(sourceAgent, status string) ([]map[string]interface{}, error) {
+	return fetchVisibleGroupsContext(context.Background(), sourceAgent, status)
+}
+
+func fetchVisibleGroupsContext(ctx context.Context, sourceAgent, status string) ([]map[string]interface{}, error) {
 	endpoint := platformBaseURL + "/api/groups"
 	if status != "" {
 		endpoint += "?status=" + url.QueryEscape(status)
 	}
-	req, err := platformRequest(http.MethodGet, endpoint, nil)
+	req, err := platformRequestContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -443,7 +476,7 @@ func fetchVisibleGroups(sourceAgent, status string) ([]map[string]interface{}, e
 		if groupID == "" {
 			continue
 		}
-		ok, err := groupHasAgent(groupID, sourceAgent)
+		ok, err := groupHasAgentContext(ctx, groupID, sourceAgent)
 		if err != nil {
 			return nil, err
 		}
@@ -455,7 +488,11 @@ func fetchVisibleGroups(sourceAgent, status string) ([]map[string]interface{}, e
 }
 
 func fetchGroup(groupID string) (map[string]interface{}, error) {
-	req, err := platformRequest(http.MethodGet, platformBaseURL+"/api/groups/"+url.PathEscape(groupID), nil)
+	return fetchGroupContext(context.Background(), groupID)
+}
+
+func fetchGroupContext(ctx context.Context, groupID string) (map[string]interface{}, error) {
+	req, err := platformRequestContext(ctx, http.MethodGet, platformBaseURL+"/api/groups/"+url.PathEscape(groupID), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -471,7 +508,11 @@ func fetchGroup(groupID string) (map[string]interface{}, error) {
 }
 
 func fetchAgentInfo(name string) (map[string]interface{}, error) {
-	req, err := platformRequest(http.MethodGet, platformBaseURL+"/api/agents/"+url.PathEscape(name), nil)
+	return fetchAgentInfoContext(context.Background(), name)
+}
+
+func fetchAgentInfoContext(ctx context.Context, name string) (map[string]interface{}, error) {
+	req, err := platformRequestContext(ctx, http.MethodGet, platformBaseURL+"/api/agents/"+url.PathEscape(name), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -487,7 +528,11 @@ func fetchAgentInfo(name string) (map[string]interface{}, error) {
 }
 
 func fetchGroupMembers(groupID string) ([]map[string]interface{}, error) {
-	req, err := platformRequest(http.MethodGet, platformBaseURL+"/api/groups/"+url.PathEscape(groupID)+"/members", nil)
+	return fetchGroupMembersContext(context.Background(), groupID)
+}
+
+func fetchGroupMembersContext(ctx context.Context, groupID string) ([]map[string]interface{}, error) {
+	req, err := platformRequestContext(ctx, http.MethodGet, platformBaseURL+"/api/groups/"+url.PathEscape(groupID)+"/members", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -503,10 +548,14 @@ func fetchGroupMembers(groupID string) ([]map[string]interface{}, error) {
 }
 
 func groupHasAgent(groupID, agent string) (bool, error) {
+	return groupHasAgentContext(context.Background(), groupID, agent)
+}
+
+func groupHasAgentContext(ctx context.Context, groupID, agent string) (bool, error) {
 	if groupID == "" || agent == "" {
 		return false, nil
 	}
-	members, err := fetchGroupMembers(groupID)
+	members, err := fetchGroupMembersContext(ctx, groupID)
 	if err != nil {
 		return false, err
 	}
@@ -519,10 +568,14 @@ func groupHasAgent(groupID, agent string) (bool, error) {
 }
 
 func inferDefaultP2PGroup(sourceAgent string) (string, bool, error) {
+	return inferDefaultP2PGroupContext(context.Background(), sourceAgent)
+}
+
+func inferDefaultP2PGroupContext(ctx context.Context, sourceAgent string) (string, bool, error) {
 	if sourceAgent == "" {
 		return "", false, nil
 	}
-	groups, err := fetchVisibleGroups(sourceAgent, model.GroupStatusActive)
+	groups, err := fetchVisibleGroupsContext(ctx, sourceAgent, model.GroupStatusActive)
 	if err != nil {
 		return "", false, err
 	}
@@ -542,10 +595,14 @@ func hasGroup(groups []map[string]interface{}, groupID string) bool {
 }
 
 func ensureSourceCanUseGroup(sourceAgent, groupID string) error {
+	return ensureSourceCanUseGroupContext(context.Background(), sourceAgent, groupID)
+}
+
+func ensureSourceCanUseGroupContext(ctx context.Context, sourceAgent, groupID string) error {
 	if sourceAgent == "" || groupID == "" {
 		return nil
 	}
-	ok, err := groupHasAgent(groupID, sourceAgent)
+	ok, err := groupHasAgentContext(ctx, groupID, sourceAgent)
 	if err != nil {
 		return err
 	}

@@ -101,11 +101,21 @@ func (s *TaskItemStore) UpdateStatus(id, status, result, errorMsg string) error 
 
 // Claim sets owner and status to in_progress.
 func (s *TaskItemStore) Claim(id, owner string) error {
-	_, err := s.db.Exec(
+	res, err := s.db.Exec(
 		`UPDATE task_items SET owner = ?, status = 'in_progress' WHERE id = ? AND status = 'pending'`,
 		owner, id,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return fmt.Errorf("task item %s is not pending or does not exist", id)
+	}
+	return nil
 }
 
 // CanStart checks if all blockedBy dependencies are completed.

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -42,6 +43,10 @@ func invokeHTTP(ctx context.Context, skill *config.SkillInvoke, target *config.B
 	if skill.Timeout > 0 {
 		timeout = time.Duration(skill.Timeout) * time.Millisecond
 	}
+	if err := validateBridgeURL(url); err != nil {
+		return "", err
+	}
+
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -63,7 +68,8 @@ func invokeHTTP(ctx context.Context, skill *config.SkillInvoke, target *config.B
 		req.Header.Set("Content-Type", "application/json")
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	client := &http.Client{Timeout: timeout}
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("request failed: %w", err)
 	}
@@ -94,6 +100,22 @@ func invokeHTTP(ctx context.Context, skill *config.SkillInvoke, target *config.B
 
 	// Default: return full JSON
 	return string(respBody), nil
+}
+
+func validateBridgeURL(raw string) error {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("parse URL: %w", err)
+	}
+	switch parsed.Scheme {
+	case "http", "https":
+	default:
+		return fmt.Errorf("unsupported URL scheme: %s", parsed.Scheme)
+	}
+	if parsed.Host == "" {
+		return fmt.Errorf("missing URL host")
+	}
+	return nil
 }
 
 func truncateBytes(b []byte, max int) string {

@@ -41,6 +41,65 @@ func TestTaskStoreRecordsSourceAndTargetAgents(t *testing.T) {
 	}
 }
 
+func TestTaskStoreUpdateRejectsUnknownColumns(t *testing.T) {
+	db := setupRegistryTestDB(t)
+	store := NewTaskStore(db)
+	task := &model.Task{LocalTaskId: "task-whitelist", AgentName: "agent", State: "PENDING"}
+	if err := store.Create(task); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	err := store.Update("task-whitelist", map[string]interface{}{
+		"state = 'DONE', agent_name": "evil",
+	})
+	if err == nil {
+		t.Fatal("Update accepted unsafe column")
+	}
+}
+
+func TestTaskStoreUpdateAllowsMultipleKnownColumns(t *testing.T) {
+	db := setupRegistryTestDB(t)
+	store := NewTaskStore(db)
+	task := &model.Task{LocalTaskId: "task-multi-update", AgentName: "agent", State: "PENDING"}
+	if err := store.Create(task); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	if err := store.Update("task-multi-update", map[string]interface{}{
+		"context_id":   "ctx-multi-update",
+		"state":        "WORKING",
+		"target_agent": "agent-2",
+	}); err != nil {
+		t.Fatalf("update task: %v", err)
+	}
+
+	got, err := store.Get("task-multi-update")
+	if err != nil {
+		t.Fatalf("get task: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected task")
+	}
+	if got.ContextId == nil || *got.ContextId != "ctx-multi-update" {
+		t.Fatalf("context_id = %v, want ctx-multi-update", got.ContextId)
+	}
+	if got.State != "WORKING" {
+		t.Fatalf("state = %q, want WORKING", got.State)
+	}
+	if got.TargetAgent != "agent-2" {
+		t.Fatalf("target_agent = %q, want agent-2", got.TargetAgent)
+	}
+}
+
+func TestTaskItemClaimMissingTaskReturnsError(t *testing.T) {
+	db := setupRegistryTestDB(t)
+	store := NewTaskItemStore(db)
+
+	if err := store.Claim("missing-task-item", "agent"); err == nil {
+		t.Fatal("Claim missing task item succeeded")
+	}
+}
+
 func TestTaskStoreRecordsRootAndParentLineage(t *testing.T) {
 	db := setupRegistryTestDB(t)
 	store := NewTaskStore(db)

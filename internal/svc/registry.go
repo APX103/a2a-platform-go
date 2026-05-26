@@ -1,6 +1,7 @@
 package svc
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -48,12 +49,16 @@ func (c *AgentConnection) Info() model.AgentInfo {
 
 // AgentRegistry manages in-memory agent connections with DB persistence.
 type AgentRegistry struct {
-	store       *AgentStore
-	connections map[string]*AgentConnection
-	mu          sync.RWMutex
-	failCounts  map[string]int
-	failMu      sync.Mutex
-	EventBus    *events.Broadcaster
+	store        *AgentStore
+	connections  map[string]*AgentConnection
+	mu           sync.RWMutex
+	failCounts   map[string]int
+	failMu       sync.Mutex
+	healthMu     sync.Mutex
+	healthCancel context.CancelFunc
+	healthDone   chan struct{}
+	healthActive bool
+	EventBus     *events.Broadcaster
 }
 
 func NewAgentRegistry(store *AgentStore) *AgentRegistry {
@@ -168,13 +173,7 @@ func (r *AgentRegistry) RegisterAgent(name, agentType, url string, port int, ski
 		}
 	}
 
-	// 3. Update in-memory connection
-	conn := &AgentConnection{Card: *card, Url: url}
-	r.mu.Lock()
-	r.connections[name] = conn
-	r.mu.Unlock()
-
-	// 4. Persist to DB
+	// 3. Persist to DB
 	now := time.Now().UTC().Format(time.RFC3339)
 	if len(skills) == 0 {
 		skills = skillsFromCard(card.Skills)
@@ -195,6 +194,10 @@ func (r *AgentRegistry) RegisterAgent(name, agentType, url string, port int, ski
 	if err := r.store.Upsert(dbRecord); err != nil {
 		return nil, fmt.Errorf("DB persist error: %w", err)
 	}
+	conn := &AgentConnection{Card: *card, Url: url}
+	r.mu.Lock()
+	r.connections[name] = conn
+	r.mu.Unlock()
 
 	action := "Registered"
 	if existing != nil {
@@ -339,6 +342,9 @@ func (r *AgentRegistry) GetContextMode(name string) string {
 
 // DisconnectAgent removes agent from connections and marks DB.
 func (r *AgentRegistry) DisconnectAgent(name string) error {
+	if err := r.store.UpdateStatus(name, "disconnected", nil); err != nil {
+		return err
+	}
 	r.mu.Lock()
 	delete(r.connections, name)
 	r.mu.Unlock()
@@ -348,7 +354,7 @@ func (r *AgentRegistry) DisconnectAgent(name string) error {
 	if r.EventBus != nil {
 		r.EventBus.AgentStatus(name, "disconnected", "")
 	}
-	return r.store.UpdateStatus(name, "disconnected", nil)
+	return nil
 }
 
 // RestoreConnections reconnects agents from DB on startup.
@@ -393,17 +399,70 @@ func (r *AgentRegistry) RestoreConnections() {
 // StartHealthCheck launches a background goroutine that periodically checks
 // the health of all connected agents.
 func (r *AgentRegistry) StartHealthCheck(interval time.Duration) {
+	r.healthMu.Lock()
+	if r.healthActive {
+		r.healthMu.Unlock()
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	r.healthCancel = cancel
+	r.healthDone = done
+	r.healthActive = true
+	r.healthMu.Unlock()
+
 	go func() {
+		defer func() {
+			r.healthMu.Lock()
+			if r.healthDone == done {
+				r.healthCancel = nil
+				r.healthDone = nil
+				r.healthActive = false
+			}
+			r.healthMu.Unlock()
+			close(done)
+		}()
+		defer func() {
+			if v := recover(); v != nil {
+				slog.Error("agent health check panic recovered", "panic", v)
+			}
+		}()
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
-		for range ticker.C {
-			r.runHealthCheck()
+		for {
+			select {
+			case <-ticker.C:
+				r.runHealthCheck(ctx)
+			case <-ctx.Done():
+				return
+			}
 		}
 	}()
 	slog.Info("Agent health check started", "interval", interval)
 }
 
-func (r *AgentRegistry) runHealthCheck() {
+func (r *AgentRegistry) StopHealthCheck() {
+	r.healthMu.Lock()
+	if !r.healthActive {
+		r.healthMu.Unlock()
+		return
+	}
+	cancel := r.healthCancel
+	done := r.healthDone
+	if cancel != nil {
+		cancel()
+	}
+	r.healthMu.Unlock()
+
+	select {
+	case <-done:
+		slog.Info("Agent health check stopped")
+	case <-time.After(5 * time.Second):
+		slog.Warn("Agent health check stop timed out")
+	}
+}
+
+func (r *AgentRegistry) runHealthCheck(ctx context.Context) {
 	client := &http.Client{Timeout: 5 * time.Second}
 
 	// === Phase A: check currently connected agents ===
@@ -420,13 +479,16 @@ func (r *AgentRegistry) runHealthCheck() {
 	r.mu.RUnlock()
 
 	for _, a := range connectedAgents {
+		if ctx.Err() != nil {
+			return
+		}
 		// Skip builtin agents — they are in-process and always healthy
 		if a.url == "" {
 			continue
 		}
 		if a.card.Static {
 			if a.card.HealthUrl != "" {
-				if err := checkHealthURL(a.card.HealthUrl); err != nil {
+				if err := checkHealthURLWithContext(ctx, a.card.HealthUrl); err != nil {
 					r.recordFailure(a.name, "unreachable", fmt.Sprintf("health check unreachable: %v", err))
 					continue
 				}
@@ -440,12 +502,17 @@ func (r *AgentRegistry) runHealthCheck() {
 			continue
 		}
 		// Phase 1: check if bridge HTTP is reachable (agent card endpoint)
-		cardURL, err := discoverAgentCardURL(a.url, client)
+		cardURL, err := discoverAgentCardURLWithContext(ctx, a.url, client)
 		if err != nil {
 			r.recordFailure(a.name, "offline", fmt.Sprintf("bridge unreachable: %v", err))
 			continue
 		}
-		resp, err := client.Get(cardURL)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, cardURL, nil)
+		if err != nil {
+			r.recordFailure(a.name, "offline", fmt.Sprintf("agent card request failed: %v", err))
+			continue
+		}
+		resp, err := client.Do(req)
 		if err != nil {
 			r.recordFailure(a.name, "offline", fmt.Sprintf("bridge unreachable: %v", err))
 			continue
@@ -458,7 +525,12 @@ func (r *AgentRegistry) runHealthCheck() {
 
 		// Phase 2: if bridge exposes a health_url, check downstream LLM health
 		if a.card.HealthUrl != "" {
-			healthResp, healthErr := client.Get(a.card.HealthUrl)
+			healthReq, healthErr := http.NewRequestWithContext(ctx, http.MethodGet, a.card.HealthUrl, nil)
+			if healthErr != nil {
+				r.recordFailure(a.name, "unreachable", fmt.Sprintf("health check request failed: %v", healthErr))
+				continue
+			}
+			healthResp, healthErr := client.Do(healthReq)
 			if healthErr != nil {
 				r.recordFailure(a.name, "unreachable", fmt.Sprintf("health check unreachable: %v", healthErr))
 				continue
@@ -480,12 +552,18 @@ func (r *AgentRegistry) runHealthCheck() {
 	}
 
 	// === Phase B: try to reconnect offline/disconnected agents ===
+	if ctx.Err() != nil {
+		return
+	}
 	records, err := r.store.List("")
 	if err != nil {
 		slog.Error("Health check reconnect: failed to list agents", "error", err)
 		return
 	}
 	for _, rec := range records {
+		if ctx.Err() != nil {
+			return
+		}
 		if rec.Status == "connected" || rec.Status == "online" {
 			continue // already handled above
 		}
@@ -494,7 +572,7 @@ func (r *AgentRegistry) runHealthCheck() {
 		}
 		if storedCard, ok := parseStoredStaticCard(rec.AgentCardJson); ok {
 			if storedCard.HealthUrl != "" {
-				if healthErr := checkHealthURL(storedCard.HealthUrl); healthErr != nil {
+				if healthErr := checkHealthURLWithContext(ctx, storedCard.HealthUrl); healthErr != nil {
 					continue
 				}
 			}
@@ -511,7 +589,7 @@ func (r *AgentRegistry) runHealthCheck() {
 			slog.Info("Static agent reconnected after recovery", "name", rec.Name, "url", rec.Url)
 			continue
 		}
-		card, err := fetchAgentCard(rec.Url)
+		card, err := fetchAgentCardWithContext(ctx, rec.Url)
 		if err != nil {
 			continue // still unreachable
 		}
@@ -569,12 +647,20 @@ func (r *AgentRegistry) CountTotal() (int, error) {
 // ===== HTTP helpers =====
 
 func fetchAgentCard(url string) (*AgentCard, error) {
+	return fetchAgentCardWithContext(context.Background(), url)
+}
+
+func fetchAgentCardWithContext(ctx context.Context, url string) (*AgentCard, error) {
 	client := &http.Client{Timeout: 10 * time.Second}
-	cardURL, err := discoverAgentCardURL(url, client)
+	cardURL, err := discoverAgentCardURLWithContext(ctx, url, client)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := client.Get(cardURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, cardURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -608,6 +694,10 @@ func pingAgent(url string) error {
 }
 
 func discoverAgentCardURL(baseURL string, client *http.Client) (string, error) {
+	return discoverAgentCardURLWithContext(context.Background(), baseURL, client)
+}
+
+func discoverAgentCardURLWithContext(ctx context.Context, baseURL string, client *http.Client) (string, error) {
 	if client == nil {
 		client = &http.Client{Timeout: 5 * time.Second}
 	}
@@ -618,7 +708,14 @@ func discoverAgentCardURL(baseURL string, client *http.Client) (string, error) {
 	var lastStatus int
 	var lastErr error
 	for _, cardURL := range candidates {
-		resp, err := client.Get(cardURL)
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, cardURL, nil)
+		if err != nil {
+			return "", err
+		}
+		resp, err := client.Do(req)
 		if err != nil {
 			lastErr = err
 			continue
@@ -636,8 +733,16 @@ func discoverAgentCardURL(baseURL string, client *http.Client) (string, error) {
 }
 
 func checkHealthURL(url string) error {
+	return checkHealthURLWithContext(context.Background(), url)
+}
+
+func checkHealthURLWithContext(ctx context.Context, url string) error {
 	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get(url)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}

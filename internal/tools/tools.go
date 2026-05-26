@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -29,8 +30,9 @@ func GetBuiltinTools() []model.BuiltinTool {
 				{Name: "body", Type: "string", Description: "Request body for POST/PUT", Required: false},
 				{Name: "timeout", Type: "number", Description: "Request timeout in seconds", Required: false},
 			},
-			Execute:    executeFetchURL,
-			IsReadOnly: false, // can write via POST/PUT/DELETE
+			Execute:        executeFetchURL,
+			ExecuteContext: executeFetchURLContext,
+			IsReadOnly:     false, // can write via POST/PUT/DELETE
 		},
 		{
 			Name:        "read_file",
@@ -157,7 +159,13 @@ func GetAllTools() []model.BuiltinTool {
 func ExecuteTool(name string, args map[string]any) (string, error) {
 	for _, tool := range GetAllTools() {
 		if tool.Name == name {
-			return tool.Execute(args)
+			if tool.ExecuteContext != nil {
+				return tool.ExecuteContext(context.Background(), args)
+			}
+			if tool.Execute != nil {
+				return tool.Execute(args)
+			}
+			return "", fmt.Errorf("tool %q has no execute function", name)
 		}
 	}
 	return "", fmt.Errorf("tool %q not found", name)
@@ -166,6 +174,10 @@ func ExecuteTool(name string, args map[string]any) (string, error) {
 // ===== Tool Implementations =====
 
 func executeFetchURL(args map[string]any) (string, error) {
+	return executeFetchURLContext(context.Background(), args)
+}
+
+func executeFetchURLContext(ctx context.Context, args map[string]any) (string, error) {
 	targetURL, ok := args["url"].(string)
 	if !ok || targetURL == "" {
 		return "", fmt.Errorf("url is required")
@@ -203,7 +215,7 @@ func executeFetchURL(args map[string]any) (string, error) {
 		body = strings.NewReader(b)
 	}
 
-	req, err := http.NewRequest(method, targetURL, body)
+	req, err := http.NewRequestWithContext(ctx, method, targetURL, body)
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}

@@ -11,6 +11,8 @@ import (
 	"a2a-platform/internal/config"
 )
 
+const maxCLIOutputBytes = 1 << 20
+
 func invokeCLI(ctx context.Context, skill *config.SkillInvoke, target *config.BridgeCLITarget, tctx *TemplateContext) (string, error) {
 	command := renderString(skill.Command, tctx)
 	if command == "" {
@@ -37,17 +39,22 @@ func invokeCLI(ctx context.Context, skill *config.SkillInvoke, target *config.Br
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	fullCmd := command
+	// Bridge CLI commands are trusted operator configuration. Rendered user input
+	// must be passed through args in configs that require strict argument safety.
+	cmdArgs := []string{"-c", command}
 	if len(args) > 0 {
-		fullCmd += " " + strings.Join(args, " ")
+		cmdArgs[1] = command + ` "$@"`
+		cmdArgs = append(cmdArgs, command)
+		cmdArgs = append(cmdArgs, args...)
 	}
-
-	cmd := exec.CommandContext(ctx, shell, "-c", fullCmd)
+	cmd := exec.CommandContext(ctx, shell, cmdArgs...)
 	if target != nil && target.WorkingDir != "" {
 		cmd.Dir = target.WorkingDir
 	}
 
-	var stdout, stderr bytes.Buffer
+	var stdout boundedBuffer
+	stdout.Limit = maxCLIOutputBytes
+	var stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
@@ -63,4 +70,27 @@ func invokeCLI(ctx context.Context, skill *config.SkillInvoke, target *config.Br
 	}
 
 	return strings.TrimSpace(stdout.String()), nil
+}
+
+type boundedBuffer struct {
+	buf   bytes.Buffer
+	Limit int
+}
+
+func (b *boundedBuffer) Write(p []byte) (int, error) {
+	if b.Limit <= 0 {
+		return len(p), nil
+	}
+	remaining := b.Limit - b.buf.Len()
+	if remaining > 0 {
+		if len(p) < remaining {
+			remaining = len(p)
+		}
+		_, _ = b.buf.Write(p[:remaining])
+	}
+	return len(p), nil
+}
+
+func (b *boundedBuffer) String() string {
+	return b.buf.String()
 }

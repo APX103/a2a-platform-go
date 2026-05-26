@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"a2a-platform/internal/model"
 	"a2a-platform/internal/testutil"
@@ -14,7 +16,9 @@ import (
 func setupRegistryTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	db := testutil.TempMySQLDB(t)
-	migrate(db)
+	if err := migrate(db); err != nil {
+		t.Fatalf("migrate test db: %v", err)
+	}
 	return db
 }
 
@@ -145,5 +149,64 @@ func TestRegisterAgent_WithStaticAgentCard_DoesNotRequireDiscoveryEndpoint(t *te
 	restored.RestoreConnections()
 	if restored.GetClient("static-agent") == nil {
 		t.Fatal("static agent was not restored from stored AgentCard")
+	}
+}
+
+func TestRegistryStopHealthCheckIsIdempotent(t *testing.T) {
+	db := setupRegistryTestDB(t)
+	registry := NewAgentRegistry(NewAgentStore(db))
+
+	registry.StartHealthCheck(time.Hour)
+	registry.StopHealthCheck()
+	registry.StopHealthCheck()
+}
+
+func TestRegistryStopHealthCheckCancelsActiveHealthPass(t *testing.T) {
+	db := setupRegistryTestDB(t)
+	registry := NewAgentRegistry(NewAgentStore(db))
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var hits int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&hits, 1) == 1 {
+			close(started)
+		}
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	defer server.Close()
+	defer close(release)
+
+	registry.mu.Lock()
+	registry.connections["blocked"] = &AgentConnection{
+		Card: AgentCard{
+			Name:      "blocked",
+			Static:    true,
+			HealthUrl: server.URL,
+		},
+		Url: server.URL,
+	}
+	registry.mu.Unlock()
+
+	registry.StartHealthCheck(time.Nanosecond)
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("health check request did not start")
+	}
+
+	done := make(chan struct{})
+	go func() {
+		registry.StopHealthCheck()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("StopHealthCheck did not return while a health pass was active")
 	}
 }

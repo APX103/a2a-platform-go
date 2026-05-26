@@ -43,6 +43,19 @@ type ServiceContext struct {
 	BridgeRegistry *bridge.BridgeRegistry
 }
 
+func (s *ServiceContext) Close() error {
+	if s == nil {
+		return nil
+	}
+	if s.Registry != nil {
+		s.Registry.StopHealthCheck()
+	}
+	if s.DB != nil {
+		return s.DB.Close()
+	}
+	return nil
+}
+
 func (s *ServiceContext) ConfigureAuxiliaryAgentTools(cfg config.BuiltinAgent) {
 	if s == nil || s.Engine == nil {
 		return
@@ -74,7 +87,10 @@ func NewServiceContext(c *config.Config) (*ServiceContext, error) {
 	if err != nil {
 		return nil, err
 	}
-	migrate(db)
+	if err := migrate(db); err != nil {
+		db.Close()
+		return nil, err
+	}
 
 	agents := NewAgentStore(db)
 	tasks := NewTaskStore(db)
@@ -158,14 +174,14 @@ func openMySQL(c *config.Config) (*sql.DB, error) {
 	return db, nil
 }
 
-func migrate(db *sql.DB) {
+func migrate(db *sql.DB) error {
 	statements := splitStatements(mysqlSchema)
 	for _, stmt := range statements {
 		if stmt == "" {
 			continue
 		}
 		if _, err := db.Exec(stmt); err != nil {
-			slog.Warn("Migration note", "error", err)
+			return fmt.Errorf("core migration failed: %w", err)
 		}
 	}
 	ensureTaskDirectionColumns(db)
@@ -175,6 +191,7 @@ func migrate(db *sql.DB) {
 	ensureMessageDirectionColumns(db)
 	backfillMessageDirections(db)
 	ensureHumanPresenceColumns(db)
+	return nil
 }
 
 func ensureTaskDirectionColumns(db *sql.DB) {
@@ -331,7 +348,7 @@ func repairLegacyContextLineageFromToolCalls(db *sql.DB) {
 
 func repairLegacyContextLineagePass(db *sql.DB) int {
 	rows, err := db.Query(`
-		SELECT task_id, COALESCE(root_context_id, context_id, ''), data_json, strftime('%Y-%m-%d %H:%M:%S', timestamp)
+		SELECT task_id, COALESCE(root_context_id, context_id, ''), data_json, DATE_FORMAT(timestamp, '%Y-%m-%d %H:%i:%s')
 		FROM traces
 		WHERE event_type='tool_call'
 		ORDER BY timestamp`)
@@ -379,7 +396,7 @@ func repairLegacyContextLineagePass(db *sql.DB) int {
 			  AND m.content=?
 			  AND (t.parent_task_id IS NULL OR t.parent_task_id='')
 			  AND t.local_task_id <> ?
-			  AND datetime(t.created_at) >= datetime(?)
+			  AND t.created_at >= ?
 			ORDER BY t.created_at
 			LIMIT 1`,
 			call.targetAgent, call.message, call.parentTaskId, call.timestamp,

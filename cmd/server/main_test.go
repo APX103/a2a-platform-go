@@ -1,11 +1,15 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"a2a-platform/internal/config"
 	"a2a-platform/internal/handler"
@@ -13,6 +17,65 @@ import (
 	"a2a-platform/internal/svc"
 	"a2a-platform/internal/testutil"
 )
+
+type testShutdownServer struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (s *testShutdownServer) Shutdown(ctx context.Context) error {
+	close(s.started)
+	select {
+	case <-s.release:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+type testServiceCloser struct {
+	closed chan struct{}
+}
+
+func (c *testServiceCloser) Close() error {
+	close(c.closed)
+	return nil
+}
+
+func TestRunGracefulShutdownClosesServiceAfterHTTPShutdownCompletes(t *testing.T) {
+	server := &testShutdownServer{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	closer := &testServiceCloser{closed: make(chan struct{})}
+	done := make(chan struct{})
+
+	go func() {
+		runGracefulShutdown(server, closer, time.Second)
+		close(done)
+	}()
+
+	<-server.started
+	select {
+	case <-closer.closed:
+		t.Fatal("service context closed before HTTP shutdown completed")
+	default:
+	}
+
+	close(server.release)
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("graceful shutdown did not finish")
+	}
+
+	select {
+	case <-closer.closed:
+	default:
+		t.Fatal("service context was not closed after HTTP shutdown completed")
+	}
+}
 
 func setupSubagentRouteTestContext(t *testing.T) (*svc.ServiceContext, string, string) {
 	t.Helper()
@@ -214,6 +277,8 @@ func setupGroupRouteTestContext(t *testing.T) (*svc.ServiceContext, string) {
 	}
 
 	ctx := &svc.ServiceContext{
+		Config:         &config.Config{},
+		DB:             db,
 		Groups:         svc.NewGroupStore(db),
 		GroupMembers:   svc.NewGroupMemberStore(db),
 		GroupInvites:   svc.NewGroupInviteStore(db),
@@ -231,6 +296,32 @@ func setupGroupRouteTestContext(t *testing.T) (*svc.ServiceContext, string) {
 		t.Fatalf("create member: %v", err)
 	}
 	return ctx, group.ID
+}
+
+func mustUpsertMember(t *testing.T, svcCtx *svc.ServiceContext, groupID, actorType, actorID string) {
+	t.Helper()
+	err := svcCtx.GroupMembers.Upsert(&model.GroupMember{
+		GroupID:   groupID,
+		ActorType: actorType,
+		ActorID:   actorID,
+		Role:      "member",
+	})
+	if err != nil {
+		t.Fatalf("upsert member: %v", err)
+	}
+}
+
+func mustIssueGroupToken(t *testing.T, svcCtx *svc.ServiceContext, groupID, actorType, actorID string) string {
+	t.Helper()
+	token, err := svcCtx.GroupTokens.Create(&model.GroupMemberToken{
+		GroupID:   groupID,
+		ActorType: actorType,
+		ActorID:   actorID,
+	})
+	if err != nil {
+		t.Fatalf("issue member token: %v", err)
+	}
+	return token
 }
 
 func TestGroupJoinByInviteUsesHumanSessionIdentity(t *testing.T) {
@@ -271,6 +362,79 @@ func TestGroupJoinByInviteUsesHumanSessionIdentity(t *testing.T) {
 	}
 	if !strings.Contains(member.CapabilitiesJson, `"handle":"alice"`) {
 		t.Fatalf("capabilities = %s, want handle", member.CapabilitiesJson)
+	}
+}
+
+func TestGroupJoinByInviteConcurrentExhaustionDoesNotLeaveSideEffects(t *testing.T) {
+	svcCtx, groupID := setupGroupRouteTestContext(t)
+	invite := &model.GroupInvite{GroupID: groupID, ActorTypeAllowed: model.GroupActorHuman, Role: "member", MaxUses: 1}
+	inviteToken, err := svcCtx.GroupInvites.Create(invite)
+	if err != nil {
+		t.Fatalf("create invite: %v", err)
+	}
+	if _, err := svcCtx.DB.Exec(`CREATE TRIGGER slow_invite_consume BEFORE UPDATE ON group_invites FOR EACH ROW SET @invite_consume_sleep = SLEEP(0.05)`); err != nil {
+		t.Fatalf("create slow consume trigger: %v", err)
+	}
+
+	const attempts = 8
+	type joinResult struct {
+		actorID string
+		status  int
+		body    string
+	}
+	results := make(chan joinResult, attempts)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < attempts; i++ {
+		actorID := fmt.Sprintf("race-human-%02d", i)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			req := httptest.NewRequest(http.MethodPost, "/api/group-joins", strings.NewReader(`{"invite_token":"`+inviteToken+`","actor_type":"human","actor_id":"`+actorID+`"}`))
+			rec := httptest.NewRecorder()
+			handler.NewGroupJoinByInviteHandler(svcCtx).ServeHTTP(rec, req)
+			results <- joinResult{actorID: actorID, status: rec.Code, body: rec.Body.String()}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+
+	okCount := 0
+	for result := range results {
+		switch result.status {
+		case http.StatusOK:
+			okCount++
+		case http.StatusForbidden:
+		default:
+			t.Fatalf("join %s status = %d, want 200 or 403 body=%s", result.actorID, result.status, result.body)
+		}
+	}
+	if okCount != 1 {
+		t.Fatalf("successful joins = %d, want 1", okCount)
+	}
+
+	var memberCount int
+	if err := svcCtx.DB.QueryRow(
+		`SELECT COUNT(*) FROM group_members WHERE group_id = ? AND actor_type = ? AND actor_id LIKE 'race-human-%'`,
+		groupID, model.GroupActorHuman,
+	).Scan(&memberCount); err != nil {
+		t.Fatalf("count race members: %v", err)
+	}
+	if memberCount != 1 {
+		t.Fatalf("race member rows = %d, want 1", memberCount)
+	}
+
+	var tokenCount int
+	if err := svcCtx.DB.QueryRow(
+		`SELECT COUNT(*) FROM group_member_tokens WHERE group_id = ? AND actor_type = ? AND actor_id LIKE 'race-human-%' AND revoked_at IS NULL`,
+		groupID, model.GroupActorHuman,
+	).Scan(&tokenCount); err != nil {
+		t.Fatalf("count race tokens: %v", err)
+	}
+	if tokenCount != 1 {
+		t.Fatalf("race active token rows = %d, want 1", tokenCount)
 	}
 }
 
@@ -437,6 +601,12 @@ func TestRequiresAdminProductionEndpointMatrix(t *testing.T) {
 	}
 }
 
+func TestRequiresAdminProtectsStats(t *testing.T) {
+	if !requiresAdmin("/api/stats", http.MethodGet) {
+		t.Fatal("/api/stats must require admin auth")
+	}
+}
+
 func TestGroupRoute_JoinAndEventReturnOrchestration(t *testing.T) {
 	svcCtx, groupID := setupGroupRouteTestContext(t)
 
@@ -555,6 +725,144 @@ func TestRequestIDMiddlewareSetsResponseHeader(t *testing.T) {
 
 	if got := rec.Header().Get("X-Request-ID"); got != "req-test-123" {
 		t.Fatalf("response X-Request-ID = %q, want req-test-123", got)
+	}
+}
+
+func TestRecoverMiddlewareReturnsJSON500(t *testing.T) {
+	h := requestIDMiddleware(recoverMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		panic("boom")
+	})))
+	req := httptest.NewRequest(http.MethodGet, "/panic", nil)
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusInternalServerError)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "application/json") {
+		t.Fatalf("content-type = %q, want JSON", ct)
+	}
+	if !strings.Contains(rec.Body.String(), "internal server error") {
+		t.Fatalf("body = %q, want generic error", rec.Body.String())
+	}
+}
+
+func TestRecoverMiddlewareDoesNotAppendJSONAfterResponseCommitted(t *testing.T) {
+	h := requestIDMiddleware(recoverMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte("created"))
+		panic("boom")
+	})))
+	req := httptest.NewRequest(http.MethodGet, "/panic-after-commit", nil)
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusCreated)
+	}
+	if rec.Body.String() != "created" {
+		t.Fatalf("body = %q, want committed response only", rec.Body.String())
+	}
+}
+
+func TestHealthHandlerReturns503WhenDBPingFails(t *testing.T) {
+	db := testutil.TempMySQLDB(t)
+	_ = db.Close()
+	svcCtx := &svc.ServiceContext{
+		DB:       db,
+		Registry: svc.NewAgentRegistry(svc.NewAgentStore(db)),
+	}
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	rec := httptest.NewRecorder()
+
+	makeHealthHandler(svcCtx).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusServiceUnavailable)
+	}
+	if !strings.Contains(rec.Body.String(), `"status":"degraded"`) {
+		t.Fatalf("body = %q, want degraded status", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"db":"error"`) {
+		t.Fatalf("body = %q, want db error", rec.Body.String())
+	}
+}
+
+func TestLoggingResponseWriterCapturesStatusAndSize(t *testing.T) {
+	rec := httptest.NewRecorder()
+	lrw := &loggingResponseWriter{ResponseWriter: rec, status: http.StatusOK}
+
+	lrw.WriteHeader(http.StatusCreated)
+	n, err := lrw.Write([]byte("hello"))
+
+	if err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+	if n != 5 {
+		t.Fatalf("bytes written = %d, want 5", n)
+	}
+	if lrw.status != http.StatusCreated {
+		t.Fatalf("status = %d, want %d", lrw.status, http.StatusCreated)
+	}
+	if lrw.bytes != 5 {
+		t.Fatalf("bytes = %d, want 5", lrw.bytes)
+	}
+}
+
+type testFlushRecorder struct {
+	*httptest.ResponseRecorder
+	flushed bool
+}
+
+func (r *testFlushRecorder) Flush() {
+	r.flushed = true
+}
+
+func TestLoggingResponseWriterPreservesFlusher(t *testing.T) {
+	rec := &testFlushRecorder{ResponseRecorder: httptest.NewRecorder()}
+	lrw, wrapped := newLoggingResponseWriter(rec)
+	flusher, ok := wrapped.(http.Flusher)
+	if !ok {
+		t.Fatal("loggingResponseWriter must preserve http.Flusher for SSE handlers")
+	}
+
+	flusher.Flush()
+
+	if !rec.flushed {
+		t.Fatal("Flush was not forwarded to wrapped response writer")
+	}
+	if lrw.status != http.StatusOK {
+		t.Fatalf("status = %d, want %d", lrw.status, http.StatusOK)
+	}
+}
+
+type testNonFlushingResponseWriter struct {
+	header http.Header
+	body   strings.Builder
+	status int
+}
+
+func (w *testNonFlushingResponseWriter) Header() http.Header {
+	if w.header == nil {
+		w.header = make(http.Header)
+	}
+	return w.header
+}
+
+func (w *testNonFlushingResponseWriter) WriteHeader(status int) {
+	w.status = status
+}
+
+func (w *testNonFlushingResponseWriter) Write(b []byte) (int, error) {
+	return w.body.Write(b)
+}
+
+func TestLoggingResponseWriterDoesNotAdvertiseUnsupportedFlusher(t *testing.T) {
+	_, wrapped := newLoggingResponseWriter(&testNonFlushingResponseWriter{})
+	if _, ok := wrapped.(http.Flusher); ok {
+		t.Fatal("logging response writer must not advertise http.Flusher when the wrapped writer does not support it")
 	}
 }
 
@@ -721,9 +1029,11 @@ func TestGroupMemberDeleteRevokesMemberToken(t *testing.T) {
 		t.Fatalf("create member token: %v", err)
 	}
 
+	protected := authMiddleware(makeGroupRouteHandler(svcCtx), svcCtx)
 	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/groups/"+groupID+"/members/human/human-route", nil)
+	deleteReq.Header.Set("X-Admin-Token", "secret")
 	deleteRec := httptest.NewRecorder()
-	makeGroupRouteHandler(svcCtx).ServeHTTP(deleteRec, deleteReq)
+	protected.ServeHTTP(deleteRec, deleteReq)
 	if deleteRec.Code != http.StatusOK {
 		t.Fatalf("delete member status = %d, want 200, body=%s", deleteRec.Code, deleteRec.Body.String())
 	}
@@ -735,7 +1045,7 @@ func TestGroupMemberDeleteRevokesMemberToken(t *testing.T) {
 		t.Fatalf("member token was not revoked: %#v", storedToken)
 	}
 
-	protected := authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	protected = authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}), svcCtx)
 	readReq := httptest.NewRequest(http.MethodGet, "/api/groups/"+groupID+"/members", nil)
@@ -744,6 +1054,55 @@ func TestGroupMemberDeleteRevokesMemberToken(t *testing.T) {
 	protected.ServeHTTP(readRec, readReq)
 	if readRec.Code != http.StatusUnauthorized {
 		t.Fatalf("removed member status = %d, want 401", readRec.Code)
+	}
+}
+
+func TestMemberTokenCanDeleteSelfButNotOtherMember(t *testing.T) {
+	svcCtx, groupID := setupGroupRouteTestContext(t)
+	svcCtx.Config = &config.Config{AdminToken: "admin-token"}
+	mustUpsertMember(t, svcCtx, groupID, model.GroupActorHuman, "alice")
+	mustUpsertMember(t, svcCtx, groupID, model.GroupActorHuman, "bob")
+	aliceToken := mustIssueGroupToken(t, svcCtx, groupID, model.GroupActorHuman, "alice")
+	protected := authMiddleware(makeGroupRouteHandler(svcCtx), svcCtx)
+
+	otherReq := httptest.NewRequest(http.MethodDelete, "/api/groups/"+groupID+"/members/human/bob", nil)
+	otherReq.Header.Set("X-Group-Member-Token", aliceToken)
+	otherRec := httptest.NewRecorder()
+	protected.ServeHTTP(otherRec, otherReq)
+	if otherRec.Code != http.StatusForbidden {
+		t.Fatalf("delete other status = %d, want %d", otherRec.Code, http.StatusForbidden)
+	}
+
+	selfReq := httptest.NewRequest(http.MethodDelete, "/api/groups/"+groupID+"/members/human/alice", nil)
+	selfReq.Header.Set("X-Group-Member-Token", aliceToken)
+	selfRec := httptest.NewRecorder()
+	protected.ServeHTTP(selfRec, selfReq)
+	if selfRec.Code != http.StatusOK {
+		t.Fatalf("delete self status = %d, want %d body=%s", selfRec.Code, http.StatusOK, selfRec.Body.String())
+	}
+
+	readReq := httptest.NewRequest(http.MethodGet, "/api/groups/"+groupID+"/members", nil)
+	readReq.Header.Set("X-Group-Member-Token", aliceToken)
+	readRec := httptest.NewRecorder()
+	protected.ServeHTTP(readRec, readReq)
+	if readRec.Code != http.StatusUnauthorized {
+		t.Fatalf("deleted member token status = %d, want %d", readRec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestAdminCanDeleteAnyGroupMember(t *testing.T) {
+	svcCtx, groupID := setupGroupRouteTestContext(t)
+	svcCtx.Config.AdminToken = "admin-token"
+	mustUpsertMember(t, svcCtx, groupID, model.GroupActorHuman, "bob")
+	protected := authMiddleware(makeGroupRouteHandler(svcCtx), svcCtx)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/groups/"+groupID+"/members/human/bob", nil)
+	req.Header.Set("X-Admin-Token", "admin-token")
+	rec := httptest.NewRecorder()
+	protected.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusOK, rec.Body.String())
 	}
 }
 

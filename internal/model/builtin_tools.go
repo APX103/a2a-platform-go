@@ -1,12 +1,15 @@
 package model
 
+import "context"
+
 // BuiltinTool represents a built-in tool definition.
 type BuiltinTool struct {
-	Name        string                 `json:"name"`
-	Description string                 `json:"description"`
-	Parameters  []ToolParameter         `json:"parameters"`
-	Execute     func(args map[string]any) (string, error)
-	IsReadOnly  bool                   `json:"is_read_only,omitempty"` // true = safe for concurrent execution
+	Name           string          `json:"name"`
+	Description    string          `json:"description"`
+	Parameters     []ToolParameter `json:"parameters"`
+	Execute        func(args map[string]any) (string, error)
+	ExecuteContext func(ctx context.Context, args map[string]any) (string, error)
+	IsReadOnly     bool `json:"is_read_only,omitempty"` // true = safe for concurrent execution
 }
 
 // ToolParameter represents a tool parameter.
@@ -19,8 +22,8 @@ type ToolParameter struct {
 
 // BuiltinToolRequest represents a request to execute a builtin tool.
 type BuiltinToolRequest struct {
-	Name      string                 `json:"name"`
-	Arguments map[string]any        `json:"arguments"`
+	Name      string         `json:"name"`
+	Arguments map[string]any `json:"arguments"`
 }
 
 // BuiltinToolResponse represents a tool execution result.

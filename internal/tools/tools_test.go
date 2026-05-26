@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -11,8 +12,65 @@ import (
 	"testing"
 	"time"
 
+	"a2a-platform/internal/llm"
 	"a2a-platform/internal/model"
 )
+
+type testSubagentStore struct {
+	session *model.SubagentSession
+	failed  string
+}
+
+func (s *testSubagentStore) Create(parentContextId, parentToolCallId, task, contextStr string) (*model.SubagentSession, error) {
+	s.session = &model.SubagentSession{
+		ID:               "sub-test",
+		ParentContextId:  parentContextId,
+		ParentToolCallId: parentToolCallId,
+		Task:             task,
+		Context:          contextStr,
+		Status:           "running",
+		CreatedAt:        time.Now(),
+	}
+	return s.session, nil
+}
+
+func (s *testSubagentStore) Complete(id, result string) error {
+	if s.session != nil {
+		s.session.Status = "completed"
+		s.session.Result = result
+	}
+	return nil
+}
+
+func (s *testSubagentStore) Fail(id, errorMsg string) error {
+	s.failed = errorMsg
+	if s.session != nil {
+		s.session.Status = "failed"
+		s.session.Error = errorMsg
+	}
+	return nil
+}
+
+func (s *testSubagentStore) UpdateMessages(id, messagesJSON string) error {
+	if s.session != nil {
+		s.session.Messages = messagesJSON
+	}
+	return nil
+}
+
+type cancelAwareProvider struct {
+	observed error
+}
+
+func (p *cancelAwareProvider) ChatStream(ctx context.Context, req *llm.ChatRequest) (<-chan llm.StreamEvent, error) {
+	p.observed = ctx.Err()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	ch := make(chan llm.StreamEvent)
+	close(ch)
+	return ch, nil
+}
 
 func TestExecuteReadFile(t *testing.T) {
 	testDir := "test_read_dir_" + fmt.Sprint(time.Now().UnixNano())
@@ -174,6 +232,52 @@ func TestRegisterDynamicToolsReplacesByName(t *testing.T) {
 	}
 	if description != "new" {
 		t.Fatalf("description = %q, want new", description)
+	}
+}
+
+func TestExecuteToolRejectsToolWithoutExecutor(t *testing.T) {
+	dynamicToolsMu.Lock()
+	original := append([]model.BuiltinTool{}, DynamicTools...)
+	DynamicTools = nil
+	dynamicToolsMu.Unlock()
+	t.Cleanup(func() {
+		dynamicToolsMu.Lock()
+		DynamicTools = original
+		dynamicToolsMu.Unlock()
+	})
+
+	RegisterDynamicTools([]model.BuiltinTool{{Name: "nil_execute_tool_test", Description: "nil executor"}})
+
+	if _, err := ExecuteTool("nil_execute_tool_test", map[string]any{}); err == nil {
+		t.Fatal("ExecuteTool succeeded, want nil executor error")
+	} else if !strings.Contains(err.Error(), `tool "nil_execute_tool_test" has no execute function`) {
+		t.Fatalf("error = %q, want nil executor error", err.Error())
+	}
+}
+
+func TestSpawnAgentContextPreservesParentCancellation(t *testing.T) {
+	store := &testSubagentStore{}
+	provider := &cancelAwareProvider{}
+	engine := NewSubagentEngine(store, provider, "subagent", llm.ChatRequest{Model: "test-model"})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := SpawnAgentContext(engine)(ctx, map[string]any{
+		"task":                 "check cancellation",
+		"_parent_context_id":   "ctx-1",
+		"_parent_tool_call_id": "tool-1",
+	})
+	if err == nil {
+		t.Fatal("SpawnAgentContext succeeded, want cancellation error")
+	}
+	if provider.observed != context.Canceled {
+		t.Fatalf("provider observed %v, want context.Canceled", provider.observed)
+	}
+	if store.session == nil || store.session.ParentContextId != "ctx-1" || store.session.ParentToolCallId != "tool-1" {
+		t.Fatalf("subagent session = %#v, want parent context/tool ids", store.session)
+	}
+	if !strings.Contains(store.failed, "context canceled") {
+		t.Fatalf("failed error = %q, want context canceled", store.failed)
 	}
 }
 

@@ -168,12 +168,13 @@ func main() {
 	// ===== Start server =====
 	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
 
-	// Build middleware chain: cors -> rateLimit -> auth -> logging -> mux
+	// Build middleware chain: requestID -> recover -> cors -> rateLimit -> auth -> logging -> mux
 	var h http.Handler = mux
 	h = loggingMiddleware(h)
 	h = authMiddleware(h, svcCtx)
 	h = rateLimitMiddleware(h, cfg)
 	h = corsMiddleware(h, cfg)
+	h = recoverMiddleware(h)
 	h = requestIDMiddleware(h)
 
 	server := &http.Server{
@@ -185,14 +186,14 @@ func main() {
 	}
 
 	// Graceful shutdown
+	shutdownDone := make(chan struct{})
 	go func() {
+		defer close(shutdownDone)
 		sigCh := make(chan os.Signal, 1)
 		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+		defer signal.Stop(sigCh)
 		<-sigCh
-		slog.Info("Shutting down...")
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		server.Shutdown(ctx)
+		runGracefulShutdown(server, svcCtx, 10*time.Second)
 	}()
 
 	// Load and register builtin agents from database
@@ -205,7 +206,30 @@ func main() {
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("Server error: %v", err)
 	}
+	<-shutdownDone
 	slog.Info("Server stopped.")
+}
+
+type gracefulShutdownServer interface {
+	Shutdown(context.Context) error
+}
+
+type serviceCloser interface {
+	Close() error
+}
+
+func runGracefulShutdown(server gracefulShutdownServer, services serviceCloser, timeout time.Duration) {
+	slog.Info("Shutting down...")
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	if err := server.Shutdown(ctx); err != nil {
+		slog.Error("HTTP server shutdown failed", "error", err)
+	}
+	if services != nil {
+		if err := services.Close(); err != nil {
+			slog.Error("Service context close failed", "error", err)
+		}
+	}
 }
 
 // ===== Route helper functions =====
@@ -226,16 +250,21 @@ func makeHealthHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
+		status := "ok"
 		dbStatus := "ok"
+		httpStatus := http.StatusOK
 		if err := svcCtx.DB.Ping(); err != nil {
+			status = "degraded"
 			dbStatus = "error"
+			httpStatus = http.StatusServiceUnavailable
 		}
 
 		agentsConnected := svcCtx.Registry.CountConnected()
 		agentsTotal, _ := svcCtx.Registry.CountTotal()
 
+		w.WriteHeader(httpStatus)
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"status":           "ok",
+			"status":           status,
 			"db":               dbStatus,
 			"agents_connected": agentsConnected,
 			"agents_total":     agentsTotal,
@@ -797,6 +826,9 @@ func requiresAdmin(path, method string) bool {
 	if strings.HasPrefix(path, "/api/agents") || strings.HasPrefix(path, "/api/builtin-agents") {
 		return true
 	}
+	if path == "/api/stats" {
+		return true
+	}
 	if path == "/api/humans" {
 		return true
 	}
@@ -810,6 +842,9 @@ func requiresAdmin(path, method string) bool {
 		return true
 	}
 	if strings.HasPrefix(path, "/api/groups/") {
+		if isGroupMemberDelete(path, method) {
+			return false
+		}
 		if method == http.MethodPut || method == http.MethodDelete {
 			return true
 		}
@@ -824,6 +859,15 @@ func requiresAdmin(path, method string) bool {
 		}
 	}
 	return false
+}
+
+func isGroupMemberDelete(path, method string) bool {
+	if method != http.MethodDelete || !strings.HasPrefix(path, "/api/groups/") {
+		return false
+	}
+	tail := pathTail(path, "/api/groups/")
+	parts := strings.Split(tail, "/")
+	return len(parts) == 4 && parts[1] == "members" && parts[2] != "" && parts[3] != ""
 }
 
 func scopedGroupID(path, method string) (string, bool) {
@@ -889,18 +933,121 @@ func rateLimitMiddleware(next http.Handler, cfg *config.Config) http.Handler {
 	})
 }
 
+type loggingResponseWriter struct {
+	http.ResponseWriter
+	status      int
+	bytes       int
+	wroteHeader bool
+}
+
+func (w *loggingResponseWriter) WriteHeader(status int) {
+	if w.wroteHeader {
+		return
+	}
+	w.wroteHeader = true
+	w.status = status
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *loggingResponseWriter) Write(b []byte) (int, error) {
+	if !w.wroteHeader {
+		w.WriteHeader(http.StatusOK)
+	}
+	n, err := w.ResponseWriter.Write(b)
+	w.bytes += n
+	return n, err
+}
+
+type loggingFlusherResponseWriter struct {
+	*loggingResponseWriter
+}
+
+func (w *loggingFlusherResponseWriter) Flush() {
+	w.loggingResponseWriter.WriteHeader(http.StatusOK)
+	w.ResponseWriter.(http.Flusher).Flush()
+}
+
+func newLoggingResponseWriter(w http.ResponseWriter) (*loggingResponseWriter, http.ResponseWriter) {
+	lrw := &loggingResponseWriter{ResponseWriter: w, status: http.StatusOK}
+	if _, ok := w.(http.Flusher); ok {
+		return lrw, &loggingFlusherResponseWriter{loggingResponseWriter: lrw}
+	}
+	return lrw, lrw
+}
+
 func loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		next.ServeHTTP(w, r)
+		lrw, wrapped := newLoggingResponseWriter(w)
+		next.ServeHTTP(wrapped, r)
 		requestID, _ := r.Context().Value(requestIDContextKey{}).(string)
 		slog.Info("request",
 			"request_id", requestID,
 			"method", r.Method,
 			"path", r.URL.Path,
 			"remote", r.RemoteAddr,
+			"status", lrw.status,
+			"bytes", lrw.bytes,
 			"duration", time.Since(start),
 		)
+	})
+}
+
+type committedResponseWriter struct {
+	http.ResponseWriter
+	committed bool
+}
+
+func (w *committedResponseWriter) WriteHeader(status int) {
+	if w.committed {
+		return
+	}
+	w.committed = true
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *committedResponseWriter) Write(b []byte) (int, error) {
+	if !w.committed {
+		w.WriteHeader(http.StatusOK)
+	}
+	return w.ResponseWriter.Write(b)
+}
+
+type committedFlusherResponseWriter struct {
+	*committedResponseWriter
+}
+
+func (w *committedFlusherResponseWriter) Flush() {
+	w.committedResponseWriter.WriteHeader(http.StatusOK)
+	w.ResponseWriter.(http.Flusher).Flush()
+}
+
+func newCommittedResponseWriter(w http.ResponseWriter) (*committedResponseWriter, http.ResponseWriter) {
+	crw := &committedResponseWriter{ResponseWriter: w}
+	if _, ok := w.(http.Flusher); ok {
+		return crw, &committedFlusherResponseWriter{committedResponseWriter: crw}
+	}
+	return crw, crw
+}
+
+func recoverMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		crw, wrapped := newCommittedResponseWriter(w)
+		defer func() {
+			if v := recover(); v != nil {
+				requestID, _ := r.Context().Value(requestIDContextKey{}).(string)
+				slog.Error("panic recovered",
+					"request_id", requestID,
+					"method", r.Method,
+					"path", r.URL.Path,
+					"panic", v,
+				)
+				if !crw.committed {
+					jsonError(wrapped, "internal server error", http.StatusInternalServerError)
+				}
+			}
+		}()
+		next.ServeHTTP(wrapped, r)
 	})
 }
 

@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -12,6 +13,82 @@ import (
 	"a2a-platform/internal/model"
 	"a2a-platform/internal/tools"
 )
+
+func TestRunLoopAllowsNilRecordTrace(t *testing.T) {
+	eng := New()
+	provider := &mockProvider{events: []llm.StreamEvent{
+		{Type: "tool_call", ToolCall: &llm.ToolCall{ID: "call-1", Name: "unknown_tool", Arguments: "{}"}},
+		{Type: "done"},
+	}}
+	agent := &BuiltinAgent{Config: config.BuiltinAgent{Name: "agent", MaxToolRounds: 1}, Provider: provider}
+	deps := &Deps{SaveMessage: func(m *model.Message) error { return nil }}
+	rec := httptest.NewRecorder()
+	flusher := http.Flusher(rec)
+
+	if _, err := eng.runLoop(context.Background(), agent, []llm.ChatMessage{{Role: "user", Content: "hi"}}, rec, flusher, "task", "ctx", "root", "", deps); err == nil {
+		t.Fatal("runLoop succeeded with unknown tool, want max/tool error path without panic")
+	}
+}
+
+func TestCallToolWithTimeoutRecoversToolPanic(t *testing.T) {
+	eng := New()
+	eng.callTool = func(ctx context.Context, agent *BuiltinAgent, name string, arguments string, execCtx ToolExecutionContext) (string, error) {
+		panic("boom")
+	}
+
+	agent := &BuiltinAgent{Config: config.BuiltinAgent{Name: "agent"}}
+	result, err := eng.callToolWithTimeout(context.Background(), agent, "panic_tool", "{}", ToolExecutionContext{}, nil)
+	if err == nil {
+		t.Fatal("callToolWithTimeout succeeded, want panic error")
+	}
+	if result != "" {
+		t.Fatalf("result = %q, want empty", result)
+	}
+	if !strings.Contains(err.Error(), "tool panic: boom") {
+		t.Fatalf("error = %q, want tool panic", err.Error())
+	}
+}
+
+func TestDefaultCallToolRejectsToolWithoutExecutor(t *testing.T) {
+	tools.RegisterDynamicTools([]model.BuiltinTool{
+		{Name: "nil_execute_engine_test", Description: "nil executor"},
+	})
+
+	eng := New()
+	agent := &BuiltinAgent{Config: config.BuiltinAgent{Name: "agent"}}
+	if _, err := eng.defaultCallTool(context.Background(), agent, "nil_execute_engine_test", "{}", ToolExecutionContext{}); err == nil {
+		t.Fatal("defaultCallTool succeeded, want nil executor error")
+	} else if !strings.Contains(err.Error(), `tool "nil_execute_engine_test" has no execute function`) {
+		t.Fatalf("error = %q, want nil executor error", err.Error())
+	}
+}
+
+func TestDefaultCallToolPassesCanceledContextToExecuteContext(t *testing.T) {
+	observed := make(chan error, 1)
+	tools.RegisterDynamicTools([]model.BuiltinTool{
+		{
+			Name:        "canceled_context_engine_test",
+			Description: "canceled context",
+			ExecuteContext: func(ctx context.Context, args map[string]any) (string, error) {
+				observed <- ctx.Err()
+				return "", ctx.Err()
+			},
+		},
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	eng := New()
+	agent := &BuiltinAgent{Config: config.BuiltinAgent{Name: "agent"}}
+	_, err := eng.defaultCallTool(ctx, agent, "canceled_context_engine_test", "{}", ToolExecutionContext{})
+	if err == nil {
+		t.Fatal("defaultCallTool succeeded, want canceled context error")
+	}
+	if got := <-observed; got != context.Canceled {
+		t.Fatalf("ExecuteContext observed %v, want context.Canceled", got)
+	}
+}
 
 // mockProvider is a test double for llm.Provider.
 type mockProvider struct {
@@ -236,7 +313,7 @@ func TestRunLoop_MaxRoundsExceeded_ToolExecuted(t *testing.T) {
 
 	// Override callTool to count executions
 	originalCallTool := eng.callTool
-	eng.callTool = func(a *BuiltinAgent, name string, arguments string, execCtx ToolExecutionContext) (string, error) {
+	eng.callTool = func(ctx context.Context, a *BuiltinAgent, name string, arguments string, execCtx ToolExecutionContext) (string, error) {
 		callCount++
 		return "tool result", nil
 	}
@@ -323,7 +400,7 @@ func TestRunLoop_ToolCallsWithinLimit(t *testing.T) {
 	}
 
 	var toolExecuted bool
-	eng.callTool = func(a *BuiltinAgent, name string, arguments string, execCtx ToolExecutionContext) (string, error) {
+	eng.callTool = func(ctx context.Context, a *BuiltinAgent, name string, arguments string, execCtx ToolExecutionContext) (string, error) {
 		toolExecuted = true
 		return "tool result", nil
 	}
@@ -382,7 +459,7 @@ func TestRunLoop_RedactsToolCallArgumentsInTrace(t *testing.T) {
 		},
 	}
 
-	eng.callTool = func(a *BuiltinAgent, name string, arguments string, execCtx ToolExecutionContext) (string, error) {
+	eng.callTool = func(ctx context.Context, a *BuiltinAgent, name string, arguments string, execCtx ToolExecutionContext) (string, error) {
 		return `{"access_token":"tool-result-secret","ok":"keep-me"}`, nil
 	}
 
@@ -564,7 +641,7 @@ func TestRunLoop_PassesRootAndParentToTool(t *testing.T) {
 	}
 
 	var got ToolExecutionContext
-	eng.callTool = func(a *BuiltinAgent, name string, arguments string, execCtx ToolExecutionContext) (string, error) {
+	eng.callTool = func(ctx context.Context, a *BuiltinAgent, name string, arguments string, execCtx ToolExecutionContext) (string, error) {
 		got = execCtx
 		return "ok", nil
 	}
@@ -608,7 +685,7 @@ func TestRunLoop_EmitsToolProgressDuringLongToolCall(t *testing.T) {
 		},
 	}
 
-	eng.callTool = func(a *BuiltinAgent, name string, arguments string, execCtx ToolExecutionContext) (string, error) {
+	eng.callTool = func(ctx context.Context, a *BuiltinAgent, name string, arguments string, execCtx ToolExecutionContext) (string, error) {
 		time.Sleep(35 * time.Millisecond)
 		return "ok", nil
 	}
