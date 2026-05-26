@@ -180,7 +180,7 @@ bridge_agents:
 
 外部 Agent 有两种注册方式：
 
-- **发现式注册**：外部 Agent 暴露 `GET /.well-known/agent.json`，平台注册时自动抓取 AgentCard，后续健康检查也会访问该端点。
+- **发现式注册**：外部 Agent 暴露 `GET /.well-known/agent-card.json`（优先）或 `GET /.well-known/agent.json`（兼容回退），平台注册时自动抓取 AgentCard，后续健康检查也会访问该端点。
 - **静态注册**：注册请求直接提交 `agent_card`，平台把 AgentCard 存入数据库并对外提供查询；外部 Agent 只需要保留可被平台代理调用的消息入口。若需要健康状态，请在 `agent_card.health_url` 中提供健康检查地址。
 
 外部 Agent 还可以通过 `context_mode` 声明会话模式：
@@ -232,28 +232,29 @@ curl -X POST http://localhost:18090/api/agents \
 |------|------|------|------|
 | `GET` | `/health` | - | 健康检查（含 DB 状态） |
 | `GET` | `/api/stats` | - | 统计信息 |
-| `GET` | `/api/agents` | - | 列出所有 Agent |
-| `POST` | `/api/agents` | token | 注册外部 Agent |
-| `GET` | `/api/agents/{name}` | - | Agent 详情 |
-| `DELETE` | `/api/agents/{name}` | token | 删除 Agent |
-| `GET` | `/api/builtin-agents` | - | 列出内建 Agent |
-| `POST` | `/api/builtin-agents` | token | 创建内建 Agent |
-| `DELETE` | `/api/builtin-agents/{name}` | token | 删除内建 Agent |
-| `GET` | `/api/contexts/{agent_name}` | - | 列出 Agent 的会话 |
-| `POST` | `/api/contexts` | - | 创建新会话 |
-| `GET` | `/api/contexts/{id}` | - | 获取会话详情 |
-| `PATCH` | `/api/contexts/{id}` | - | 更新会话标题 |
-| `DELETE` | `/api/contexts/{id}` | - | 删除会话 |
-| `GET` | `/api/subagents/{context_id}` | - | 列出子代理 |
-| `GET` | `/api/subagents/{id}` | - | 获取子代理详情 |
-| `POST` | `/agent/{name}` | - | A2A 消息代理（JSON-RPC） |
-| `GET` | `/api/tasks` | - | 任务列表 |
-| `GET` | `/api/tasks/{id}` | - | 任务详情 |
-| `GET` | `/api/traces` | - | 最近追踪 |
-| `GET` | `/api/traces/contexts` | - | 按 Context 聚合 |
-| `GET` | `/api/traces/task/{id}` | - | 按 Task 查追踪 |
-| `GET` | `/api/traces/context/{id}` | - | 按 Context 查追踪 |
-| `GET` | `/api/events` | - | SSE 实时事件流 |
+| `GET` | `/api/agents` | admin | 列出所有 Agent |
+| `POST` | `/api/agents` | admin | 注册外部 Agent |
+| `GET` | `/api/agents/{name}` | admin | Agent 详情 |
+| `DELETE` | `/api/agents/{name}` | admin | 删除 Agent |
+| `GET` | `/api/builtin-agents` | admin | 列出内建 Agent |
+| `POST` | `/api/builtin-agents` | admin | 创建内建 Agent |
+| `DELETE` | `/api/builtin-agents/{name}` | admin | 删除内建 Agent |
+| `GET` | `/api/contexts/{agent_name}` | admin | 列出 Agent 的会话 |
+| `POST` | `/api/contexts` | admin | 创建新会话 |
+| `GET` | `/api/contexts/{id}` | admin | 获取会话详情 |
+| `PATCH` | `/api/contexts/{id}` | admin | 更新会话标题 |
+| `DELETE` | `/api/contexts/{id}` | admin | 删除会话 |
+| `GET` | `/api/subagents/{context_id}` | admin | 列出子代理 |
+| `GET` | `/api/subagents/{id}` | admin | 获取子代理详情 |
+| `POST` | `/agent/{name}` | member | A2A 消息代理（JSON-RPC） |
+| `GET` | `/api/tasks` | admin | 任务列表 |
+| `GET` | `/api/tasks/{id}` | admin | 任务详情 |
+| `GET` | `/api/traces` | admin | 最近追踪 |
+| `GET` | `/api/traces/contexts` | admin | 按 Context 聚合 |
+| `GET` | `/api/traces/task/{id}` | admin | 按 Task 查追踪 |
+| `GET` | `/api/traces/context/{id}` | admin | 按 Context 查追踪 |
+| `GET` | `/.well-known/agent-card/{name}` | member | 获取指定 Agent 的托管 AgentCard |
+| `GET` | `/api/events` | admin | SSE 实时事件流 |
 
 Task 会记录 `source_agent -> target_agent`；旧字段 `agent_name` 仍保留，语义等价于 `target_agent`。Message 会保留 `role` 作为协议角色，同时用 `sender_agent` / `recipient_agent` 表达真实通信方向。Bridge 或 Agent 代发平台消息时可设置 `X-A2A-Source-Agent` header 来标记真实发起方。
 

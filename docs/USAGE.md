@@ -356,7 +356,7 @@ Agent: [调用 list_directory 工具]
 
 | 方式 | 适用场景 | 外部 Agent 需要提供 |
 |------|----------|---------------------|
-| **发现式注册** | Agent 已按 A2A 规范提供 AgentCard，或你希望平台每次恢复连接时重新发现能力 | `GET /.well-known/agent.json` 和消息入口 |
+| **发现式注册** | Agent 已按 A2A 规范提供 AgentCard，或你希望平台每次恢复连接时重新发现能力 | `GET /.well-known/agent-card.json`（优先）或 `GET /.well-known/agent.json`（兼容）和消息入口 |
 | **静态注册** | 已有 Agent 不方便新增 AgentCard 端点，只想把能力描述注册进平台 | 消息入口；可选 `health_url` |
 
 外部 Agent 也有两种会话模式，通过 `context_mode` 声明：
@@ -368,7 +368,7 @@ Agent: [调用 list_directory 工具]
 
 ### 发现式注册
 
-发现式注册只提交 `name`、`type`、`url`。平台会访问 `url/.well-known/agent.json` 获取 AgentCard，然后把 AgentCard 持久化到数据库。
+发现式注册只提交 `name`、`type`、`url`。平台会优先访问 `url/.well-known/agent-card.json` 获取 AgentCard，如不存在则回退到 `url/.well-known/agent.json`，然后把 AgentCard 持久化到数据库。
 
 ```bash
 curl -X POST http://localhost:18090/api/agents \
@@ -383,7 +383,7 @@ curl -X POST http://localhost:18090/api/agents \
 ```
 
 平台会自动：
-1. 访问 `url/.well-known/agent.json` 获取 AgentCard
+1. 优先访问 `url/.well-known/agent-card.json`，如不存在则回退到 `url/.well-known/agent.json` 获取 AgentCard
 2. 做可达性检测
 3. 持久化到数据库
 4. 每 30 秒检查 AgentCard 端点；如果 AgentCard 中有 `health_url`，也会检查该健康地址
@@ -877,7 +877,7 @@ server {
 
 - 确认 Agent URL 从平台容器可达
 - Docker 中使用宿主机 IP 而非 localhost
-- 发现式注册：检查 Agent 的 `/.well-known/agent.json` 是否可访问
+- 发现式注册：检查 Agent 的 `/.well-known/agent-card.json`（或 `/.well-known/agent.json`）是否可访问
 - 静态注册：如果配置了 `agent_card.health_url`，检查该地址是否返回 200；如果没有配置健康地址，平台不会主动探测健康状态
 
 ### Bridge Agent 返回错误
