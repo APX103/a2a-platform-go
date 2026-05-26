@@ -11,13 +11,29 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_URL="${BACKEND_URL:-${1:-http://localhost:28090}}"
+ADMIN_PORT=3001
+HUMAN_PORT=5174
+
+# 释放指定端口
+free_port() {
+    local port="$1"
+    local name="$2"
+    local pids
+    pids=$(lsof -ti:"$port" 2>/dev/null || true)
+    if [ -n "$pids" ]; then
+        echo "⚠️  $name 端口 $port 被占用，正在释放..."
+        echo "$pids" | xargs kill -9 2>/dev/null || true
+        sleep 1
+        echo "✅ 端口 $port 已释放"
+    fi
+}
 
 echo "========================================"
 echo "  A2A 前端启动脚本"
 echo "========================================"
 echo "  后端地址: $BACKEND_URL"
-echo "  Admin:    http://localhost:3001"
-echo "  Human:    http://localhost:5174"
+echo "  Admin:    http://localhost:$ADMIN_PORT"
+echo "  Human:    http://localhost:$HUMAN_PORT"
 echo "========================================"
 echo ""
 
@@ -25,26 +41,12 @@ echo ""
 PID_DIR="$SCRIPT_DIR/.run"
 mkdir -p "$PID_DIR"
 
-# 先清理之前的进程
-if [ -f "$PID_DIR/admin.pid" ]; then
-    old_pid=$(cat "$PID_DIR/admin.pid" 2>/dev/null || true)
-    if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
-        echo "🛑 停止之前的 Admin (pid $old_pid)..."
-        kill "$old_pid" 2>/dev/null || true
-        sleep 1
-    fi
-    rm -f "$PID_DIR/admin.pid"
-fi
+# 先释放端口（防止旧进程占用导致 Vite 自动切换端口）
+free_port "$ADMIN_PORT" "Admin"
+free_port "$HUMAN_PORT" "Human Client"
 
-if [ -f "$PID_DIR/human.pid" ]; then
-    old_pid=$(cat "$PID_DIR/human.pid" 2>/dev/null || true)
-    if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
-        echo "🛑 停止之前的 Human Client (pid $old_pid)..."
-        kill "$old_pid" 2>/dev/null || true
-        sleep 1
-    fi
-    rm -f "$PID_DIR/human.pid"
-fi
+# 清理之前的 PID 文件
+rm -f "$PID_DIR/admin.pid" "$PID_DIR/human.pid"
 
 # 安装依赖（如果 node_modules 不存在）
 install_if_needed() {
@@ -67,7 +69,7 @@ echo "🚀 启动服务..."
 echo ""
 
 # 启动 Admin
-echo "🟢 启动 Admin 前端 (http://localhost:3001) ..."
+echo "🟢 启动 Admin 前端 (http://localhost:$ADMIN_PORT) ..."
 (
     cd "$SCRIPT_DIR/web/admin"
     VITE_DEV_API_PROXY="$BACKEND_URL" npm run dev > "$PID_DIR/admin.log" 2>&1 &
@@ -75,7 +77,7 @@ echo "🟢 启动 Admin 前端 (http://localhost:3001) ..."
 )
 
 # 启动 Human Client
-echo "🟢 启动 Human Client (http://localhost:5174) ..."
+echo "🟢 启动 Human Client (http://localhost:$HUMAN_PORT) ..."
 (
     cd "$SCRIPT_DIR/apps/human-client"
     VITE_A2A_PLATFORM_URL="$BACKEND_URL" npm run dev > "$PID_DIR/human.log" 2>&1 &
@@ -86,8 +88,8 @@ echo ""
 echo "========================================"
 echo "  ✅ 服务已启动"
 echo "========================================"
-echo "  Admin 前端: http://localhost:3001"
-echo "  Human Client: http://localhost:5174"
+echo "  Admin 前端: http://localhost:$ADMIN_PORT"
+echo "  Human Client: http://localhost:$HUMAN_PORT"
 echo "  后端代理: $BACKEND_URL"
 echo ""
 echo "  日志文件:"
