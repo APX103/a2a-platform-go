@@ -39,14 +39,15 @@ func invokeCLI(ctx context.Context, skill *config.SkillInvoke, target *config.Br
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	fullCmd := command
-	if len(args) > 0 {
-		fullCmd += " " + strings.Join(args, " ")
-	}
-
 	// Bridge CLI commands are trusted operator configuration. Rendered user input
 	// must be passed through args in configs that require strict argument safety.
-	cmd := exec.CommandContext(ctx, shell, "-c", fullCmd)
+	cmdArgs := []string{"-c", command}
+	if len(args) > 0 {
+		cmdArgs[1] = command + ` "$@"`
+		cmdArgs = append(cmdArgs, command)
+		cmdArgs = append(cmdArgs, args...)
+	}
+	cmd := exec.CommandContext(ctx, shell, cmdArgs...)
 	if target != nil && target.WorkingDir != "" {
 		cmd.Dir = target.WorkingDir
 	}

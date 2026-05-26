@@ -31,3 +31,18 @@ func TestInvokeCLIBoundsOutput(t *testing.T) {
 		t.Fatalf("output len = %d, want <= %d", len(out), maxCLIOutputBytes)
 	}
 }
+
+func TestInvokeCLIArgsArePassedAsShellParameters(t *testing.T) {
+	input := "$(printf injected)"
+	out, err := invokeCLI(context.Background(), &config.SkillInvoke{
+		Command: "printf '%s'",
+		Args:    []string{input},
+		Timeout: 1000,
+	}, &config.BridgeCLITarget{}, &TemplateContext{})
+	if err != nil {
+		t.Fatalf("invokeCLI: %v", err)
+	}
+	if out != input {
+		t.Fatalf("output = %q, want literal arg %q", out, input)
+	}
+}
