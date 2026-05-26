@@ -1,12 +1,15 @@
 # Production Hardening Audit Remediation TODO
 
-Last updated: 2026-05-25
+Last updated: 2026-05-26
+
+This file was created as an end-of-day handoff. The remaining items listed on
+2026-05-25 have since been completed on the same branch.
 
 ## Current State
 
 - Branch: `codex/production-hardening-audit-remediation`
-- Working tree at handoff: clean before this TODO file was added.
-- Latest implementation commit: `8e344cf fix(bridge): bound and validate external invocations`
+- Final verification state: `go test ./...` and `go test -race ./internal/svc ./internal/events` passed on 2026-05-26.
+- Latest completion commit at update time: `3dcb6b9 docs: reconcile audit remediation status`
 - Original plan: `docs/superpowers/plans/2026-05-25-production-hardening-audit-remediation.md`
 - Human login requirement: keep passwordless bare handle login. It is intentional convenience identity, not a bug to remove.
 
@@ -28,19 +31,18 @@ Last updated: 2026-05-25
   - Commits: `73d9cc5`, `b9297e5`, `397cff0`
   - Reviewed by spec and code-quality reviewers; approved.
 - Task 6 Bridge HTTP and CLI safety.
-  - Commit: `8e344cf`
-  - Spec review passed.
-  - Code-quality review was started but stopped for handoff; do this next.
+  - Commits: `8e344cf`, `eb54b58`
+  - Spec review passed; follow-up quality review fixed CLI args handling.
 
-## Remaining TODO
+## Completed After Handoff
 
-1. Finish Task 6 code-quality review.
+1. Finished Task 6 code-quality review.
    - Review diff `397cff0..8e344cf`.
    - Focus on `internal/bridge/http.go`, `internal/bridge/cli.go`, `internal/bridge/bridge_test.go`, and `docs/architecture/current-architecture.html`.
-   - Verify no hidden regression in URL validation, dedicated HTTP client timeout, CLI stdout bounding, or docs wording.
-   - If issues are found, fix and commit before continuing.
+   - Fixed one quality issue: CLI `args` are now passed as shell position parameters instead of being concatenated into the shell string.
+   - Commit: `eb54b58 fix(bridge): pass cli args safely`.
 
-2. Do Task 7: correct audit and reporting docs.
+2. Completed Task 7: correct audit and reporting docs.
    - Update `docs/audit-report.md`.
    - Update `docs/architecture/current-architecture.html`.
    - Update `docs/production-readiness/acceptance-matrix.md`.
@@ -51,21 +53,21 @@ Last updated: 2026-05-25
      - Panic recovery finding should be scoped to production code; tests may contain recover.
      - `ConfigureAuxiliaryAgentTools` finding should be scoped to DB-loaded builtin agents only.
      - TaskItem claim finding should be corrected to missing `RowsAffected` and non-transactional dependency check.
-   - Run stale-text check:
+   - Stale-text check:
      ```bash
      rg -n "38 源文件|Handle-only login 无凭证验证|recover\\(\\) 出现次数为 \\*\\*0\\*\\*|仅对第一个 DB agent" docs/audit-report.md docs/architecture/current-architecture.html docs/production-readiness/acceptance-matrix.md
      ```
-     Expected: no output.
-   - Commit message: `docs: reconcile audit remediation status`.
+     Result: no output.
+   - Commit: `3dcb6b9 docs: reconcile audit remediation status`.
 
-3. Do Task 8: full verification.
-   - Run:
+3. Completed Task 8: full verification.
+   - Commands:
      ```bash
      go test ./...
      go test -race ./internal/svc ./internal/events
      git status --short
      ```
-   - Expected: tests pass and working tree clean.
+   - Result: tests passed and working tree was clean before this completion-note update.
    - Residual risks to mention in final response:
      - Passwordless handle login is intentionally convenient, not strong authentication.
      - Bridge CLI shell snippets remain operator-trusted config; strict argument safety depends on config style.
