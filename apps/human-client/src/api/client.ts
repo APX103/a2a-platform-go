@@ -124,7 +124,7 @@ const directPlatform = PLATFORM_BASE !== ''
 async function request<T>(path: string, options?: RequestInit & { accessToken?: string }): Promise<T> {
   const headers = {
     'content-type': 'application/json',
-    ...(options?.accessToken ? { Authorization: `Bearer ${options.accessToken}` } : {}),
+    ...(options?.accessToken ? { 'X-Group-Member-Token': options.accessToken } : {}),
     ...(options?.headers || {}),
   }
   const { accessToken: _accessToken, ...fetchOptions } = options || {}
@@ -156,12 +156,12 @@ export const api = {
     body: JSON.stringify(req),
   }),
   getHumanMe: (sessionToken: string) => request<{ human: HumanAuthResponse['human'] }>('/api/humans/me', {
-    headers: { Authorization: `Bearer ${sessionToken}` },
+    headers: { 'X-Human-Session-Token': sessionToken },
   }),
   getGroup: (groupId: string, accessToken: string) => request<Group>(`/api/groups/${encodeURIComponent(groupId)}`, { accessToken }),
   joinWithInvite: (inviteToken: string, sessionToken: string) => request<GroupJoinResponse>('/api/group-joins', {
     method: 'POST',
-    headers: { Authorization: `Bearer ${sessionToken}` },
+    headers: { 'X-Human-Session-Token': sessionToken },
     body: JSON.stringify({
       invite_token: inviteToken,
       actor_type: 'human',
@@ -190,7 +190,7 @@ export const api = {
       headers: {
         'content-type': 'application/json',
         accept: 'text/event-stream, application/json',
-        Authorization: `Bearer ${accessToken}`,
+        'X-Group-Member-Token': accessToken,
         'X-A2A-Source-Agent': `human:${humanId}`,
       },
       body: JSON.stringify(body),
@@ -202,9 +202,7 @@ export const api = {
     return readAgentResponse(res)
   },
   sendMessage: (groupId: string, accessToken: string, clientId: string, content: string) => {
-    const path = directPlatform
-      ? `/api/groups/${encodeURIComponent(groupId)}/events`
-      : `/api/groups/${encodeURIComponent(groupId)}/messages`
+    const path = `/api/groups/${encodeURIComponent(groupId)}/events`
     return request<{ event: GroupEvent; orchestration: GroupOrchestrationState }>(path, {
       method: 'POST',
       accessToken,

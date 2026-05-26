@@ -112,7 +112,7 @@ async function handleAPI(req, res, url) {
     return
   }
 
-  if (action === 'events' && req.method === 'GET') {
+  if (action === 'events' && (req.method === 'GET' || req.method === 'POST')) {
     await proxyPlatform(req, res, `/api/groups/${groupId}/events${url.search}`)
     return
   }
@@ -160,6 +160,9 @@ async function proxyPlatform(req, res, platformPath) {
   }
   if (req.headers['x-group-member-token']) {
     headers['x-group-member-token'] = req.headers['x-group-member-token']
+  }
+  if (req.headers['x-human-session-token']) {
+    headers['x-human-session-token'] = req.headers['x-human-session-token']
   }
   if (req.headers['x-a2a-source-agent']) {
     headers['x-a2a-source-agent'] = req.headers['x-a2a-source-agent']
