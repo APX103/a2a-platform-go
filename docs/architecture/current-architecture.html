@@ -382,7 +382,7 @@ flowchart LR
           <tr><td>HTTP Handler</td><td>Agent CRUD、A2A 代理、Task/Trace/Context/Subagent、Group API、Stats、Events。</td><td><code>internal/handler/*.go</code></td></tr>
           <tr><td>Engine</td><td>内置 Agent LLM 调用循环、带超时/取消传播的工具调用、SSE 输出、消息与 trace 持久化。</td><td><code>internal/engine/engine.go</code></td></tr>
           <tr><td>Tools</td><td>文件/HTTP/目录工具、A2A 平台工具、spawn_agent、task item 动态工具；工具定义保留 <code>Execute</code>，可选实现 <code>ExecuteContext</code> 接收 Engine 传入的取消 context。</td><td><code>internal/tools/*.go</code></td></tr>
-          <tr><td>Bridge</td><td>把配置化 skill 映射到 HTTP 或 CLI 调用，再包装成 A2A SSE 响应；HTTP Bridge 只允许带 Host 的 <code>http</code>/<code>https</code> URL 并使用单次调用超时，CLI Bridge 保留面向可信 operator 配置的 shell 执行模式但把返回 stdout 限制在 1MiB。</td><td><code>internal/bridge/*.go</code></td></tr>
+          <tr><td>Bridge</td><td>把配置化 skill 映射到 HTTP 或 CLI 调用，再包装成 A2A SSE 响应；HTTP Bridge 只允许带 Host 的 <code>http</code>/<code>https</code> URL 并使用单次调用超时，CLI Bridge 保留面向可信 operator 配置的 shell 执行模式，<code>args</code> 通过 shell 位置参数传入，返回 stdout 限制在 1MiB。</td><td><code>internal/bridge/*.go</code></td></tr>
           <tr><td>Admin UI</td><td>先通过纯前端 Admin token 登录门禁；通过后管理 Agent、Human 身份资料与在线状态；Agents/Humans 列表可进入详情页查看 token 管理、资料修改和删除动作；同时管理 Builtin Agent、Task、Trace、Context Chat、Group 和 Artifact。</td><td><code>web/admin/src</code></td></tr>
           <tr><td>Human Client</td><td>通过 invite token 加入 group，以 member token 读取房间、发消息、看产物。</td><td><code>apps/human-client/src</code></td></tr>
         </tbody>
@@ -638,7 +638,7 @@ flowchart LR
       <p><code>apps/human-client</code> 当前是一个“人类参与者房间 UI”，不是完整 A2A Agent。它不托管 AgentCard，不暴露 <code>/agent/{name}</code>，也不默认让人“扮演 agent”。它注册时只声明唯一 <code>handle</code> 和展示名，由平台分发 human token；默认加入 <code>default-p2p</code>，并拿到 group-scoped member token。</p>
 
       <div class="callout">
-        <strong>当前实现：</strong> Human 身份已从本地自报 <code>client_id</code> 升级为服务端身份。注册时 <code>handle</code> 全局唯一，重复返回 409；human token 由后端生成并返回给用户保存，前端不能修改。以后重新进入时可以用唯一 <code>handle</code> 登录，也可以用已保存的 token 登录。注册、name 登录和 token 登录都会为默认 <code>default-p2p</code> group 分发新的 group member token；使用 invite token 加入其他 group 时，后端会用 human token 里的 <code>human_id</code> 覆盖请求中的 actor_id，避免前端伪造身份。Human Client 登录后会周期性调用 <code>/api/humans/me</code>，平台据此更新 <code>human_users.last_seen_at</code>，Admin 的 Humans 页面用该字段判断在线状态。Admin 也可以修改 human 的 handle/display name 或删除 human，但不会读取或改写 token 明文。
+        <strong>当前实现：</strong> Human 身份已从本地自报 <code>client_id</code> 升级为服务端身份。注册时 <code>handle</code> 全局唯一，重复返回 409；human token 由后端生成并返回给用户保存，前端不能修改。以后重新进入时可以用唯一 <code>handle</code> 登录，也可以用已保存的 token 登录。Human handle 登录保持 passwordless by design：它是可信协作流里的便利身份，不是强账户认证。注册、name 登录和 token 登录都会为默认 <code>default-p2p</code> group 分发新的 group member token；使用 invite token 加入其他 group 时，后端会用 human token 里的 <code>human_id</code> 覆盖请求中的 actor_id，避免前端伪造身份。Human Client 登录后会周期性调用 <code>/api/humans/me</code>，平台据此更新 <code>human_users.last_seen_at</code>，Admin 的 Humans 页面用该字段判断在线状态。Admin 也可以修改 human 的 handle/display name 或删除 human，但不会读取或改写 token 明文。
       </div>
 
       <div class="diagram">
@@ -912,7 +912,7 @@ erDiagram
           <h3>Human Session 面</h3>
           <ul class="list">
             <li><code>/api/humans/register</code>：创建唯一 handle 和 display name，返回后端分发的 human token，并自动加入 <code>default-p2p</code>。</li>
-            <li><code>/api/humans/login</code>：用唯一 handle 或 human token 登录，返回 human 身份、新 human token 和新的默认 group member token。</li>
+            <li><code>/api/humans/login</code>：用唯一 handle 或 human token 登录，返回 human 身份、新 human token 和新的默认 group member token；裸 handle 登录是有意保留的便利身份入口，不提供 password 级强认证。</li>
             <li><code>/api/humans/me</code>：用 Bearer human token 查询当前 human，同时刷新 <code>last_seen_at</code>，作为 Human Client 的轻量心跳。</li>
             <li><code>/api/group-joins</code>：如果带 human token，后端用 token 的 <code>human_id</code> 作为 human member actor_id。</li>
           </ul>
@@ -990,10 +990,10 @@ flowchart TD
       <div class="grid">
         <article class="tile accent-gold"><b>编排模式边界</b><p>Group mode 的状态描述比执行逻辑更完整。当前可认为 <code>leader_led</code> 和 <code>free_chat</code> 是主要可执行模式，其他模式是面向后续扩展的语义接口。</p></article>
         <article class="tile accent-teal"><b>上下文边界</b><p>Agent 可声明 <code>context</code> 或 <code>stateless</code>。代理入口会根据 Registry 中的 context mode 决定是否保留 contextId。</p></article>
-        <article class="tile accent-blue"><b>安全边界</b><p>Admin token 管理全局资源；member token 只能访问所属 group，并且调用 Agent 或读取其代理 AgentCard 时要求目标 Agent 是同 group 成员；成员删除边界由 authMiddleware 注入的 trusted principal 判定，member 只能删除自己。</p></article>
+        <article class="tile accent-blue"><b>安全边界</b><p>Admin token 管理全局资源；member token 只能访问所属 group，并且调用 Agent 或读取其代理 AgentCard 时要求目标 Agent 是同 group 成员；成员删除边界由 authMiddleware 注入的 trusted principal 判定，Admin 可删除任意成员，member token 只能删除自己绑定的 actor。</p></article>
         <article class="tile accent-coral"><b>观测边界</b><p>Task/message/trace 是所有调用的主审计链路；代理、内置工具调用和子代理会话持久化前会脱敏已知 token/API key/secret 字段、URL 凭据和敏感 query 参数。内置工具/子代理执行仍使用原始值，UI 事件、消息历史和 subagent session 写入脱敏副本；外部代理响应和 SSE 字节按协议透传。</p></article>
-        <article class="tile accent-green"><b>工具边界</b><p>工具注册是全局的。内置 Agent 获取基础工具、A2A 平台工具和动态工具；只读工具会并行预执行，写工具串行执行。</p></article>
-        <article class="tile accent-gold"><b>Bridge 边界</b><p>Bridge Agent 是进程内适配器，不是外部常驻连接。它按 skill 选择 HTTP/CLI target，并包装成 A2A SSE；HTTP target 限定 <code>http</code>/<code>https</code>，CLI target 属于可信 operator 配置且返回 stdout 有 1MiB 上限。</p></article>
+        <article class="tile accent-green"><b>工具边界</b><p>工具注册是全局的。内置 Agent 获取基础工具、A2A 平台工具和动态工具；只读工具会并行预执行，写工具串行执行。LLM、Bridge、tool、subagent 和 A2A helper 外部调用使用有界 timeout，并在底层支持时传播请求取消。</p></article>
+        <article class="tile accent-gold"><b>Bridge 边界</b><p>Bridge Agent 是进程内适配器，不是外部常驻连接。它按 skill 选择 HTTP/CLI target，并包装成 A2A SSE；HTTP target 限定 <code>http</code>/<code>https</code>，CLI target 属于可信 operator 配置，<code>args</code> 作为位置参数传入 shell，返回 stdout 有 1MiB 上限。</p></article>
       </div>
 
       <h3>A2A 完整兼容性缺口</h3>
