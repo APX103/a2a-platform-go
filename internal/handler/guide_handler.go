@@ -49,18 +49,16 @@ func NewGuideHandler() http.HandlerFunc {
 			return
 		}
 
-		// Resolve absolute path relative to working directory
-		wd, err := os.Getwd()
+		root, absPath, err := resolveGuidePath(path)
 		if err != nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(map[string]string{"error": "failed to resolve working directory"})
+			json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("failed to resolve guide: %v", err)})
 			return
 		}
-		absPath := filepath.Join(wd, path)
 
-		// Security: ensure the resolved path is still under the working directory
-		rel, err := filepath.Rel(wd, absPath)
+		// Security: ensure the resolved path is still under the discovered project root.
+		rel, err := filepath.Rel(root, absPath)
 		if err != nil || strings.HasPrefix(rel, "..") {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusForbidden)
@@ -79,4 +77,23 @@ func NewGuideHandler() http.HandlerFunc {
 		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 		w.Write(content)
 	}
+}
+
+func resolveGuidePath(path string) (string, string, error) {
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", "", fmt.Errorf("working directory: %w", err)
+	}
+	for dir := wd; ; dir = filepath.Dir(dir) {
+		absPath := filepath.Join(dir, path)
+		if _, err := os.Stat(absPath); err == nil {
+			return dir, absPath, nil
+		} else if !os.IsNotExist(err) {
+			return "", "", err
+		}
+		if parent := filepath.Dir(dir); parent == dir {
+			break
+		}
+	}
+	return "", "", fmt.Errorf("guide file not found: %s", path)
 }
