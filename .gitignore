@@ -31,7 +31,7 @@ bridges/*-bridge.yaml
 /server
 
 # Frontend
-web/admin/node_modules/
+apps/admin/node_modules/
 web/dist/
 apps/human-client/node_modules/
 apps/human-client/dist/

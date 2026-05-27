@@ -61,7 +61,7 @@ install_if_needed() {
     fi
 }
 
-install_if_needed "$SCRIPT_DIR/web/admin" "Admin 前端"
+install_if_needed "$SCRIPT_DIR/apps/admin" "Admin 前端"
 install_if_needed "$SCRIPT_DIR/apps/human-client" "Human Client"
 
 echo ""
@@ -71,7 +71,7 @@ echo ""
 # 启动 Admin
 echo "🟢 启动 Admin 前端 (http://localhost:$ADMIN_PORT) ..."
 (
-    cd "$SCRIPT_DIR/web/admin"
+    cd "$SCRIPT_DIR/apps/admin"
     VITE_DEV_API_PROXY="$BACKEND_URL" npm run dev > "$PID_DIR/admin.log" 2>&1 &
     echo $! > "$PID_DIR/admin.pid"
 )
@@ -80,7 +80,7 @@ echo "🟢 启动 Admin 前端 (http://localhost:$ADMIN_PORT) ..."
 echo "🟢 启动 Human Client (http://localhost:$HUMAN_PORT) ..."
 (
     cd "$SCRIPT_DIR/apps/human-client"
-    VITE_A2A_PLATFORM_URL="$BACKEND_URL" npm run dev > "$PID_DIR/human.log" 2>&1 &
+    HUMAN_CLIENT_BFF="$BACKEND_URL" npm run dev > "$PID_DIR/human.log" 2>&1 &
     echo $! > "$PID_DIR/human.pid"
 )
 

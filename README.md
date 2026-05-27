@@ -5,7 +5,7 @@ A2A 平台前端项目，包含 Admin 管理端和 Human Client 人类客户端�
 ## 项目结构
 
 ```
-├── web/admin/          # Admin 管理前端 (React + Vite)
+├── apps/admin/          # Admin 管理前端 (React + Vite)
 ├── apps/human-client/  # Human Client 人类客户端 (React + Vite)
 ├── bridges/            # Bridge 脚本示例
 ├── docs/               # 文档
@@ -14,7 +14,7 @@ A2A 平台前端项目，包含 Admin 管理端和 Human Client 人类客户端�
 
 ## 前端项目
 
-### Admin 管理端 (`web/admin/`)
+### Admin 管理端 (`apps/admin/`)
 
 - 端口: `3001`
 - 功能: Agent 管理、Group 管理、任务追踪、聊天记录、系统监控
@@ -45,7 +45,7 @@ A2A 平台前端项目，包含 Admin 管理端和 Human Client 人类客户端�
 
 ```bash
 # Admin
- cd web/admin
+ cd apps/admin
  npm install
  VITE_DEV_API_PROXY=http://localhost:28090 npm run dev
 
@@ -69,7 +69,7 @@ A2A 平台前端项目，包含 Admin 管理端和 Human Client 人类客户端�
 
 ```bash
 # Admin
-cd web/admin
+cd apps/admin
 npm run build
 # 输出: web/dist/
 
