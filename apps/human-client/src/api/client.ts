@@ -40,6 +40,7 @@ export interface GroupMember {
   role: string
   capabilities_json?: string
   joined_at: string
+  status?: string
 }
 
 export interface GroupEvent {

@@ -5,6 +5,24 @@ function memberIcon(type: string) {
   return type === 'agent' ? <Bot size={15} /> : <UserRound size={15} />
 }
 
+function statusDot(status?: string) {
+  const isOnline = status === 'connected'
+  return (
+    <span
+      title={isOnline ? 'Online' : status || 'Offline'}
+      style={{
+        display: 'inline-block',
+        width: 6,
+        height: 6,
+        borderRadius: '50%',
+        backgroundColor: isOnline ? '#22c55e' : '#9ca3af',
+        marginLeft: 6,
+        flexShrink: 0,
+      }}
+    />
+  )
+}
+
 function parseCapabilities(member: GroupMember): Record<string, unknown> {
   if (!member.capabilities_json) return {}
   try {
@@ -47,7 +65,7 @@ export default function MemberList({
           <div className={`member-row ${activeAgent === member.actor_id ? 'active' : ''}`} key={`${member.actor_type}-${member.actor_id}`}>
             <div className="member-avatar agent">{memberIcon(member.actor_type)}</div>
             <div className="member-meta">
-              <div>{displayName(member)}</div>
+              <div>{displayName(member)}{statusDot(member.status)}</div>
               <span>{member.role}</span>
             </div>
             {onSelectAgent && (
