@@ -90,6 +90,12 @@ export default function TaskDetailPage() {
                   {m.timestamp && <span className="text-xs text-[var(--text-tertiary)]">{new Date(m.timestamp).toLocaleTimeString()}</span>}
                 </div>
                 <p className="text-sm text-[var(--text-primary)] whitespace-pre-wrap">{m.content}</p>
+                {m.reasoning_content && (
+                  <div className="mt-2 p-2 bg-[var(--bg-tertiary)] rounded border border-[var(--border)]">
+                    <div className="text-xs text-[var(--text-tertiary)] mb-1 font-medium">Thinking</div>
+                    <p className="text-xs text-[var(--text-secondary)] whitespace-pre-wrap font-mono">{m.reasoning_content}</p>
+                  </div>
+                )}
               </div>
             ))}
           </div>

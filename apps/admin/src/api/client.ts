@@ -151,6 +151,9 @@ export interface Message {
   sender_agent?: string | null;
   recipient_agent?: string | null;
   content: string;
+  reasoning_content?: string;
+  tool_calls?: string;
+  thinking_blocks?: string;
   timestamp?: string;
 }
 

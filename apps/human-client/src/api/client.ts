@@ -89,6 +89,7 @@ export interface DirectAgentMessage {
   sender: 'human' | 'agent'
   agent: string
   content: string
+  reasoning_content?: string
   created_at: string
 }
 
@@ -202,6 +203,46 @@ export const api = {
     }
     return readAgentResponse(res)
   },
+  sendDirectToAgentStreaming: async (
+    agentName: string,
+    accessToken: string,
+    humanId: string,
+    content: string,
+    callbacks: {
+      onTextDelta?: (text: string) => void
+      onThinkingDelta?: (text: string) => void
+      onDone?: () => void
+      onError?: (err: string) => void
+    },
+  ) => {
+    const body = {
+      jsonrpc: '2.0',
+      id: `human-${Date.now()}`,
+      method: 'SendStreamingMessage',
+      params: {
+        contextId: `human:${humanId}:agent:${agentName}`,
+        message: {
+          role: 'ROLE_USER',
+          parts: [{ text: content }],
+        },
+      },
+    }
+    const res = await fetch(`${PLATFORM_BASE}/agent/${encodeURIComponent(agentName)}`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        accept: 'text/event-stream, application/json',
+        'X-Group-Member-Token': accessToken,
+        'X-A2A-Source-Agent': `human:${humanId}`,
+      },
+      body: JSON.stringify(body),
+    })
+    if (!res.ok) {
+      const text = await res.text()
+      throw new Error(`${res.status}: ${text}`)
+    }
+    return readAgentResponseStreaming(res, callbacks)
+  },
   sendMessage: (groupId: string, accessToken: string, clientId: string, content: string) => {
     const path = `/api/groups/${encodeURIComponent(groupId)}/events`
     return request<{ event: GroupEvent; orchestration: GroupOrchestrationState }>(path, {
@@ -286,4 +327,76 @@ function extractJSONText(text: string): string {
     return ''
   }
   return ''
+}
+
+function extractJSONThinking(text: string): string {
+  if (!text) return ''
+  try {
+    const value = JSON.parse(text)
+    if (value?.type === 'thinking.delta' && typeof value?.thinking === 'string') return value.thinking
+  } catch {
+    return ''
+  }
+  return ''
+}
+
+async function readAgentResponseStreaming(
+  res: Response,
+  callbacks: {
+    onTextDelta?: (text: string) => void
+    onThinkingDelta?: (text: string) => void
+    onDone?: () => void
+    onError?: (err: string) => void
+  },
+): Promise<void> {
+  const contentType = res.headers.get('content-type') || ''
+  if (!contentType.includes('text/event-stream') || !res.body) {
+    const text = await res.text()
+    const extracted = extractJSONText(text) || text
+    callbacks.onTextDelta?.(extracted)
+    callbacks.onDone?.()
+    return
+  }
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  try {
+    while (true) {
+      const { value, done } = await reader.read()
+      if (value) {
+        buffer += decoder.decode(value, { stream: !done })
+        let frameEnd = buffer.indexOf('\n\n')
+        while (frameEnd >= 0) {
+          const frame = buffer.slice(0, frameEnd)
+          buffer = buffer.slice(frameEnd + 2)
+          const data = extractSSEData(frame)
+          const text = extractJSONText(data)
+          if (text) callbacks.onTextDelta?.(text)
+          const thinking = extractJSONThinking(data)
+          if (thinking) callbacks.onThinkingDelta?.(thinking)
+          frameEnd = buffer.indexOf('\n\n')
+        }
+      }
+      if (done) break
+    }
+    if (buffer.trim()) {
+      const data = extractSSEData(buffer)
+      const text = extractJSONText(data)
+      if (text) callbacks.onTextDelta?.(text)
+      const thinking = extractJSONThinking(data)
+      if (thinking) callbacks.onThinkingDelta?.(thinking)
+    }
+  } catch (err: any) {
+    callbacks.onError?.(err?.message || 'Stream error')
+  } finally {
+    callbacks.onDone?.()
+  }
+}
+
+function extractSSEData(frame: string): string {
+  return frame.split('\n')
+    .map(line => line.trim())
+    .filter(line => line.startsWith('data:'))
+    .map(line => line.slice(5).trim())
+    .join('\n')
 }

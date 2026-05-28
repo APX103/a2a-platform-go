@@ -72,18 +72,53 @@ export default function Room({
           [activeAgent]: [...(prev[activeAgent] || []), humanMessage],
         }))
         setMessage('')
-        const response = await api.sendDirectToAgent(activeAgent, session.access_token, session.human_id, content)
+        const agentMessageId = `agent-${Date.now()}`
         const agentMessage: DirectAgentMessage = {
-          id: `agent-${Date.now()}`,
+          id: agentMessageId,
           sender: 'agent',
           agent: activeAgent,
-          content: response,
+          content: '',
           created_at: new Date().toISOString(),
         }
         setDirectMessages(prev => ({
           ...prev,
           [activeAgent]: [...(prev[activeAgent] || []), agentMessage],
         }))
+        await api.sendDirectToAgentStreaming(
+          activeAgent,
+          session.access_token,
+          session.human_id,
+          content,
+          {
+            onTextDelta: (text) => {
+              setDirectMessages(prev => {
+                const msgs = prev[activeAgent] || []
+                const idx = msgs.findIndex(m => m.id === agentMessageId)
+                if (idx === -1) return prev
+                const updated = [...msgs]
+                updated[idx] = { ...updated[idx], content: updated[idx].content + text }
+                return { ...prev, [activeAgent]: updated }
+              })
+            },
+            onThinkingDelta: (text) => {
+              setDirectMessages(prev => {
+                const msgs = prev[activeAgent] || []
+                const idx = msgs.findIndex(m => m.id === agentMessageId)
+                if (idx === -1) return prev
+                const updated = [...msgs]
+                updated[idx] = { ...updated[idx], reasoning_content: (updated[idx].reasoning_content || '') + text }
+                return { ...prev, [activeAgent]: updated }
+              })
+            },
+            onError: (err) => {
+              setError(err)
+              setSending(false)
+            },
+            onDone: () => {
+              setSending(false)
+            },
+          },
+        )
         return
       }
       if (isP2P) {
@@ -171,6 +206,12 @@ export default function Room({
                       <time>{new Date(item.created_at).toLocaleTimeString()}</time>
                     </div>
                     <div className="message-body">{item.content}</div>
+                    {item.reasoning_content && (
+                      <div className="message-thinking">
+                        <div className="thinking-label">Thinking</div>
+                        <div className="thinking-body">{item.reasoning_content}</div>
+                      </div>
+                    )}
                   </article>
                 ))}
               </div>
