@@ -38,6 +38,8 @@ export default function AgentDetail() {
   const [credential, setCredential] = useState<{ secret: string; available: boolean } | null>(null)
   const [credentialLoading, setCredentialLoading] = useState(false)
   const [credentialCopied, setCredentialCopied] = useState(false)
+  const [pullStatus, setPullStatus] = useState<{ pending: number; delivered: number; failed: number } | null>(null)
+  const [pullStatusLoading, setPullStatusLoading] = useState(false)
 
   useEffect(() => {
     if (!name) return
@@ -45,6 +47,13 @@ export default function AgentDetail() {
       .then(a => {
         setAgent(a)
         setForm({ url: a.url, context_mode: a.context_mode || 'context', agent_card: formatAgentCard(a) })
+        if (a.mode === 'pull') {
+          setPullStatusLoading(true)
+          api.getPullStatus(name)
+            .then(s => setPullStatus({ pending: s.pending, delivered: s.delivered, failed: s.failed }))
+            .catch(() => {})
+            .finally(() => setPullStatusLoading(false))
+        }
       })
       .catch(() => setError('Agent not found'))
       .finally(() => setLoading(false))
@@ -121,7 +130,12 @@ export default function AgentDetail() {
           <div className="flex items-center gap-3">
             <div className={`w-3 h-3 rounded-full ${agent.status === 'connected' ? 'bg-[var(--success)]' : 'bg-[var(--text-tertiary)]'}`} />
             <div>
-              <h2 className="text-xl font-semibold">{agent.name}</h2>
+              <div className="flex items-center gap-2">
+                <h2 className="text-xl font-semibold">{agent.name}</h2>
+                {agent.mode === 'pull' && (
+                  <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-500 border border-amber-500/20">pull mode</span>
+                )}
+              </div>
               <span className={`text-xs ${agent.status === 'connected' ? 'text-[var(--success)]' : 'text-[var(--text-tertiary)]'}`}>
                 {agent.status || 'unknown'}
               </span>
@@ -205,6 +219,20 @@ export default function AgentDetail() {
               <p className="text-sm text-[var(--text-primary)] mt-1 font-mono">{agent.url}</p>
             )}
           </div>
+          <div>
+            <label className="text-xs text-[var(--text-tertiary)] uppercase tracking-wider">Mode</label>
+            <p className="text-sm text-[var(--text-primary)] mt-1">{agent.mode === 'pull' ? 'Pull (bridge polls)' : 'Push (direct HTTP)'}</p>
+          </div>
+          {agent.mode === 'pull' && pullStatus && (
+            <div>
+              <label className="text-xs text-[var(--text-tertiary)] uppercase tracking-wider">Queue Status</label>
+              <div className="flex gap-3 mt-1">
+                <span className="text-xs px-2 py-0.5 rounded-full bg-yellow-500/10 text-yellow-500 border border-yellow-500/20">pending: {pullStatus.pending}</span>
+                <span className="text-xs px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-500 border border-blue-500/20">delivered: {pullStatus.delivered}</span>
+                <span className="text-xs px-2 py-0.5 rounded-full bg-red-500/10 text-red-500 border border-red-500/20">failed: {pullStatus.failed}</span>
+              </div>
+            </div>
+          )}
           <div>
             <label className="text-xs text-[var(--text-tertiary)] uppercase tracking-wider">Context Mode</label>
             {editing ? (

@@ -109,6 +109,7 @@ export interface Agent {
   skills?: Array<string | { id?: string; name?: string; description?: string }> | null;
   status?: string;
   type?: string;
+  mode?: string;
   version?: string;
   context_mode?: string;
   agent_card_json?: string;
@@ -380,6 +381,7 @@ export const api = {
     }),
   getAgent: (name: string) => request<Agent>(`/api/agents/${name}`),
   getAgentCredential: (name: string) => request<AgentCredentialResponse>(`/api/agents/${encodeURIComponent(name)}/credential`),
+  getPullStatus: (name: string) => request<{ agent_name: string; pending: number; delivered: number; failed: number }>(`/api/agents/${encodeURIComponent(name)}/pull-status`),
   registerAgent: (agent: Partial<Agent>, token: string) =>
     request<Agent>('/api/agents', {
       method: 'POST',

@@ -128,7 +128,12 @@ export default function Agents() {
                   <div className="flex items-center gap-3">
                     <div className={`w-2 h-2 rounded-full ${agent.status === 'connected' ? 'bg-[var(--success)]' : 'bg-[var(--text-tertiary)]'}`} />
                     <div className="min-w-0">
-                      <div className="text-sm font-medium text-[var(--text-primary)] truncate group-hover:text-[var(--accent)] transition-colors">{agent.name}</div>
+                      <div className="flex items-center gap-2">
+                        <div className="text-sm font-medium text-[var(--text-primary)] truncate group-hover:text-[var(--accent)] transition-colors">{agent.name}</div>
+                        {agent.mode === 'pull' && (
+                          <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-500 border border-amber-500/20">pull</span>
+                        )}
+                      </div>
                       <div className="text-xs text-[var(--text-tertiary)] truncate">{agent.description || agent.url}</div>
                     </div>
                     <ChevronRight size={15} className="ml-auto shrink-0 text-[var(--text-tertiary)] opacity-0 group-hover:opacity-100 transition-opacity" />

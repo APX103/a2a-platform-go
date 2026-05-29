@@ -106,6 +106,23 @@ export function useChat(agentName: string) {
           },
           body: JSON.stringify(requestBody),
           signal: controller.signal,
+          onopen: async (response) => {
+            const contentType = response.headers.get('content-type') || '';
+            if (!response.ok) {
+              const text = await response.text();
+              let message = `Agent request failed (${response.status})`;
+              try {
+                const data = JSON.parse(text);
+                if (data.error) message = data.error;
+              } catch {
+                if (text) message = text;
+              }
+              throw new Error(message);
+            }
+            if (!contentType.includes('text/event-stream')) {
+              throw new Error(`Expected SSE stream, but received: ${contentType}`);
+            }
+          },
           onmessage: (event) => {
             const data: SSEEvent = JSON.parse(event.data);
 
@@ -286,6 +303,7 @@ export function useChat(agentName: string) {
             console.error('SSE error:', err);
             setError(err.message || 'Connection error');
             setStreaming(false);
+            throw err;
           },
         });
       } catch (err) {
